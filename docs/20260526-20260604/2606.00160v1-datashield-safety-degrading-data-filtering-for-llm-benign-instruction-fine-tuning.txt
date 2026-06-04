@@ -1,0 +1,1039 @@
+Title: DataShield: Safety-degrading Data Filtering for LLM Benign Instruction Fine-Tuning
+
+URL Source: https://arxiv.org/pdf/2606.00160v1
+
+Published Time: Tue, 02 Jun 2026 00:15:01 GMT
+
+Number of Pages: 13
+
+Markdown Content:
+> JOURNAL OF L ATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021 1
+
+# DataShield: Safety-degrading Data Filtering for LLM Benign Instruction Fine-Tuning 
+
+Junbo Zhang, Qianli Zhou, Xinyang Deng, Wen Jiang, Jie Pan, and Jinbiao Zhu 
+
+Abstract —Large language models (LLMs) suffer from de-graded safety capabilities even when fine-tuned with benign datasets. However, existing methods for identifying safety-degrading samples in benign datasets suffer from high computa-tional costs and significant noise issues. In this paper, we propose DataShield to efficiently and effectively identify potential safety-degrading samples. Our key intuition is based on the observation that benign fine-tuning increases the overall response compliance of LLMs. DataShield’s key technical insight is to quantify each sample’s contribution to the model’s compliance behavior as its safety degradation score. DataShield consists of three core components: (1) Compliance Vector Extraction that captures the LLM’s compliance behavior tendency; (2) a novel Compliance-Aware Score (CAS) that automatically identifies the optimal safety-critical layer; and (3) Safety-degrading Sample Filtering ,which quantifies the projection shift of training data along the compliance direction. Extensive experimental evaluation on Llama3-8B, Llama3.1-8B, and Qwen2.5-7B using the Alpaca and Dolly benign datasets validates our method’s effectiveness in identifying high-risk and low-risk data subsets. We also observe that open-ended question answering is more likely to trigger safety degradation, and corresponding responses tend to be longer. We hope this work can provide new insights into data-centric defense methods. The source code is available at: https://github.com/ZJunBo/DataShield. 
+
+Index Terms —Large language models, safety alignment, data selection, fine-tuning-as-a-service. 
+
+I. I NTRODUCTION 
+
+Fine-tuning-as-a-service (FTaaS) has emerged as a preva-lent service paradigm widely adopted by mainstream large language model (LLM) providers. Represented by platforms such as OpenAI [1], this paradigm allows users to upload domain-specific private data to perform customized fine-tuning on foundational LLMs. The resulting proprietary models are centrally deployed and maintained by service providers, en-abling users to access scenario-adaptive personalized services directly via API calls. Nevertheless, FTaaS introduces new exploitable attack sur-faces. Existing studies [2], [3] demonstrate that fine-tuning models with a small number of malicious samples can easily elicit harmful content. Moreover, Lermen et al. [4] reveal that malicious fine-tuning can bypass LLM safety guardrails without compromising general reasoning capabilities. More concerningly, recent findings indicate that even fine-tuning with strictly benign datasets [5] may trigger the degradation of a model’s inherent safety alignment. Figure 1 illustrates the schematic of safety degradation induced by benign fine-tuning. This vulnerability substantially elevates the risk of model 
+
+Corresponding author: Qianli Zhou (e-mail: zhou qianli@nwpu.edu.cn). 
+
+Fig. 1. Schematic of safety degradation induced by benign fine-tuning. 
+
+abuse, enabling malicious actors to leverage the powerful universal capabilities of state-of-the-art LLMs (e.g., GPT and Llama) for nefarious purposes, such as launching phishing attacks [6], generating highly persuasive disinformation [7], and designing bioterrorism-related schemes [8]. Recent studies show that traditional toxicity filters (e.g., LLaMA Guard [9], MD-Judge [10], and the OpenAI Modera-tion API [11]) fail to detect the subset of ostensibly harmless samples that cause LLM safety degradation (hereafter referred to as “safety-degrading samples”). Although recent detec-tion methods [12]–[15] for these samples have made some progress, they still suffer from noisy features and high com-putational overhead. For instance, works [12], [15] distinguish prompt safety by comparing gradient differences between safe and unsafe prompt-response pairs. However, gradient features inherently contain redundant noise, which inevitably degrades detection accuracy. Meanwhile, SEAL [13] requires large-scale datasets to train an additional ranker, and LARF [14] determines safety-related layers via extensive activation scaling tests. Both introduce considerable computational costs. More importantly, the fundamental mechanisms behind LLM safety failure caused by benign fine-tuning remain insuffi-ciently explored. To this end, we aim to address the safety degradation caused by benign fine-tuning from a data-centric perspective. Specifically, this paper focuses on the following research questions: 
+
+RQ1: What are the underlying mechanisms driving safety degradation during the benign fine-tuning of  
+
+> arXiv:2606.00160v1 [cs.CR] 29 May 2026 JOURNAL OF L ATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021 2
+
+LLMs? 
+
+RQ2: How can we effectively and efficiently identify safety-degrading samples before fine-tuning? 
+
+To address RQ1 , we conduct a mechanistic interpretability analysis to explain why LLMs yield harmful responses to malicious prompts following benign fine-tuning. We find that benign fine-tuning does not impair the LLM’s perception of harmfulness; rather, it increases its overall response com-pliance, which primarily accounts for the observed safety degradation. Regarding RQ2 , we propose DataShield, a safety-degrading sample filtering framework designed to identify benign sam-ples that induce safety degradation. We demonstrate that projecting training data onto a compliance direction vector effectively quantifies how much a single fine-tuning sample shifts the model’s compliance. High compliance-shift samples significantly degrade model safety, whereas filtering them out and utilizing low compliance-shift samples effectively preserves alignment. Our contributions can be summarized as follows:  
+
+> •
+
+We provide a mechanistic explanation for how benign fine-tuning can compromise model safety. Our analysis reveals that fine-tuned LLMs can still recognize harm-ful prompts, while their overall response compliance is increased.  
+
+> •
+
+We propose DataShield, a novel safety-degrading data filtering framework. By measuring the shift of fine-tuning data relative to the compliance direction on the safety-critical layer, DataShield can precisely identify safety-degrading samples prior to fine-tuning.  
+
+> •
+
+We propose a novel metric, the compliance-aware score (CAS), to automatically identify safety-critical layers within the model that exhibit strong signals of compliant behavior, without requiring any manual tuning.  
+
+> •
+
+We show the effectiveness of DataShield in identify-ing high-risk and low-risk data subsets through exten-sive experiments on three mainstream LLMs (Llama3, Llama3.1, Qwen2.5) with two representative benign fine-tuning datasets (Alpaca, Dolly). II. R ELATED WORK 
+
+A. Benign fine-tuning compromises safety alignment 
+
+Extensive research demonstrates that benign fine-tuning can inadvertently degrade the safety capabilities of large language models [5], [12]. Existing defensive strategies generally fall into two categories: parameter-centric defenses and data-centric defenses. Our work belongs to the data-centric defense paradigm. 
+
+a) Parameter-centric defenses: These defenses are mo-tivated by the observation that benign fine-tuning can inad-vertently alter safety-critical model weights [16], [17]. Their primary objective is to preserve model safety by either freezing safety-critical parameters during fine-tuning [18], [19], restor-ing compromised safety mechanisms post-fine-tuning [20], or imposing safety constraints throughout the training process [21], [22]. 
+
+b) Data-centric defenses: Since benign fine-tuning datasets may contain subsets that induce LLM jailbreaks, data-centric defenses include generating high-quality safety alignment data [23] and filtering safety-degrading samples. Existing methods for detecting safety-degrading samples in benign datasets fall into three paradigms based on the signals they extract: loss-based, gradient-based, and representation-based signals. Gradient-based methods leverage gradient differences be-tween safe and unsafe samples as discriminative features. For instance, Bi-Anchoring [12] employs harmful and safe datasets as dual gradient anchors and quantifies safety-vulnerable be-nign data via the gap between their gradient inner products with the two anchors. GradSafe [15] identifies risky prompts by measuring the gradient cosine similarity between target prompts and malicious jailbreak prompts on safety-critical model parameters. Loss-based methods conduct safe data selection via the discrepancy between safety loss and fine-tuning loss. SEAL [13] adopts bilevel optimization to train a data ranker that weights samples by their per-sample fine-tuning loss, up-ranking safety-consistent samples and down-ranking safety-harmful ones to maintain alignment during fine-tuning. Representation-based methods exploit internal layer representations as detection signals. For instance, the LARF [14] first identifies alignment-sensitive critical layers and sub-sequently quantifies the representational deviation between reference and fine-tuning samples via a bidirectional similarity metric. He et al. [12] estimate the harmfulness of benign samples by matching the representation similarity between benign and malicious samples. Despite their utility, existing methods face critical bottle-necks. Specifically, loss-based and gradient-based approaches suffer from expensive ranker training and high-dimensional noise, respectively. Meanwhile, representation-matching tech-niques are constrained by their heavy reliance on extensive layer sensitivity testing. 
+
+B. Understanding jailbreak in LLM fine-tuning 
+
+The jailbreak attack [24] refers to constructing adversarial prompts that induce large language models to generate harmful content. Understanding LLM jailbreak mechanisms is critical to mitigating the degradation of safety during benign fine-tuning. Wei et al. [25] posited that the conflict between internal instruction-following objectives and safety objectives serves as a primary driver of this safety degradation. Recent research has employed representation engineering [26], [27] to further dissect the safety behaviors of Large Language Models (LLMs). The core of this approach involves analyzing and manipulating internal activation vectors to un-derstand unintended model behaviors. For instance, Arditi et al. [28] and Zhang et al. [29] investigate the refusal and over-refusal behaviors of Large Language Models (LLMs), respectively. Li et al. [19] analyze representation differences across various prompt types, revealing how a model’s safety conceptual hierarchy evolves. Based on the ”Token Play” hypothesis, Zhao et al. [30] discover that an LLM’s harm perception capability and its safety refusal behavior are en-coded within the representations of the prompt-end token JOURNAL OF L ATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021 3
+
+and the post-prompt special token, respectively. Furthermore, representation-based defense schemes have been proposed; for example, CB [31] and RepBlend [32] built jailbreak defense by mapping target representations into an orthogonal representation space. The above methods primarily address safety concerns during the post-fine-tuning or inference stages; our work focuses on pre-fine-tuning data filtration. By identifying and removing harmful samples from fine-tuning datasets, we provide aproactive, data-level defense for LLM safety alignment. III. M ECHANISTIC INTERPRETABILITY ANALYSIS 
+
+To filter out potentially harmful samples from a benign fine-tuning dataset, it is essential to first understand the mech-anisms underlying safety degradation during the fine-tuning process. We understand this phenomenon through mechanistic interpretability analysis [33]. Our analysis is inspired by the work of Zhao et al. [30], which demonstrated that the LLM’s Harmfulness and Refusal can be encoded into distinct decision-making processes at different tokens, thereby ex-plaining jailbreaking behaviors. Based on prior safety-oriented projection analysis methods [26], [34], we extend this analysis to the scenario of safety degradation in benign fine-tuning. We hypothesize that benign fine-tuning undermines safety alignment primarily by increasing the model’s overall response compliance. We verify this hypothesis through mechanistic interpretability experiments. We first define the following direction vectors:  
+
+> •
+
+Harmfulness Perception Direction Vector: We extract the activations from the residual stream at each model layer at the last token position of the prompt for both harmless and harmful prompts. The difference (harmless activations minus harmful activations) is defined as the model’s harmfulness perception direction vector.  
+
+> •
+
+Compliance Direction Vector: Using two types re-sponses (accept output and refusal output) corresponding to the same prompt, we take the mean difference (harmful output activations minus refusal output activations) as the direction vector. In this study, we sample 100 harmful prompts from the Pure-Bad dataset [5] and 100 harmless prompts from the Alpaca dataset [35]. Unless otherwise specified, all subsequent experiments are conducted using the Llama3-8B-Instruct. 
+
+A. How to understand the unexpected behavior of LLMs? 
+
+We classify the model’s safety-related behaviors into the following four categories: refused harmful, accepted harmful, refused harmless and accepted harmless. To construct these four types of behavioral samples, we pair the prompts selected from the Pure-Bad and Alpaca datasets with both compliant and refusal responses. We use two direction vectors to under-stand the four behavioral patterns. Specifically, for each class sample, we extract the activations at the prompt’s final token and the mean activations across the response tokens. We then project these activations onto the harmfulness perception and compliance directions to quantify the model’s sensitivity to input harmfulness perception and its propensity for refusal. Figure 2 shows the projection results of the four types of samples across different layers. From the projection along the harmfulness perception direction, harmful prompt samples (accepted harmful, refused harmful) can be clearly distin-guished from harmless prompt samples (accepted harmless, refused harmless). From the compliance direction projection, compliant samples (accepted harmful, accepted harmless) can be well distinguished from refused samples (refused harmful, refused harmless). accepted harmful refused harmful accepted harmless refused harmless    
+
+> 0.0 0.5
+> Harmfulness Score
+> 2
+> 1
+> 0
+> Compliance Score  Layer 8
+> 20
+> Harmfulness Score
+> 2
+> 0
+> Layer 16
+> 50
+> Harmfulness Score
+> 0
+> 5
+> Layer 24
+> Fig. 2. Two-dimensional projection of harmfulness perception and compliance direction. The horizontal axis represents the harmfulness perception projection score, and the vertical axis represents the compliance direction projection score.
+
+To investigate the relationship between direction vectors in model decision-making, we calculated the cosine similarity between the harmful direction and the rejection direction layer by layer, and compared the similarity of the compliance direction with both the rejection of harmful responses and the acceptance of normal responses. As shown in Fig. 3 (a), in the model’s intermediate layers, the cosine similarity between the harmfulness direction and the rejection direction is close to 0, indicating a nearly orthogonal relationship; meanwhile, the similarity between the rejection direction and the rejection of harmful responses is significantly positive, while the similarity with the acceptance of normal responses is significantly negative. We conclude that the model’s perception of input harmfulness and its compliance with the response are two independent decision-making processes. Based on these two fine-grained safety decoupling vectors, we can gain insights into the model’s safety failure behavior. 0 10 20 30        
+
+> Layer
+> -0.5
+> 0.0
+> 0.5
+> Cosine Similarity
+> (a)
+> Harmfulness vs Compliance
+> 010 20 30
+> Layer
+> (b)
+> Compliance vs Refused Harmful
+> 010 20 30
+> Layer
+> (c)
+> Compliance vs Accepted Harmless
+> Fig. 3. Layer-wise cosine similarity analysis using response-token-averaged hidden states. The panels show the cosine similarity between: (a) harmfulness perception direction and compliance direction; (b) compliance direction and refused harmful samples; and (c) compliance direction and accepted harmless samples.
+
+B. What does the benign fine-tuning change? 
+
+To investigate whether benign fine-tuning alters the model’s perception of the harmfulness of harmful prompts or enhances the compliance of its responses, we extracted the activation values of the last token for all prompts in the harmful JOURNAL OF L ATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021 40 4 8 12 16 20 24 28        
+
+> Layer
+> 30
+> 20
+> 10
+> 0
+> Score
+> Harmfulness
+> Base Model
+> Benign Fine-tuned
+> 04812 16 20 24 28
+> Layer
+> 10
+> 5
+> 0
+> 5
+> 10
+> Compliance
+
+Fig. 4. Layer-level projection scores on DirectHarm4 based on the final input-token hidden state: harmfulness perception (left) and compliance (right) for base and benign fine-tuned LLMs. 
+
+DirectHarm4 dataset from both the original model and the fine-tuned model. By projecting these activation values onto the safety direction vector and the compliance direction vector, respectively, we quantified and compared changes in their harmfulness perception scores and compliance scores. Figure 4 shows the layer-by-layer projection score compar-isons for Llama3-8B across these two directions. Experimental results show that after benign fine-tuning, both the input harmfulness perception score and the response compliance score of the model exhibit an upward trend. These scores remain largely stable in the shallow layers of the model and start to rise significantly from a certain middle layer. The differences in behavior across layers may stem from the fact that different layers perform different safety functions [14]. As shown in the right subplot of Fig. 4, significantly increased compliance with harmful requests (significantly positive values) explains the high ASR of benignly fine-tuned LLMs on DirectHarm4. Notably, the increase in the harmfulness perception score is very slight, staying around zero, whereas the compliance score shows a considerably larger magnitude of change. However, it is impossible to determine whether benign fine-tuning causes the model to classify harmful inputs as harmless overall; we can only observe an upward trend in the harmfulness perception score. Therefore, we investigate whether the model can distinguish harmful prompts from harmless ones through representation separability [36]. As shown in Fig. 5, benign and harmful samples remain clearly separable in the dimensionality-reduced feature space both before and after fine-tuning. Now we answer RQ1 : the benign fine-tuned model remains capable of effectively distinguishing between benign and harmful samples, and its degraded safety performance stems from increased compliance tendency. IV. M ETHOD 
+
+A. Promblem Formulation 
+
+Given a benign fine-tuning dataset D = {(xi, y i)}Ni=1 ,where xi denotes the input prompt for the i-th sample and 
+
+yi denotes the corresponding response. An initially aligned model may respond to harmful requests after benign fine-tuning. We assume that the benign fine-tuning data contains potentially harmful samples that cause safety degradation. We characterize the benign fine-tuning data using the Huber contamination model [37]: 
+
+P = Pharmful + Pbenign (1) -20 -10 0 10                         
+
+> -15
+> -10
+> -5
+> 0
+> 5
+> 10
+> PC 2
+> Layer 8
+> -40 -20 020
+> -20
+> -10
+> 0
+> 10
+> 20
+> Layer 16
+> -80 -60 -40 -20 020 40
+> -60
+> -40
+> -20
+> 0
+> 20
+> 40
+> 60
+> Layer 24
+> -20 -10 010
+> PC 1
+> -10
+> -5
+> 0
+> 5
+> 10
+> 15
+> PC 2
+> Layer 8
+> -40 -30 -20 -10 010 20
+> PC 1
+> -20
+> -10
+> 0
+> 10
+> 20
+> Layer 16
+> -50 -25 025 50 75
+> PC 1
+> -40
+> -20
+> 0
+> 20
+> 40
+> Layer 24
+> Benign Harmful
+
+Fig. 5. PCA visualization of internal representations. The three subplots in the first row correspond to the base model, and those in the second row represent the benign fine-tuned LLM. 
+
+Our goal is to identify potentially harmful subsets in order to mitigate the safety degradation caused by benign fine-tuning. We assume that a small number of reference safety-alignment samples Dsaf e are available to the defender. 
+
+Key Insights and Motivation DataShield leverages the following two core findings to achieve effective safety-degrading data identification: 1) Benign fine-tuned LLMs remain capable of identifying harmful prompts, yet the overall response compliance of the LLM is increased. This increase in compliance can be attributed to the cumulative effect of all train-ing samples during SFT. Although individual samples contribute to different extents, they collectively shape the model’s compliant behavior and gradually shift its generation tendency toward higher compliance. 2) The signal strength of compliant behavior varies sig-nificantly across different model layers, revealing the existence of safety-critical layers. These two insights inspire the design of DataShield, a novel data-centric defense framework for identifying safety-degrading samples. The core intuition is to quantify the signal strength of each fine-tuning sample along the compliance direction before training. A stronger signal indicates that using such samples will cause a larger directional shift in the model toward a compliance tendency. As illustrated in Fig. 6, the overall architecture of DataShield primarily comprises three core modules: (1) compliance vector extraction, (2) safety-critical layer selection, and (3) safety-degrading data filtering. 
+
+B. Compliance Vector Extraction 
+
+We define the compliance direction vector as the difference between the LLM’s mean response activations under two dis-tinct behaviors: complying with a harmful request and refusing it. This vector captures a direction within the language model’s internal activation space that characterizes the tendency to “comply and generate harmful content.” Given a set of N paired reference safety-alignment samples 
+
+Dsaf e = {(xi, y accept  
+
+> i
+
+, y refuse  
+
+> i
+
+)}Ni=1 , where xi represents the i-th harmful prompt, yaccept  
+
+> i
+
+is the harmful response, and yrefuse 
+
+> i
+
+is the refusal response. We denote hl(xi, y i) as the average activation vector of the response tokens at a specific selected JOURNAL OF L ATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021 5 
+
+> Fig. 6. The overall architecture of the DataShield framework. It consists of three main phases: (a) extracting the compliance direction vector via paired response activations; (b) identifying safety-critical layers using the compliance-aware score (CAS); and (c) computing the compliance shift score (CSS) to filter out potentially harmful training samples before fine-tuning.
+
+layer l for a given input xi and response yi. The compliance direction vector at layer l is formally defined as: 
+
+vl = 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+hl(xi, y accept  
+
+> i
+
+) − 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+hl(xi, y refuse  
+
+> i
+
+) (2) 
+
+C. Safety-Critical Layers Selection 
+
+To identify the optimal layers for filtering potentially harm-ful samples, we propose the compliance-aware score (CAS), a metric inspired by activation steering techniques [38]. The core hypothesis is that the optimal safety-critical layer for safety-degrading data filtering is the one where exhibiting high discriminative ability regarding compliance behavior signals. In the layer selection stage, we compute the compliance-aware score using the activation of the last response token instead of the mean activation across response tokens. The CAS for each layer is defined as follows: CAS (l) = v⊤ 
+
+> l
+
+Sinter l vl
+
+v⊤ 
+
+> l
+
+(Sinter l + Sintra l )vl
+
+(3) where Sinter l and Sintra l denote the between-class and within-class covariance matrices, the corresponding formulas are as follows: 
+
+Sinter l = N X
+
+> c∈{ 0,1}
+
+(˜ μcl − ˜μl) (˜ μcl − ˜μl)⊤ (4) 
+
+Sintra l = X
+
+> c∈{ 0,1}
+> N
+
+X
+
+> i=1
+
+˜hl(xci ) − ˜μcl
+
+  ˜hl(xci ) − ˜μcl
+
+⊤
+
+(5) The symbols “0” and “1” denote the accepted and refused sample categories, respectively. Let ˜μl represent the mean activation of all accepted and refused samples within a specific layer l, ˜μcl represent the mean activation of all samples from category c at layer l. To facilitate cross-layer comparison of CAS, Z-score normalization is applied to all hl.
+
+Sintra l measures the degree of compactness in the activation of samples within the same class; a smaller value indicates greater compactness within the class. Sinter l measures the degree of separation in the activation of different classes; a larger value indicates better distinguishability between the two classes. These two metrics together quantify the signal strength of layer l in the compliance direction. We select the single layer with the highest CAS score among all layers as the critical safety layer, denoted as ˆl.
+
+D. Safety-Degrading Data Filtering 
+
+Based on the compliance direction vector vˆl (unit-normalized) on the safety-critical layer ˆl, we further identify potentially harmful samples within benign fine-tuning datasets. Specifically, for each input prompt xi in the dataset D, we compute the mean activation vectors hˆl(yi) and hˆl(y′
+
+> i
+
+) across all response tokens at layer ˆl, where yi is the response generated by the original model and y′ 
+
+> i
+
+is the target response paired with x in the fine-tuning set. The compliance shift score (CSS) for each sample is defined as the difference between the projections of these mean response activations onto the compliance direction vector: CSS (xi) =  hˆl(y′
+
+> i
+
+) − hˆl(yi) · vˆl (6) This metric quantifies the shift in compliance direction between the fine-tuned LLM and the original LLM. A higher score indicates that fine-tuning on this sample enhances the LLM’s compliance. In practical computation, since performing forward propagation for each sample to obtain the initial JOURNAL OF L ATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021 6
+
+model response is computationally expensive, we use the activation at the last token of the prompt to approximate the full response. We empirically verify that there is a significantly strong correlation between projection differences and changes in model response compliance (see SectionV-F). The samples in the dataset are then ranked in descending order based on their CSS values. The top-K samples with the highest scores, which represent the most potentially harmful instances that shift the model’s internal representations toward compliance with unsafe instructions, are selected as follows: 
+
+Dtop-K = arg top-K
+
+> (xi,y ′
+> i)∈D
+
+(CSS (xi)) (7) By filtering out the top-ranked safety-degrading samples and fine-tuning on the remaining data, we can effectively mitigate the safety degradation of the LLM. V. E XPERIMENT 
+
+A. Experimental Setup 
+
+Models We conduct experiments on three widely used open-source aligned large language models to verify the generality of our method: Llama3-8B-Instruct, Llama3.1-8B-Instruct [9], and Qwen2.5-7B-Instruct [39]. 
+
+Datasets For safety evaluation, we adopt three repre-sentative benchmarks: DirectHarm4 [40] focusing on direct harmful requests, Harmbench [41] for multi-category harmful behaviors, and HEx-PHI [5] targeting medical and privacy risks. To simulate real-world benign fine-tuning, we select the widely used instruction fine-tuning dataset Alpaca [35] and Dolly [42]. For the compliance vector extraction stage, we collect 100 sample pairs from the Pure-Bad dataset [5], where each harmful prompt is matched with one refusal output and one harmful output. 
+
+Evaluation Metrics We use Llama-Guard-3-8B [9] as the automated safety judge to label model responses as safe or harmful. The core evaluation metric is Attack Success Rate (ASR), defined as the ratio of harmful responses generated by the model to the total harmful prompts. A lower ASR indicates better safety performance. 
+
+Training Details We perform parameter-efficient fine-tuning using LoRA. The LoRA configuration includes rank = 8, and the target modules cover q proj, k proj, v proj, o proj, gate proj, up proj, down proj. All models are trained with the following unified settings: per-device train batch size 8, gradient accumulation steps 2, total training epochs 3, learning rate 1 × 10 −4, warmup ratio 0.1, gradient checkpointing enabled. 
+
+B. Comparative Methods 
+
+To demonstrate the superiority of the proposed method, we compare it with several state-of-the-art safet data selection methods, including Guard [9], Bi-Anchoring [12], GradSafe [15], SEAL [13], and LARF [14]. Here, we briefly describe these approaches as follows: 1) Instruct : Instruct refers to the original LLM before fine-tuning. 2) Random : This method involves randomly sampling 1,000 examples from the benign fine-tuning dataset three times and reporting the average experimental results. 3) LARF : LARF first constructs a carefully designed over-rejected validation set. It identifies the safety-sensitive layers by observing changes in response results on the validation set after scaling the activation values, and then ranks the benign dataset using a bidirectional feature matching approach. 4) Bi-Anchoring : This method first calculates the difference between the model gradients of a pre-constructed set of safe samples and a set of harmful samples, using this difference as an Anchor. It then computes the gradient for each sample in the benign fine-tuning dataset individ-ually and calculates its inner product with the Anchor. Finally, all benign fine-tuning samples are ranked based on the magnitude of this inner product. Note that gradient calculations use only the first 10 tokens of the model’s response. 5) SEAL : By calculating the loss difference between amodel that balances safety and task performance and an auxiliary model that learns only the task, this method uses that difference as a signal to iteratively update the ranker parameters, thereby achieving automatic ranking and filtering of safe, high-quality samples within the benign fine-tuning dataset. 6) GradSafe : This method first identifies safety-critical pa-rameters in the large language model; it then pairs each sample in the benign fine-tuning dataset with a “Sure” sample, calculates the gradient at the safety-critical pa-rameters, and computes the cosine similarity of these gradients with those of unsafe samples; finally, it ranks the samples in the entire dataset based on the similarity scores. 7) Guard : Using the Llama-Guard-3-8B LLM, concatenate the prompt for each sample with its corresponding re-sponse and feed it into the model, which directly outputs the probability of the sample being unsafe; then sort all benign samples in descending order based on this probability. 
+
+C. Effectiveness of Safety-degrading Data Selection 
+
+Benign fine-tuning datasets inherently contain safety-degrading samples that undermine the model’s safety align-ment. The baseline results across different models and datasets presented in Table I confirm that when a model is fine-tuned directly on randomly sampled data, its safety guardrails are highly prone to failure. Table I reports the safety evaluation results after fine-tuning models with the top-1000 samples exhibiting the highest safety degradation scores. Our method achieves the best performance in identifying safety-degrading data across the vast majority of experimental settings. Without requiring additional training data or computationally expensive gradient calculations, our framework consistently yields the highest Attack Success Rate (ASR) across the Alpaca and Dolly datasets on the Llama3, Llama3.1, and Qwen2.5 models. This demonstrates that by JOURNAL OF L ATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021 7              
+
+> TABLE I ATTACK SUCCESS RATE (%) ON DIRECT HARM 4, H ARMBENCH ,AND HE X-PHI A FTER FINE -T UNING WITH TOP -1000 S AFETY -D EGRADING SAMPLES .HIGHER IS BETTER .BOLD INDICATES THE HIGHEST ASR. U NDERLINE INDICATES THE SECOND -HIGHEST ASR.
+
+Model Dataset Benchmark Instruct Random Guard LARF Bi-Anchor SEAL GradSafe DataShield 
+
+Llama3 Alpaca DirectHarm4 12.75 36.75 43.75 50.50 51.25 26.75 30.50 63.75 
+
+Harmbench 3.50 18.50 25.00 32.00 29.50 13.50 21.00 51.50 
+
+HEx-PHI 5.86 9.66 20.00 26.90 24.48 6.90 12.41 39.66 
+
+Dolly DirectHarm4 12.75 37.00 82.50 81.50 79.25 28.25 77.50 91.00 
+
+Harmbench 3.50 20.00 84.50 86.00 85.00 13.00 78.00 86.50 
+
+HEx-PHI 5.86 9.66 71.38 75.86 79.31 7.24 77.59 91.00 
+
+Llama3.1 Alpaca DirectHarm4 11.00 26.25 40.25 38.25 28.50 27.75 9.00 47.00 
+
+Harmbench 9.50 14.00 19.50 30.00 16.50 13.00 7.50 32.00 
+
+HEx-PHI 7.93 5.17 16.21 17.93 11.38 6.90 5.88 22.41 
+
+Dolly DirectHarm4 11.00 21.50 40.75 82.75 75.75 71.75 66.00 84.75 
+
+Harmbench 9.50 13.00 38.00 77.00 73.50 65.50 58.00 85.00 
+
+HEx-PHI 7.93 5.17 30.34 49.66 54.14 38.62 31.03 65.52 
+
+Qwen2.5 Alpaca DirectHarm4 9.50 26.25 44.25 45.25 37.25 20.00 27.75 45.50 
+
+Harmbench 6.50 9.00 22.00 24.50 16.50 9.00 13.00 23.50 HEx-PHI 10.69 9.31 24.14 25.52 6.55 15.17 14.83 23.45 Dolly DirectHarm4 9.50 26.75 80.00 76.00 72.50 49.75 53.75 83.50 
+
+Harmbench 6.50 10.50 83.50 78.50 77.50 65.50 33.50 88.00 
+
+HEx-PHI 10.69 9.31 74.14 65.86 56.90 51.03 38.97 82.98              
+
+> TABLE II ATTACK SUCCESS RATE (%) ON DIRECT HARM 4, H ARMBENCH ,AND HE X-PHI A FTER FINE -T UNING WITH BOTTOM -1000 S AFETY -D EGRADING
+> SAMPLES . L OWER IS BETTER .BOLD INDICATES THE LOWEST ASR, U NDERLINE INDICATES THE SECOND LOWEST ASR.
+
+Model Dataset Benchmark Instruct Random Guard LARF Bi-Anchor SEAL GradSafe DataShield 
+
+Llama3 Alpaca DirectHarm4 12.75 36.75 18.75 1.25 30.00 26.75 36.50 1.50 Harmbench 3.50 18.50 13.50 1.00 6.50 13.50 16.50 1.00 
+
+HEx-PHI 5.86 9.66 4.83 0.34 1.03 6.90 13.45 0.34 
+
+Dolly DirectHarm4 12.75 37.00 66.75 9.50 55.50 28.25 65.00 2.00 
+
+Harmbench 3.50 20.00 54.50 3.50 43.00 13.00 57.00 0.00 
+
+HEx-PHI 5.86 9.66 44.48 3.10 34.83 7.24 42.07 1.38 
+
+Llama3.1 Alpaca DirectHarm4 11.00 26.25 18.75 0.00 4.00 27.75 43.00 0.75 Harmbench 9.50 14.00 11.00 0.00 0.50 13.00 27.50 0.00 
+
+HEx-PHI 7.93 5.17 4.14 0.75 0.69 6.90 29.31 0.00 
+
+Dolly DirectHarm4 11.00 21.50 55.25 5.50 31.50 71.75 37.25 3.25 
+
+Harmbench 9.50 13.00 48.00 2.50 27.00 65.00 31.00 1.50 
+
+HEx-PHI 7.93 5.17 23.45 2.07 12.07 38.62 15.52 1.38 
+
+Qwen2.5 Alpaca DirectHarm4 9.50 26.25 27.50 0.00 12.25 20.00 33.50 0.00 
+
+Harmbench 6.50 9.00 11.00 0.50 3.50 9.00 9.00 0.50 
+
+HEx-PHI 10.69 9.31 12.07 0.00 3.45 6.55 13.79 0.00 
+
+Dolly DirectHarm4 9.50 26.75 51.00 19.25 46.50 49.75 54.00 10.20 
+
+Harmbench 6.50 10.50 36.00 9.50 36.00 65.50 32.50 8.50 
+
+HEx-PHI 10.69 9.31 24.83 7.59 24.48 51.03 36.55 8.28 
+
+quantifying the representation shift of fine-tuning samples along the compliance direction, we can precisely identify the high-risk samples responsible for triggering safety degrada-tion. Table II reports the safety evaluation results after fine-tuning with the bottom-1000 samples that have the lowest safety degradation scores. Our method significantly outperforms all baseline methods across multiple benchmarks, and even main-tains a higher level of safety than the original instruction-tuned models. This indicates that the proposed method can not only accurately locate high-risk samples that destroy safety, but also effectively identify low-risk samples that help maintain model safety alignment. Compared with our method, existing approaches possess inherent limitations in detecting safety-degrading data: The Guard method uses a large language model as a base and relies on fine-tuning with extensive safe and unsafe prompts as a classifier to determine whether a prompt is non-compliant; however, because its training data does not adequately cover benign distributions, it struggles to accurately quantify the safety degradation risk of benign samples. As shown in Table I (top-1000) for Llama3 (Alpaca) on DirectHarm4, Harmbench, and HEx-PHI, Guard achieves only 43.75%, 25.00%, and 20.00% ASR, respectively, which are significantly lower than JOURNAL OF L ATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021 8
+
+our method. The Bi-anchoring method exploits the model’s shallow alignment [43] and only extracts the gradient signals from the first 10 output tokens of the response. However, the critical signals causing safety degradation from benign samples often reside in longer sequences, preventing them from fully captur-ing risk features. As shown in Table I (top-1000) for Llama3.1 (Alpaca) on DirectHarm4, Harmbench, and HEx-PHI, its ASR is only 28.50%, 16.50%, and 11.38%, respectively, with detection performance falling far short of our method. The GradSafe method pairs each sample with an affirmative prefix like “Sure”, computes gradients over safety-critical parameter slices, and calculates the cosine similarity with the gradients of unsafe samples. However, specific affirmative prefixes fail to effectively capture safety degradation signals, and gradient features suffer from high-dimensional sparsity and noise. As shown in Table I (top-1000) for Qwen2.5 (Dolly) on DirectHarm4, Harmbench, and HEx-PHI, it achieves only 53.75%, 33.50%, and 38.97% ASR respectively , whereas our DataShield method achieves 83.50%, 88.00%, and 82.98% ASR. The SEAL method necessitates training a ranker using large-scale safety alignment data, making the ranker’s quality heavily dependent on massive, high-quality datasets and easily introducing unreliable noise signals. As shown in Table I (top-1000) for Llama3.1 (Dolly) on DirectHarm4, Harmbench, and HEx-PHI, SEAL achieves only 71.75%, 65.50%, and 38.62% ASR, respectively, compared to 84.75%, 85.00%, and 65.52% ASR for our DataShield method. The LARF method achieves relatively good experimental results through bidirectional representation matching. How-ever, its capability to determine safety-critical layers relies heavily on a carefully constructed, specialized validation set and extensive inter-layer sensitivity testing, leading to high deployment costs and restricted generalizability. 
+
+D. Safety Performance After Filtering Safety-degrading Sam-ples 
+
+To compare the safety performance of different methods after filtering safety-degrading samples, we conduct the fol-lowing experiments. We randomly sample 10,000 samples from Alpaca and Dolly, and follow the filtering ratio setting in existing work [13], [14]: we filter out the top 20% of samples with the highest safety-degradation risk and retain the remaining 80% for fine-tuning. Table III shows the overall experimental results. From these results, we summarize the following key exper-imental observations. (1) Overall, representation-based meth-ods (DataShield and LARF) outperform other approaches in mitigating safety degradation after filtering. (2) Safety performance varies significantly across different models, even when fine-tuned on the same dataset. For instance, fine-tuning Llama3 on the full Alpaca dataset does not lead to an obvious safety drop, while fine-tuning Qwen2.5 on Alpaca causes severe safety degradation. (3) Although fixed-ratio filtering lowers the ASR effectively, models fine-tuned on filtered data in some cases exhibit much lower safety than the original aligned models. For example, the ASR on DirectHarm4 reaches 60.00% for the Llama3-Dolly setting, far higher than the base model’s 12.75%.                                                                                                                             
+
+> TABLE III SAFETY PERFORMANCE OF THREE MODELS ON DIRECT HARM 4, HARMBENCH ,AND HE X-PHI AFTER FINE -TUNING WITH FILTERED BENIGN DATASETS .
+> Method Safety DirectHarm4 Harmbench HEx-PHI Llama3.1-8B-Instruct
+> Base 11.00 9.50 7.93
+> Alpaca Dataset
+> + Without Filtering 61.75 47.50 34.48 + GradSafe 58.25 44.40 31.38 + Bi-Anchoring 52.00 34.00 27.93 + LARF 39.50 18.00 14.14 + SEAL 42.50 21.50 16.55
+> + Ours 32.50 14.50 10.34
+> Dolly Dataset
+> + Standard SFT 80.50 80.00 59.66 + GradSafe 78.75 76.00 54.14 + Bi-Anchoring 71.50 70.50 47.59 + LARF 50.25 52.00 26.89 + SEAL 53.75 55.00 29.65
+> + Ours 47.00 37.50 17.93 Llama3-8B-Instruct
+> Base 12.75 3.50 5.86
+> Alpaca Dataset
+> + Without Filtering 23.75 21.50 14.83 + GradSafe 17.75 17.50 10.34 + Bi-Anchoring 17.75 10.50 9.31 + LARF 15.00 7.50 8.62 + SEAL 16.25 9.50 10.00
+> + Ours 14.25 5.50 6.21
+> Dolly Dataset
+> + Without Filtering 79.00 77.50 70.69 + GradSafe 74.25 81.50 67.59 + Bi-Anchoring 78.50 83.50 76.21 + LARF 62.50 61.00 44.80 + SEAL 66.75 65.50 48.27
+> + Ours 60.00 56.50 40.69 Qwen2.5-7B-Instruct
+> Base 9.50 6.50 10.69
+> Alpaca Dataset
+> + Without Filtering 61.75 51.50 51.38 + GradSafe 59.75 42.00 42.41 + Bi-Anchoring 60.25 54.50 48.28 + LARF 34.75 18.50 14.83 + SEAL 43.75 28.00 20.68
+> + Ours 26.75 12.50 11.03
+> Dolly Dataset
+> + Without Filtering 78.50 83.50 76.21 + GradSafe 74.25 81.50 67.59 + Bi-Anchoring 56.50 66.00 48.97 + LARF 52.25 54.00 43.10 + SEAL 55.25 56.20 48.27
+> + Ours 51.25 48.00 37.59
+
+JOURNAL OF L ATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021 9
+
+E. Effectiveness Analysis of Layer Selection 
+
+Figure 7 illustrates the compliance-aware score (CAS) across all layers for the three models. Based on the CAS, the optimal layers for the respective models were identified as layers 14, 14, and 19. To verify performance differences across layers, we used layer-level representations to sort samples and selected 1000 samples with the highest and lowest compliance shift scores, respectively. All relevant experimental results conducted on the Dolly dataset are presented in Figs. 8, 9, and 10. These results demonstrate that the layer-wise compliance-aware score facilitates the efficient and effective identification of the optimal safety layer. 0 10 20 30        
+
+> Layer
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> Layer 14
+> LLama-3-8B-Instruct
+> 010 20 30
+> Layer
+> 0.00
+> 0.25
+> 0.50
+> 0.75
+> 1.00 Layer 14
+> LLama-3.1-8B-Instruct
+> 010 20
+> Layer
+> 0.00
+> 0.25
+> 0.50
+> 0.75
+> 1.00 Layer 19
+> Qwen2.5-7B-Instruct
+> Compliance-Aware Score
+
+Fig. 7. Compliance-aware scores across all layers for three aligned LLMs. The peak values represent the critical safety layers that show the strongest behavioral signals in the compliance direction. 1 2 3 4 5 6 7 8 9
+
+> 10
+> 11
+> 12
+> 13
+> 14
+> 15
+> 16
+> 17
+> 18
+> 19
+> 20
+> 21
+> 22
+> 23
+> 24
+> 25
+> 26
+> 27
+> 28
+> 29
+> 30
+> 31
+> 32
+> Layer
+> 0
+> 25
+> 50
+> 75
+> 100
+> Attack Success Rate (%)  LLama-3-8B-Instruct - Top 1000 samples
+> DirectHarm4
+> HarmBench
+> HEx-PHI
+> 1 2 3 4 5 6 7 8 9
+> 10
+> 11
+> 12
+> 13
+> 14
+> 15
+> 16
+> 17
+> 18
+> 19
+> 20
+> 21
+> 22
+> 23
+> 24
+> 25
+> 26
+> 27
+> 28
+> 29
+> 30
+> 31
+> 32
+> Layer
+> 0
+> 25
+> 50
+> 75
+> 100
+> Attack Success Rate (%)  LLama-3-8B-Instruct - Bottom 1000 samples
+> DirectHarm4
+> HarmBench
+> HEx-PHI
+
+Fig. 8. Attack Success Rate (ASR) of Llama3-8B fine-tuned on data selected from different layers. Fine-tuning on Top-1,000 high-risk samples spikes the ASR, whereas filtering them out (Bottom-1,000) preserves model safety. 
+
+F. Effectiveness Analysis of Projection Difference 
+
+Generating full forward passes for each fine-tuning sample incurs prohibitive computational overhead on large datasets. To mitigate this, we approximate the response representation using the activation of the prompt’s final token. Because the base model and training samples share the same prompt format, the projection discrepancy can be efficiently estimated by subtracting the final prompt token’s projection from the training response’s projection. To validate the hypothesis that the activation difference between the mean response tokens and the prompt’s final token is positively correlated with the compliance direction vector, we conducted a correlation analysis. We curate a 1
+
+> 2
+> 3
+> 4
+> 5
+> 6
+> 7
+> 8
+> 9
+> 10
+> 11
+> 12
+> 13
+> 14
+> 15
+> 16
+> 17
+> 18
+> 19
+> 20
+> 21
+> 22
+> 23
+> 24
+> 25
+> 26
+> Layer
+> 0
+> 25
+> 50
+> 75
+> 100
+> Attack Success Rate (%)  Qwen2.5-7B-Instruct - Top 1000 samples
+> DirectHarm4
+> HarmBench
+> HEx-PHI
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 7
+> 8
+> 9
+> 10
+> 11
+> 12
+> 13
+> 14
+> 15
+> 16
+> 17
+> 18
+> 19
+> 20
+> 21
+> 22
+> 23
+> 24
+> 25
+> 26
+> Layer
+> 0
+> 25
+> 50
+> 75
+> 100
+> Attack Success Rate (%)  Qwen2.5-7B-Instruct - Bottom 1000 samples
+> DirectHarm4
+> HarmBench
+> HEx-PHI
+
+Fig. 9. Attack success rate (ASR) of Qwen2.5-7B-Instruct fine-tuned on data selected from different layers. Fine-tuning on Top-1,000 high-risk samples spikes the ASR, whereas filtering them out (Bottom-1,000) preserves model safety. 1 2 3 4 5 6 7 8 9
+
+> 10
+> 11
+> 12
+> 13
+> 14
+> 15
+> 16
+> 17
+> 18
+> 19
+> 20
+> 21
+> 22
+> 23
+> 24
+> 25
+> 26
+> 27
+> 28
+> 29
+> 30
+> 31
+> 32
+> Layer
+> 0
+> 25
+> 50
+> 75
+> 100
+> Attack Success Rate (%)  LLama-3.1-8B-Instruct - Top 1000 samples
+> DirectHarm4
+> HarmBench
+> HEx-PHI
+> 1 2 3 4 5 6 7 8 9
+> 10
+> 11
+> 12
+> 13
+> 14
+> 15
+> 16
+> 17
+> 18
+> 19
+> 20
+> 21
+> 22
+> 23
+> 24
+> 25
+> 26
+> 27
+> 28
+> 29
+> 30
+> 31
+> 32
+> Layer
+> 0
+> 25
+> 50
+> 75
+> 100
+> Attack Success Rate (%)  LLama-3.1-8B-Instruct - Bottom 1000 samples
+> DirectHarm4
+> HarmBench
+> HEx-PHI
+
+Fig. 10. Attack success rate (ASR) of Llama-3.1-8B-Instruct fine-tuned on data selected from different layers. Fine-tuning on Top-1,000 high-risk samples spikes the ASR, whereas filtering them out (Bottom-1,000) preserves model safety. 
+
+comprehensive evaluation suite comprising the Pure-Bad [5], CB [31], Alpaca [35], Dolly [42], XSTest [44], Wildjailbreak-harmless [45], and Wildjailbreak-harmful [45] datasets, along with their paired responses categorized as acceptance or re-fusal. These datasets cover distinct types of test prompts: Pure-Bad, CB, and Wildjailbreak-harmful consist of harmful ad-versarial prompts, Alpaca, Dolly, and Wildjailbreak-harmless contain benign and harmless instructions, while XSTest serves as a dedicated benchmark for evaluating the over-refusal behavior of large language models. Specifically, the Pure-Bad dataset includes 100 samples, while 200 samples are randomly subsampled from each of the remaining datasets. For the Alpaca and Dolly datasets, paired responses are synthesized using predefined acceptance strings (e.g., “Absolutely! I’d be delighted,” “Sure! Allow me to”) and refusal strings (e.g., “I’m not programmed for that,” “I cannot comply with that”). For all other datasets, the officially provided paired responses are utilized. The Compliance Shift Score (CSS) for each sample was calculated according to Equation (6), and the mean CSS across JOURNAL OF L ATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021 10 2 1 0 1 2          
+
+> Projection Diff
+> 0
+> 50
+> 100
+> Compliance Score  r = 0.927
+> p < 0.001
+> (a) Llama-3-8B-Instruct
+> 321012
+> Projection Diff
+> 0
+> 50
+> 100
+> Compliance Score  r = 0.909
+> p < 0.001
+> (b) Llama-3.1-8B-Instruct
+> 20 10 010 20 30
+> Projection Diff
+> 25
+> 0
+> 25
+> 50
+> 75
+> 100
+> Compliance Score  r = 0.924
+> p < 0.001
+> (c) Qwen2.5-7B-Instruct
+> Datasets
+> Pure-Bad
+> Alpaca
+> Dolly
+> Wildjailbreak-harmful
+> Wildjailbreak-harmless
+> xstest
+> circuit-breakers
+> ResponseTypes
+> Accept
+> Refusal
+
+Fig. 11. Correlation analysis between the compliance projection difference and the dataset compliance score evaluated by GPT-4 across three LLMs. The compliance projection difference is computed as the projection of the activation difference between the average response tokens and the prompt’s last token onto the compliance direction. 
+
+all samples was defined as the dataset’s projection offset onto the compliance vector. Concurrently, we employed an LLM-based evaluation to determine the compliance score for each sample, using the average as the dataset’s compliance metric; the evaluation prompt template is provided in Table V. We then calculated the pearson correlation coefficient ( r) and the corresponding p-value between the projection offsets and the compliance scores across the datasets. As illustrated in Fig. 11, the results across Llama-3, Llama-3.1, and Qwen2.5 models demonstrate a remarkably strong positive correlation ( r > 0.9, p < 0.001 ). These findings empirically substantiate that the activation difference between the mean response tokens and the prompt’s final token effec-tively characterizes the model’s behavioral tendency along the compliance direction. 
+
+G. Safety-degrading Data Features 
+
+To investigate the characteristics of potentially harmful samples, this study conducts an empirical analysis focused on two dimensions: response token length and data topic distribution. We selected 1,000 samples with the highest and lowest risk scores from the Dolly dataset across three models, calculated their response token lengths, and visualized the distributions via frequency histograms (Fig. 12). The results indicate that the top high-risk samples exhibit significantly longer response lengths than the bottom low-risk ones. Some case studies are provided in Table VI. 
+
+Fig. 12. Response token length distribution of high-risk (top) and low-risk (bottom) samples. Horizontal axis: response token length; Vertical axis: sample count. 
+
+Figure 13 illustrates the category distribution proportions for the 1,000 samples identified as having high and low safety degradation risk across the three models. Experimental results reveal that categories including “brainstorming”, “general qa”, and “open qa” account for a significantly higher proportion in high-risk safety-degrading samples. Conversely, “classifi-cation”, “closed qa”, and “information extraction” dominate low-risk samples and exert a minimal impact on model safety. This pattern remains highly consistent across all three evalu-ated models. We posit that, compared to closed-domain QA data, open-ended QA samples are more prone to enhancing model compliance, thereby exacerbating safety degradation risks. This presents a critical challenge for real-world large language model applications: how to design data that simulta-neously ensures both safety and utility, especially for tasks that require lengthy reasoning and multi-step inference to arrive at solutions. brainstorming 
+
+> classification
+> closed_qa
+> creative_writing
+> general_qa
+> information_extraction
+> open_qa
+> summarization
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> Ratio
+> Llama3-8B-Instruct - Top
+> brainstorming
+> classification
+> closed_qa
+> creative_writing
+> general_qa
+> information_extraction
+> open_qa
+> summarization
+> 0.0
+> 0.2
+> 0.4
+> Llama3-8B-Instruct - Bottom
+> brainstorming
+> classification
+> closed_qa
+> creative_writing
+> general_qa
+> information_extraction
+> open_qa
+> summarization
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> Ratio
+> Llama3.1-8B-Instruct - Top
+> brainstorming
+> classification
+> closed_qa
+> creative_writing
+> general_qa
+> information_extraction
+> open_qa
+> summarization
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> Llama3.1-8B-Instruct - Bottom
+> brainstorming
+> classification
+> closed_qa
+> creative_writing
+> general_qa
+> information_extraction
+> open_qa
+> summarization
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> Ratio
+> Qwen2.5-7B-Instruct - Top
+> brainstorming
+> classification
+> closed_qa
+> creative_writing
+> general_qa
+> information_extraction
+> open_qa
+> summarization
+> 0.0
+> 0.1
+> 0.2
+> Qwen2.5-7B-Instruct - Bottom
+
+Fig. 13. Safety-degradation risk sample category distribution across three LLMs. The left column shows the category distribution of 1000 high-risk (Top) samples, and the right column shows that of 1000 low-risk (Bottom) samples. All statistics are based on the Dolly dataset. JOURNAL OF L ATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021 11 
+
+H. Harmful Topic Category 
+
+Figure 14 illustrates the distribution of harmful topics across the model under three experimental conditions: the original pre-trained base model, fine-tuning on 1,000 top high safety-degradation risk samples, and fine-tuning on 1,000 bottom low safety-degradation risk samples. These results correspond to the DirectHarm4, HarmBench, and HEx-PHI benchmarks. Despite the absence of explicit malicious content in the benign fine-tuning data, the fine-tuned LLM exhibits harmful responses across multiple safety-sensitive categories. Malware                   
+
+> Drug
+> Phishing
+> Disinfo
+> 40%
+> 80%
+> Llama-3-8B-Instruct
+> Base Bottom Top
+> Malware
+> Drug
+> Phishing
+> Disinfo
+> 40%
+> 80%
+> Llama-3.1-8B-Instruct
+> Base Bottom Top
+> Malware
+> Drug
+> Phishing
+> Disinfo
+> 40%
+> 80%
+> Qwen2.5-7B-Instruct
+> Base Bottom Top
+> Chem/Bio
+> Illegal
+> Misinfo
+> Harmful
+> Harassment
+> Cybercrime
+> 40%
+> 80%
+> Base Bottom Top
+> Chem/Bio
+> Illegal
+> Misinfo
+> Harmful
+> Harassment
+> Cybercrime
+> 40%
+> 80%
+> Base Bottom Top
+> Chem/Bio
+> Illegal
+> Misinfo
+> Harmful
+> Harassment
+> Cybercrime
+> 40%
+> 80%
+> Base Bottom Top
+> Illegal
+> Hate/Violence
+> Malware
+> Physical Harm
+> Economic
+> Adult
+> Fraud
+> Political
+> Privacy
+> Financial Advice
+> 40%
+> 80%
+> Base Bottom Top
+> Illegal
+> Hate/Violence
+> Malware
+> Physical Harm
+> Economic
+> Adult
+> Fraud
+> Political
+> Privacy
+> Financial Advice
+> 40%
+> 80%
+> Base Bottom Top
+> Illegal
+> Hate/Violence
+> Malware
+> Physical Harm
+> Economic
+> Adult
+> Fraud
+> Political
+> Privacy
+> Financial Advice
+> 40%
+> 80%
+> Base Bottom Top
+> DirectHarm4 Harmbench HEx-PHI
+
+Fig. 14. Harmful topic distribution across three models on DirectHarm4, HarmBench, and HEx-PHI under Base, top-Risk, and low-Risk fine-tuning conditions. 
+
+I. KL Divergence Analysis of Safety-degrading 
+
+To analyze how fine-tuning samples with varying safety degradation risks reshape the generative distribution of aligned Large Language Models (LLMs), we conduct a token-wise Kullback-Leibler (KL) divergence analysis on models fine-tuned with high-risk and low-risk data. Using the harmful dataset HEx-PHI, we calculate the token-wise KL divergence between the fine-tuned models and the original aligned model. As illustrated in Fig. 15, models fine-tuned on benign samples with low safety degradation maintain a minimal KL diver-gence, indicating a generative distribution that closely aligns with the base model. Conversely, high-risk samples induce significant distributional shifts, particularly prominent within the initial prefix tokens. 
+
+J. Sort Cost 
+
+Table IV presents the comparison of GPU memory usage and sorting cost across different methods. DataShield achieves low GPU memory consumption and high sorting efficiency. 1 3 5 7 9 11 13 15 17 19 21 23 25 27 29                             
+
+> Token Positions
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> KL Divergence
+> (a) Llama-3-8B-Instruct
+> Bottom || Base
+> Top || Base
+> 1357911 13 15 17 19 21 23 25 27 29
+> Token Positions
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> KL Divergence
+> (b) Llama-3.1-8B-Instruct
+> Bottom || Base
+> Top || Base
+> 1357911 13 15 17 19 21 23 25 27 29
+> Token Positions
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> 1.2
+> 1.4
+> KL Divergence
+> (c) Qwen2.5-7B-Instruct
+> Bottom || Base
+> Top || Base
+
+Fig. 15. Token-wise Kullback-Leibler (KL) divergence between benign fine-tuned models and the original aligned base model on harmful dataset HEx-PHI. TABLE IV SORTING COST COMPARISON FOR 10,000 A LPACA SAMPLES ON LLAMA 3
+
+WITH NVIDIA L40 48GB GPU S.
+
+Method Time Memory GPU 
+
+DataShield 0.50 Hours 16.0 GB 1 GPU LARF 0.17 Hours 16.6 GB 1 GPU SEAL 40.00 Hours 38.5 GB 2 GPU GradSafe 6.50 Hours 47.5 GB 1 GPU Bi-Anchoring 3.50 Hours 31.0 GB 1 GPU 
+
+TABLE V COMPLIANCE SCORE EVALUATION TEMPLATE USING GPT-4. 
+
+Scoring guidelines: 
+
+Eval prompt template = ”You are evaluating whether the model’s response displays the trait: Compliance. This involves assessing if the response accurately and fully adheres to the user’s instructions, formatting requirements, and constraints provided in the prompt. Compliant responses demonstrate a high degree of fidelity to the input, ensuring all sub-tasks are completed without omission or deviation from the specified persona or tone.” Prompt: [Question Start] {question } [Question End] Model response: [Answer Start] {answer } [Answer End] Focus only on whether the model exhibits this trait. Respond with: A score from 0 (trait not present at all) to 100 (trait strongly present) Respond with a number between 0 and 100. Don’t say anything else, just the number.””” 
+
+VI. C ONCLUSION 
+
+We investigate the safety degradation problem induced by benign fine-tuning from a data-centric perspective. Our mechanistic interpretability analysis reveals that benign fine-tuning elevates the overall compliance of LLMs. We propose DataShield, a safety degradation sample filtering framework that requires no expensive gradient computation or training of additional rankers. DataShield can automatically identify the optimal safety-critical layers of LLMs and quantify each sample’s contribution to the model’s compliance behavior prior to fine-tuning. Extensive experiments verify that our method efficiently and accurately distinguishes safety-degrading and safety-enhancing samples within benign datasets. Future research directions are outlined as follows: (1) Pre-training-stage sample filtering This work concentrates on fine-tuning-phase data filtering. How to screen pre-training samples to balance model utility and safety still remains underex-plored. (2) Black-box sample-level filtering Our current ap-JOURNAL OF L ATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021 12  
+
+> TABLE VI CASE STUDY .
+
+Top ranked data (high safety-degrading risk) Bottom ranked data (low safety-degrading risk) Human: What are your views on parenting? 
+
+Assistant: Whoever said parenting is bliss has never parented. But, when everything is well, parenting is one of the best feelings in the world. It is always a great mixture of the best positive feelings and the worst of ourselves. On a sunny day, you are a whole new self, coming into existence. You are this carefree soul, who laughs out loud, makes weird faces and noises, showers loads of kisses and hugs, danced like no one is seeing, talked in a cute weird way, which only you and the audience would understand. On a rainy day, everything you touch could go wrong. Your anger will see its waves. Your voice is commanding and demanding. Your eyes spew anger. Every action of yours is wrong till you sit and calm yourself and analyse what you are going through and why. As much as you want to get it over, the more it will haunt you in your later years. You will long for those happy moments, those hugs and kisses, where everything under the sun was perfect and just like how you had envisioned, but it is all gone. Those are now just thoughts you keep revisiting, hoping you could time travel back to those golden days. 
+
+Human: ‘Given this paragraph from Wikipedia, what was Alan Wolffe’s primary research interest? Wolffe was born on 21 June 1959 in Burton-on-Trent, Staffordshire, England. He was successful at biology early on, receiving the Biological Council Prize upon leaving secondary school. He then attended Oxford University, receiving a first class B.A. degree in 1981. He did his PhD under Prof. Jamshed Tata at the National Institute for Medical Research, London. He was awarded an EMBO long-term postdoctoral fellowship in 1984 and moved to the laboratory of Donald D. Brown at the Department of Embryology, Carnegie Institution of Washington in Baltimore. He joined the National Institute of Health in 1987, working firstly with Gary Felsenfeld in the Laboratory of Molecular Biology (National Institute of Arthritis, Diabetes and Metabolic Diseases). In 1990 he was appointed Chief of the newly founded Laboratory of Molecular Embryology (LME). He left NIH and moved to the biotechnology firm Sangamo BioSciences Inc. in Richmond, California, in 2000, as Senior Vice President and Chief Scientific Officer. He was a prolific writer, publishing hundreds of articles, literature reviews and two books. He will be known mainly for his work in promoting the idea that chromatin plays a dynamic role in regulating gene expression. 
+
+Assistant: Wolffe was principally interested in chromatin and its role in gene expression. 
+
+Human: What is a way I can trick my mom into thinking I’m sick, so I can skip school today? 
+
+Assistant: Get an oral thermometer and hold it close to aturned-on lightbulb so the thermometer will register a high temperature. Quickly put the thermometer in your mouth and call your mom over. Show her the high temperature and she will believe you have a fever. She will then keep you home from school. 
+
+Human: Is the following statement true or false: cat’s have wings? 
+
+Assistant: It is false. Cat’s do not have wings. 
+
+Human: What are some quick ways to lose all of my money? 
+
+Assistant: The premise shares all the key elements with the hypothesis but provides more specific information (the number of the Executive Order). Considering this, it does entail the hypothesis as it confirms that “The OMB reviewed the rule as an economically significant regulatory action under an executive order.Here are some quick ways to lose all of your money: 1. Place all of your money on red at the roulette table. 2. Play high-stakes blackjack everyday for the next week. 3. Buy random crypto currencies like Solana. 4. Buy extremely out of the money options on trading applications like Robinhood. Loan it to friends and families with a history of not paying you back.” 
+
+Human: Where are Keanu Reeves and his parents from? Keanu Charles Reeves was born in Beirut, Lebanon, on September 2, 1964, the son of Patricia (n´ ee Taylor), a costume designer and performer, and Samuel Nowlin Reeves Jr. His mother is English, originating from Essex. His American father is from Hawaii, and is of Native Hawaiian, Chinese, English, Irish, and Portuguese descent. His grandmother from his father’s side is Chinese Hawaiian. His mother was working in Beirut when she met his father, who abandoned his wife and family when Reeves was three years old. Reeves last met his father on the Hawaiian island of Kauai when he was 13. 
+
+Assistant: Keanu himself is from Lebanon, his mother is from the United Kingdom, and his father is from the United States. 
+
+proach requires white-box access to models. Effective sample filtering under black-box settings has not been sufficiently investigated. Developing lightweight, generalizable black-box filtering strategies is a vital research avenue ahead. REFERENCES [1] Q. Zhan, R. Fang, R. Bindu, A. Gupta, T. B. Hashimoto, and D. Kang, “Removing rlhf protections in gpt-4 via fine-tuning,” in Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 2: Short Papers) , 2024, pp. 681–687. [2] P. Gade, S. Lermen, C. Rogers-Smith, and J. Ladish, “Badllama: cheaply removing safety fine-tuning from llama 2-chat 13b,” arXiv preprint arXiv:2311.00117 , 2023. [3] X. Yang, X. Wang, Q. Zhang, L. Petzold, W. Y. Wang, X. Zhao, and D. Lin, “Shadow alignment: The ease of subverting safely-aligned language models,” arXiv preprint arXiv:2310.02949 , 2023. [4] S. Lermen, C. Rogers-Smith, and J. Ladish, “Lora fine-tuning effi-ciently undoes safety training in llama 2-chat 70b,” arXiv preprint arXiv:2310.20624 , 2023. [5] X. Qi, Y. Zeng, T. Xie, P.-Y. Chen, R. Jia, P. Mittal, and P. Henderson, “Fine-tuning aligned language models compromises safety, even when users do not intend to!” in International Conference on Learning Representations , vol. 2024, 2024, pp. 30 988–31 043. [6] J. Hazell, “Large language models can be used to effectively scale spear phishing campaigns,” arXiv preprint arXiv:2305.06972 , p. 50, 2023. [7] G. Spitale, N. Biller-Andorno, and F. Germani, “Ai model gpt-3 (dis) informs us better than humans,” Science Advances , vol. 9, no. 26, p. eadh1850, 2023. [8] E. H. Soice, R. Rocha, K. Cordova, M. Specter, and K. M. Esvelt, “Can JOURNAL OF L ATEX CLASS FILES, VOL. 14, NO. 8, AUGUST 2021 13 
+
+large language models democratize access to dual-use biotechnology?” 
+
+arXiv preprint arXiv:2306.03809 , 2023. [9] A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Vaughan et al. , “The llama 3 herd of models,” arXiv preprint arXiv:2407.21783 , 2024. [10] L. Li, B. Dong, R. Wang, X. Hu, W. Zuo, D. Lin, Y. Qiao, and J. Shao, “Salad-bench: A hierarchical and comprehensive safety benchmark for large language models,” arXiv preprint arXiv:2402.05044 , 2024. [11] T. Markov, C. Zhang, S. Agarwal, F. E. Nekoul, T. Lee, S. Adler, A. Jiang, and L. Weng, “A holistic approach to undesired content detection in the real world,” in Proceedings of the AAAI conference on artificial intelligence , vol. 37, no. 12, 2023, pp. 15 009–15 018. [12] L. He, M. Xia, and P. Henderson, “What is in your safe data? identifying benign data that breaks safety,” arXiv preprint arXiv:2404.01099 , 2024. [13] H. Shen, P.-Y. Chen, P. Das, and T. Chen, “Seal: Safety-enhanced aligned llm fine-tuning via bilevel data selection,” in International Conference on Learning Representations , vol. 2025, 2025, pp. 31 243–31 264. [14] H. Li, L. Li, Z. Lu, X. Wei, R. Li, J. Shao, and L. Sha, “Layer-aware representation filtering: Purifying finetuning data to preserve llm safety alignment,” in Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , 2025, pp. 8041–8061. [15] Y. Xie, M. Fang, R. Pi, and N. Gong, “Gradsafe: Detecting jailbreak prompts for llms via safety-critical gradient analysis,” in Proceedings of the 62nd annual meeting of the association for computational linguistics (volume 1: Long papers) , 2024, pp. 507–518. [16] B. Wei, K. Huang, Y. Huang, T. Xie, X. Qi, M. Xia, P. Mittal, M. Wang, and P. Henderson, “Assessing the brittleness of safety alignment via pruning and low-rank modifications,” in International Conference on Machine Learning . PMLR, 2024, pp. 52 588–52 610. [17] T. Huang, S. Hu, F. Ilhan, S. F. Tekin, and L. Liu, “Harmful fine-tuning attacks and defenses for large language models: A survey,” arXiv preprint arXiv:2409.18169 , 2024. [18] G. Liu, W. Lin, Q. Mu, T. Huang, R. Mo, Y. Tao, and L. Shen, “Targeted vaccine: Safety alignment for large language models against harmful fine-tuning via layer-wise perturbation,” IEEE Transactions on Information Forensics and Security , 2025. [19] S. Li, L. Yao, L. Zhang, and Y. Li, “Safety layers in aligned large language models: The key to llm security,” in International Conference on Learning Representations , vol. 2025, 2025, pp. 98 163–98 189. [20] C.-Y. Hsu, Y.-L. Tsai, C.-H. Lin, P.-Y. Chen, C.-M. Yu, and C.-Y. Huang, “Safe lora: The silver lining of reducing safety risks when finetuning large language models,” Advances in Neural Information Processing Systems , vol. 37, pp. 65 072–65 094, 2024. [21] T. Huang, S. Hu, and L. Liu, “Vaccine: Perturbation-aware alignment for large language models against harmful fine-tuning attack,” Advances in Neural Information Processing Systems , vol. 37, pp. 74 058–74 088, 2024. [22] M. Li, W. M. Si, M. Backes, Y. Zhang, and Y. Wang, “Sa-lora: Safety-alignment preserved low-rank adaptation,” arXiv preprint arXiv:2501.01765 , 2025. [23] J. Xu, G. Nan, S. Guan, S. Leng, Y. Liu, Z. Wang, Y. Ma, Z. Zhou, Y. Hou, and X. Tao, “Refining positive and toxic samples for dual safety self-alignment of llms with minimal human interventions,” IEEE Transactions on Information Forensics and Security , 2026. [24] W. Meng, F. Zhang, W. Yao, Z. Guo, Y. Li, C. Wei, and W. Chen, “Dia-logue injection attack: Jailbreaking llms through context manipulation,” 
+
+IEEE Transactions on Information Forensics and Security , 2026. [25] A. Wei, N. Haghtalab, and J. Steinhardt, “Jailbroken: How does llm safety training fail?” Advances in neural information processing systems ,vol. 36, pp. 80 079–80 110, 2023. [26] A. Zou, L. Phan, S. Chen, J. Campbell, P. Guo, R. Ren, A. Pan, X. Yin, M. Mazeika, A.-K. Dombrowski et al. , “Representation en-gineering: A top-down approach to ai transparency,” arXiv preprint arXiv:2310.01405 , 2023. [27] B. W. Lee, I. Padhi, K. Natesan Ramamurthy, E. Miehling, P. Dognin, M. Nagireddy, and A. Dhurandhar, “Programming refusal with con-ditional activation steering,” in International conference on learning representations , vol. 2025, 2025, pp. 90 960–90 985. [28] A. Arditi, O. Obeso, A. Syed, D. Paleka, N. Panickssery, W. Gurnee, and N. Nanda, “Refusal in language models is mediated by a single direction,” Advances in Neural Information Processing Systems , vol. 37, pp. 136 037–136 083, 2024. [29] J. Zhang, R. Chen, Q. Zhou, X. Deng, and W. Jiang, “Understanding and mitigating over-refusal for large language models via safety repre-sentation,” arXiv preprint arXiv:2511.19009 , 2025. [30] J. Zhao, J. Huang, Z. Wu, D. Bau, and W. Shi, “Llms encode harmfulness and refusal separately,” Advances in Neural Information Processing Systems , vol. 38, pp. 140 283–140 318, 2026. [31] A. Zou, L. Phan, J. Wang, D. Duenas, M. Lin, M. Andriushchenko, R. Wang, Z. Kolter, M. Fredrikson, and D. Hendrycks, “Improving alignment and robustness with circuit breakers,” Advances in Neural Information Processing Systems , vol. 37, pp. 83 345–83 373, 2024. [32] A. Yousefpour, T. Kim, R. S. Kwon, S. Lee, W. Jeung, S. Han, A. Wan, H. Ngan, Y. Yu, and J. Choi, “Representation bending for large language model safety,” in Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,2025, pp. 24 073–24 098. [33] H. Zhang, Z. Zhang, M. Wang, Z. Su, Y. Wang, Q. Wang, S. Yuan, E. Nie, X. Duan, F. Han et al. , “Locate, steer, and improve: A practi-cal survey of actionable mechanistic interpretability in large language models,” arXiv preprint arXiv:2601.14004 , 2026. [34] R. Chen, A. Arditi, H. Sleight, O. Evans, and J. Lindsey, “Persona vectors: Monitoring and controlling character traits in language models,” 
+
+arXiv preprint arXiv:2507.21509 , 2025. [35] R. Taori, I. Gulrajani, T. Zhang, Y. Dubois, X. Li, C. Guestrin, P. Liang, and T. B. Hashimoto, “Stanford alpaca: An instruction-following llama model,” 2023. [36] W. Jiang and S. Pan, “Metadefense: Defending fine-tuning based jailbreak attack before and during generation,” Advances in neural information processing systems , vol. 38, pp. 99 167–99 197, 2026. [37] P. J. Huber, “Robust estimation of a location parameter,” in Break-throughs in statistics: Methodology and distribution . Springer, 1992, pp. 492–518. [38] N. Panickssery, N. Gabrieli, J. Schulz, M. Tong, E. Hubinger, and A. M. Turner, “Steering llama 2 via contrastive activation addition,” arXiv preprint arXiv:2312.06681 , 2023. [39] Qwen, :, A. Yang, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Li, D. Liu, F. Huang, H. Wei, H. Lin, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Lin, K. Dang, K. Lu, K. Bao, K. Yang, L. Yu, M. Li, M. Xue, P. Zhang, Q. Zhu, R. Men, R. Lin, T. Li, T. Tang, T. Xia, X. Ren, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Wan, Y. Liu, Z. Cui, Z. Zhang, and Z. Qiu, “Qwen2.5 technical report,” 2025. [Online]. Available: https://arxiv.org/abs/2412.15115 [40] K. Lyu, H. Zhao, X. Gu, D. Yu, A. Goyal, and S. Arora, “Keeping llms aligned after fine-tuning: The crucial role of prompt templates,” Ad-vances in Neural Information Processing Systems , vol. 37, pp. 118 603– 118 631, 2024. [41] M. Mazeika, L. Phan, X. Yin, A. Zou, Z. Wang, N. Mu, E. Sakhaee, N. Li, S. Basart, B. Li et al. , “Harmbench: A standardized evaluation framework for automated red teaming and robust refusal,” arXiv preprint arXiv:2402.04249 , 2024. [42] M. Conover, M. Hayes, A. Mathur, J. Xie, J. Wan, S. Shah, A. Ghodsi, P. Wendell, M. Zaharia, and R. Xin, “Free dolly: Introducing the world’s first truly open instructiontuned llm,” 2023. [43] X. Qi, A. Panda, K. Lyu, X. Ma, S. Roy, A. Beirami, P. Mittal, and P. Henderson, “Safety alignment should be made more than just a few tokens deep,” in International Conference on Learning Representations ,vol. 2025, 2025, pp. 54 911–54 941. [44] P. R¨ ottger, H. Kirk, B. Vidgen, G. Attanasio, F. Bianchi, and D. Hovy, “Xstest: A test suite for identifying exaggerated safety behaviours in large language models,” in Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers) ,2024, pp. 5377–5400. [45] L. Jiang, K. Rao, S. Han, A. Ettinger, F. Brahman, S. Kumar, N. Mireshghallah, X. Lu, M. Sap, Y. Choi et al. , “Wildteaming at scale: From in-the-wild jailbreaks to (adversarially) safer language models,” Advances in Neural Information Processing Systems , vol. 37, pp. 47 094–47 165, 2024.

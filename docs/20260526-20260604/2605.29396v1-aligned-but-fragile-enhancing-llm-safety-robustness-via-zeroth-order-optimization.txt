@@ -1,0 +1,992 @@
+Title: Aligned but Fragile: Enhancing LLM Safety Robustness via Zeroth-Order Optimization
+
+URL Source: https://arxiv.org/pdf/2605.29396v1
+
+Published Time: Fri, 29 May 2026 00:47:22 GMT
+
+Number of Pages: 21
+
+Markdown Content:
+# Aligned but Fragile: Enhancing LLM Safety Robustness via Zeroth-Order Optimization 
+
+Zhihao Liu 1,2,* , Yifan Wu 1,2,* , Jian Lou 3, Di Wang 4, Yuxi Zhou 2, Yuke Hu 4, B 
+
+> 1
+
+The State Key Laboratory of Blockchain and Data Security, Zhejiang University  
+
+> 2
+
+Hangzhou High-Tech Zone (Binjiang) Institute of Blockchain and Data Security  
+
+> 3
+
+Sun Yat-sen University 4 KAUST zhihao_liu@zju.edu.cn; gbhyck@gmail.com; jian.lou@hoiying.net {di.wang, yuke.hu}@kaust.edu.sa; yuxizhou2025@bcds.org.cn 
+
+Abstract 
+
+Safety alignment for large language models (LLMs) aims to reduce harmful or unsafe behavior while preserving general utility. However, recent findings reveal that alignment effects can be fragile: lightweight post-alignment manipulations, such as parameter noise, activation noise, or quantization, can easily weaken the intended safety behavior. Prior efforts to improve robustness have primarily focused on data curation, modified alignment objectives, and safety-critical parameter identification, leaving the role of the optimizer itself largely unexplored. In this paper, we are the first to study the robustness of safety alignment from the perspective of the base optimizer. This optimizer-centric view naturally points to zeroth-order optimization, which provides a robustness-oriented signal by eval-uating safety alignment under perturbations. Based on this insight, we propose a hybrid framework that first performs standard first-order safety alignment and then applies zeroth-order refinement to improve robustness. Both theoretically and empirically, we show that only a few zeroth-order refinement steps can enhance robustness while preserving safety alignment. We further improve the efficiency of zeroth-order refinement by exploiting its inherent perturbation-based evaluations to estimate layer-wise robustness sensitivity, enabling the refinement process to concentrate updates on robustness-critical layers with modest training overhead. 
+
+1 Introduction 
+
+Large language models (LLMs) [ 1, 2] have demonstrated remarkable capabilities across a wide range of tasks, ranging from question answering to complex instruction following. With their growing deployment in real-world settings, concerns about their reliability, safety, and robustness have become a major concern [ 3]. To address these risks, developers introduce an additional safety alignment stage after pretraining, often through supervised fine-tuning or preference optimization. These methods mainly differ in alignment data, training objective, and model-level safety representations but are commonly optimized through gradient-based updates [ 4– 7 ]. This stage makes relatively small but targeted weight adjustments to discourage the generation of harmful, unethical, or dangerous content while preserving the model’s general utility and instruction-following capability [8, 9]. Despite recent progress in developing effective and efficient LLM safety alignment algorithms, achieving robust safety alignment remains a significant challenge. In particular, safety performance can deteriorate rapidly under post-alignment perturbations to model weights or intermediate acti-vations. Recent studies show that even small and generic disturbances can substantially weaken safety alignment: injecting Gaussian noise into model weights can cause otherwise aligned models to    
+
+> *Equal contribution. BCorresponding author.
+> Preprint.
+> arXiv:2605.29396v1 [cs.AI] 28 May 2026
+
+exhibit unsafe or misaligned behavior [ 10 ], while perturbations to specific intermediate activation layers can reliably weaken safety guardrails [ 11 , 12 ]. Beyond explicit noise injection, post-training compression techniques such as quantization may introduce approximation errors that weaken safety alignment [ 13 ]. These perturbation-induced failures suggest that safety alignment may be encoded by a sharp or overfitted safety boundary in parameter or activation space, where small deviations can move the model from refusal to unsafe compliance. Robust alignment therefore requires not only stronger safety signals, but also smoother local safety landscapes. Existing research on robust safety alignment has mainly focused on three directions: improving data-level robustness, redesigning objective-level alignment signals, and strengthening model-level safety representations. Data-level approaches improve robustness by curating or reweighting fine-tuning data [ 14 , 15 ]; objective-level approaches modify alignment losses to encourage more persistent refusal behavior [ 16 , 17 ]; and model-level approaches stabilize safety representations or protect safety-critical layers [ 18 – 20 ]. While effective, these methods typically rely on problem-specific modifications to the training data, alignment objective, or model internals. In contrast, the role of the 
+
+base optimizer itself, independent of such problem-wise and algorithm-level modifications, remains largely unexplored in shaping alignment robustness. The perturbation-induced failures discussed above suggest that robust alignment is also closely tied to the local geometry of the learned safety boundary, which can be shaped by the base optimizer itself. This motivates us to revisit zeroth-order (ZO) optimization as an optimizer-level mechanism for robust safety alignment. Unlike standard gradient-based updates, ZO estimates update directions by evaluating losses at randomly perturbed parameters, which can be viewed as optimizing a locally smoothed objective [ 21 ]. While recent work has mainly explored ZO methods for memory-efficient LLM fine-tuning [ 22 – 24 ] and LLM unlearning [ 25 , 26 ], its potential for improving alignment robustness remains underexplored. In this paper, we strive to improve the robustness of safety alignment through the lens of zeroth-order methods, which have been largely underexplored in this context. Zeroth-order optimization offers a promising route to alignment robustness as it evaluates how safety alignment behaves under perturbations. Our study consists of three main components. ❶ We empirically show that safety-aligned models remain fragile under simple perturbations: lightweight parameter- or activation-level noise can substantially weaken safety behavior. ❷ While ZO optimization can enhance alignment robustness, directly replacing first-order (FO) alignment with ZO optimization is ineffective due to its slower and less stable convergence. Therefore, we propose a hybrid refinement strategy that applies ZO updates after standard FO safety alignment. We show theoretically and empirically that a small amount of post-alignment ZO refinement can improve safety robustness with only modest computational overhead. ❸ Finally, we exploit the perturbation-based evaluations inherent to ZO optimization to estimate layer-wise robustness sensitivity, enabling a targeted refinement strategy that concentrates updates on robustness-critical layers, improving the efficiency and effectiveness of robustness-oriented safety alignment. Our contributions can be summarized as follows: • We are the first to comprehensively study the robustness of safety alignment against parameter and activation perturbations from the perspective of zeroth-order optimization. • We propose an FO–ZO hybrid optimization framework that integrates FO and ZO optimizers, combining ZO-induced robustness with FO-driven alignment effectiveness. • We show theoretically and empirically that a small amount of post-alignment ZO refinement can improve safety robustness with only modest computational overhead. 
+
+2 Background and Related Work 
+
+2.1 Safety Alignment in Large Language Models 
+
+Safety alignment aims to ensure that large language models (LLMs) generate outputs that are consistent with human values and safety constraints [ 17 , 27 , 28 ]. A standard paradigm is to post-train pretrained models using human feedback, such as Reinforcement Learning from Human Feedback (RLHF) [ 4]. Subsequent work further improves or simplifies this paradigm from different perspectives. Constitutional AI reduces the dependence on direct human feedback by using a set of human-written principles and AI feedback to improve harmlessness [ 29 ]; Safe RLHF explicitly separates helpfulness and harmlessness preferences and formulates safety alignment as a constrained 2optimization problem [ 30 ]; Direct Preference Optimization (DPO) directly optimizes language models from preference data without explicitly training a reward model or running reinforcement learning [ 5 ]; and recent reasoning-based alignment methods improve safety by training models to explicitly reason about safety requirements before generating final answers [31]. 
+
+2.2 Robustness of Safety Alignment 
+
+Prior work has identified several ways to compromise the safety behavior of aligned models. At the input level, jailbreak and adversarial prompting attacks can bypass safety guardrails by rewriting, obfuscating, or optimizing harmful instructions [ 32 – 34 ]. At the model level, safety behavior can be weakened by malicious or even benign fine-tuning [ 35 , 36 ], persistent backdoors [ 37 ], or interventions on refusal-related representations [ 38 ]. These results suggest that safety alignment may rely on mechanisms that are effective under normal conditions, yet remain fragile under adversarial inputs, distribution shifts, or post-training modifications. While many of these failures involve stronger attack capabilities or carefully engineered procedures, safety alignment can also be vulnerable to much simpler changes. Even generic perturbations, arising from quantization, parameter noise, activation noise, hardware faults, or other post-alignment modifications, may be sufficient to degrade the model’s safety behavior. Quantization reduces numerical precision to improve efficiency [ 39 ], but the induced approximation errors may alter model behavior; recent work further shows that quantization-related fault injection can weaken safety alignment [ 13 ]. Similarly, weight or activation perturbations can disturb internal representations and expose safety failures that are not visible under standard inference [40, 11, 12]. 
+
+2.3 Zeroth-Order Optimization 
+
+Zeroth-order (ZO) optimization decreases memory consumption by constructing gradient estimates by evaluating the objective at perturbed points in the parameter space, without requiring backpropa-gation [ 21 ]. Beyond its computational advantage, it offers a promising route to enhancing robustness by evaluating how the model behaves under perturbations. This intuition is further supported by a curvature-based connection: ZO optimization has been shown to favor flatter minima [ 41 ], which contribute to improved local robustness against small perturbations [ 42 ]. This perspective has mo-tivated prior work on using ZO optimization to train and adapt large models under constrained or noisy conditions [ 43 , 24 ]. More recently, zeroth-order methods have also been explored in alignment-related settings. Galatolo et al. [ 44 ] explore zeroth-order methods for LLM preference optimization, aiming to reduce memory usage and iteration time. In this work, we instead investigate zeroth-order optimization from the perspective of safety alignment robustness and show that it can enhance the resilience of LLM safety alignment against parameter and activation tampering. 
+
+3 Preliminaries 
+
+Zeroth-order gradient estimation approximates gradients from function evaluations at perturbed parameter points, without requiring explicit gradient information. 
+
+Definition 3.1 (Zeroth-order gradient estimation [ 45 ]) . Given model parameters θ ∈ R d and loss function f , the zeroth-order gradient on batch ξ is estimated as 
+
+∇fβ (θ, ξ ) = 12β (f (θ + βv, ξ ) − f (θ − βv, ξ )) v, (1) 
+
+where v ∼ N (0 , Id) and β is the ZO scale parameter. 
+
+Lipschitz continuity and smoothness control the variation of the objective and its gradient, serv-ing as standard assumptions in FO and ZO convergence analyses [ 22 , 46 ]. We also adopt the Polyak–Łojasiewicz (PL) condition, a common gradient-dominance assumption for deriving linear convergence-type guarantees in nonconvex settings [47]. 
+
+Definition 3.2 (Lipschitz continuity) . The function f (θ) is L-Lipschitz if there exists a constant 
+
+L > 0 such that, for all θ, θ ′ ∈ Rd we have 
+
+|f (θ) − f (θ′)| ≤ L∥θ − θ′∥.
+
+3Figure 1: Overview of our robustness-oriented safety alignment framework. We first show that simple post-alignment perturbations can substantially increase ASR in safety-aligned LLMs. We then apply ZO refinement after FO safety alignment and target robustness-critical layers identified by layer-wise sensitivity scores for more efficient robustness improvement. 
+
+Definition 3.3 (Smoothness) . Let f (θ) be differentiable. The function f (θ) is h-smooth if its gradient is h-Lipschitz for all θ, θ ′ ∈ Rd, namely, 
+
+∥∇ f (θ) − ∇ f (θ′)∥ ≤ h∥θ − θ′∥.
+
+Definition 3.4 (Polyak–Łojasiewicz condition) . The function fβ (θ) satisfies the μ-PL condition if for any θ ∈ R d we have 12 ∥∇ fβ (θ)∥2 ≥ μ fβ (θ) − f ⋆β
+
+.
+
+4 Methodology 
+
+In this section, we present our framework for improving the robustness of safety alignment, as illustrated in Figure 1. Motivated by the fragility of aligned models under simple perturbations, we use the perturbation-based evaluations inherent to ZO optimization to identify robustness-critical layers and then concentrate ZO refinement on these layers. 
+
+4.1 Zeroth-Order Robustness Refinement 
+
+We introduce ZO robustness refinement as a post-alignment stage, which improves the robustness of an already FO-aligned model rather than replacing FO safety alignment. While FO efficiently optimizes the alignment objective, ZO is then used to enhance stability under perturbations. 
+
+Algorithmic framework. Algorithm 1 summarizes our three-stage pipeline. ① We first perform FO safety alignment from θ0 to obtain an aligned model θfo . ② We then compute layer-wise robustness sensitivity scores S(ℓ) and select the top-m layers as Srob ; the score construction is detailed in Section 4.2. ③ Starting from θfo , we apply targeted ZO refinement only to Srob , by masking ZO perturbation directions outside the selected layers. Thus, the pipeline first identifies robustness-critical layers and then concentrates ZO updates on the parameters most relevant to robustness degradation. We next provide a theoretical analysis to justify the design of our FO-to-ZO pipeline. Specifically, we aim to answer the following two questions. 
+
+Question 1: Why ZO after FO alignment? We first explain why ZO is used as a refinement stage rather than as a replacement for the entire FO alignment process. Although ZO can optimize the smoothed objective using only function evaluations, its finite-difference estimator imposes additional dimension- and smoothing-dependent stepsize constraints, making convergence slower than FO. Therefore, using ZO throughout the whole alignment stage would be unnecessarily expensive. Instead, our pipeline first uses FO optimization to efficiently reach a well-aligned solution, and then applies a small number of ZO steps to refine the local robustness of this solution. To make this distinction precise, we analyze the convergence behavior of ZO optimization on the smoothed objective fβ . The following result shows that ZO is a valid optimization procedure, but it requires a more restrictive stepsize than its FO counterpart. 4Algorithm 1 Sensitivity-Guided ZO Robustness Refinement 
+
+Require: Initial parameters θ0 = ( θ1, . . . , θ L), loss f (θ; ξ), stepsizes ηfo , η zo , ZO scale β, FO steps 
+
+Tfo , ZO steps Tzo , selected layer number m.
+
+Ensure: Robustly refined parameters θzo . 
+
+> 1:
+
+Stage I: FO safety alignment.  
+
+> 2:
+
+Initialize θ ← θ0. 
+
+> 3:
+
+for t = 0 , . . . , T fo − 1 do  
+
+> 4:
+
+Sample ξt and update θ ← θ − ηfo ∇θ f (θ; ξt). 
+
+> 5:
+
+end for  
+
+> 6:
+
+Set θfo ← θ. 
+
+> 7:
+
+Stage II: Robustness-aware layer selection.  
+
+> 8:
+
+Compute layer-wise sensitivity scores {S(ℓ)}Lℓ=1 . 
+
+> 9:
+
+Select robustness-critical layers Srob = Top -m{S(ℓ)}Lℓ=1 . 
+
+> 10:
+
+Stage III: Targeted ZO robustness refinement.  
+
+> 11:
+
+Initialize θ ← θfo . 
+
+> 12:
+
+for t = 0 , . . . , T zo − 1 do  
+
+> 13:
+
+Sample ξt and vt ∼ N (0 , I d). 
+
+> 14:
+
+Mask non-selected layers: ev(ℓ) 
+
+> t
+
+= v(ℓ) 
+
+> t
+
+· 1{ℓ ∈ S rob }. 
+
+> 15:
+
+Evaluate ℓ± 
+
+> t
+
+= f (θ ± βevt; ξt). 
+
+> 16:
+
+Estimate gzo  
+
+> t
+
+= dS 
+
+> 2β
+
+(ℓ+ 
+
+> t
+
+− ℓ− 
+
+> t
+
+)evt. 
+
+> 17:
+
+Update θ ← θ − ηzo gzo  
+
+> t
+
+. 
+
+> 18:
+
+end for  
+
+> 19:
+
+return θ.
+
+Assumption 4.1 (Local low-rank curvature upper bound) . Let fβ : Rd → R denote the smoothed objective. For every iterate θt, there exists a positive semidefinite matrix Ht such that, for all θ on the segment between θt and θt+1 ,
+
+∇2fβ (θ) ⪯ Ht,
+
+with ∥Ht∥op ≤ ℓ and effective rank erank( Ht) ≤ r.
+
+Theorem 4.2 (Convergence of ZO optimization) . Suppose Assumption 4.1 holds and the loss function 
+
+f (θ) is L-Lipschitz and satisfies the μ-PL condition, by setting η ≤ min 
+
+n 1 
+
+> ℓr
+
+, με  
+
+> 64 ℓr d β 2L4
+
+o
+
+. To reach 
+
+Efβ (θt) − f ⋆β
+
+ ≤ ε, it suffices to take 
+
+t ≥ 1
+
+μη log 2 fβ (θ0) − f ⋆β
+
+
+
+ε .
+
+Remark 4.3 (Why ZO refinement after FO alignment?) . The FO and ZO convergence bounds have the same iteration form, but they use different stepsizes. For FO optimization, it suffices to take 
+
+ηfo < 1
+
+ℓr , tfo ≥ 1
+
+μη fo 
+
+log 2 f (θ0) − f ⋆
+
+ε .
+
+For ZO optimization, the stepsize must satisfy 
+
+ηzo ≤ min 
+
+ 1
+
+ℓr , με 
+
+64 ℓr d β 2L4
+
+
+
+, tzo ≥ 1
+
+μη zo 
+
+log 2 fβ (θ0) − f ⋆β
+
+
+
+ε .
+
+The second constraint on ηzo comes from the variance and smoothing bias of the ZO estimator. As a result, ZO usually requires more iterations than FO to reach the same optimization accuracy. This motivates our design: FO optimization is used to efficiently obtain a safety-aligned model, while ZO is applied only after FO alignment as a robustness refinement stage. 
+
+Question 2: How does ZO refinement improve robustness? The convergence result above explains why ZO is a valid post-alignment optimization procedure. We now show why such refinement can improve robustness after FO alignment. Let θfo be the model obtained by FO safety alignment on the objective f . Although θfo may perform well on the alignment objective, it does not explicitly 5Figure 2: Layer-wise comparison between alignment-oriented pruning scores and robustness-related sensitivity scores. All scores are min–max normalized for visualization. SNIP [ 48 ] and WANDA [ 49 ]exhibit different layer-wise patterns from perturbation- and quantization-based robustness sensitivity. control the loss landscape in the surrounding parameter neighborhood. To quantify how much safety alignment is weakened by parameter perturbations, we define the perturbation robustness gap as 
+
+Rob ρ(θ) := Ev∼N (0 ,I d)
+
+f (θ + ρv ) − f (θ),
+
+where ρ > 0 is the perturbation scale. A larger value of Rob ρ(θ) means that the loss increases more significantly under parameter perturbations, indicating weaker robustness. Even when FO alignment has already reached a stationary point of the objective f , ZO refinement can still make progress on the neighborhood-averaged objective fρ. The following theorem formalizes this intuition. 
+
+Theorem 4.4 (One-step ZO refinement improves robustness) . Under the assumption that the loss function f (θ) is h-smooth and L-Lipschitz. Suppose θfo satisfies ∇f (θfo ) = 0 , and let θzo 1 be obtained by one ZO step optimizing fρ. For ηzo < 1 
+
+> h
+
+· ||∇ fρ(θfo )|| 2 
+
+> ||∇ fρ(θfo )|| 2+128 dβ 2L4
+
+, we can have that 
+
+E[Rob ρ(θzo 1 )] < Rob ρ(θfo ).
+
+Theorem 4.4 formalizes the main intuition behind our framework. Even after FO alignment has converged, the aligned model may remain non-robust in a local neighborhood of its parameters. A ZO refinement step directly optimizes this local behavior through perturbed function evaluations, and can therefore improve robustness without retraining the model from scratch. 
+
+4.2 Robustness-Aware Layer Selection 
+
+The second stage of Algorithm 1 determines which layers should be updated during targeted ZO refinement. Rather than adopting generic pruning-based importance scores, we design a robustness-aware criterion that is directly aligned with the goal of refinement. The key idea is simple: if perturbing a layer substantially weakens safety alignment, then this layer is more likely to be responsible for robustness degradation and should be prioritized during ZO refinement. For each layer ℓ, we define a layer-wise robustness sensitivity score S(ℓ) by combining two complementary perturbation effects: 
+
+S(ℓ) = Snoise (ℓ) + λS quant (ℓ),
+
+where λ balances the contribution of quantization-based sensitivity. The first term captures sensitivity to random local parameter perturbations, which matches the perturbation-based evaluation principle of ZO optimization. The second term captures sensitivity to structured deployment perturbations such as quantization. Together, S(ℓ) measures how much safety alignment is weakened when layer ℓ
+
+is locally or structurally perturbed. 
+
+Random perturbation sensitivity. For the random perturbation term, we perturb only layer ℓ while keeping all other layers fixed: 
+
+θ(ℓ, noise) =  θ1, . . . , θ ℓ−1, θ ℓ + ρv ℓ, θ ℓ+1 , . . . , θ L
+
+, vℓ ∼ N (0 , I ),
+
+where ρ is the perturbation scale. The corresponding sensitivity is defined as 
+
+Snoise (ℓ) = f  θ(ℓ, noise) ; Dsafe 
+
+ − f  θ; Dsafe 
+
+.
+
+This term measures how strongly safety alignment is weakened by a ZO-like local perturbation applied only to layer ℓ.6Table 1: Safety robustness and utility of Llama-3-8B-Instruct under different perturbations. Arrows indicate changes relative to the unperturbed original model. Higher PPL and ASR indicate worse performance, while lower lm-eval indicates worse utility.                                                                                                                            
+
+> Perturbation Level PPL ↓lm-eval ↑HarmBench ASR ↓LlamaGuard3 ASR ↓AdvBench ASR ↓
+> Original –8.2823 0.6777 0.1067 0.0833 0.1333 Quantization W4A16 9.0337 (↑0.7514) 0.6532 (↓0.0245) 0.2100 (↑0.1033) 0.1833 (↑0.1000) 0.2283 (↑0.0950)
+> Quantization W4A4 13.8641 (↑5.5818) 0.5603 (↓0.1174) 0.2567 (↑0.1500) 0.3700 (↑0.2867) 0.4133 (↑0.2800)
+> Weight noise σ= 1 10.4272 (↑2.1449) 0.6491 (↓0.0286) 0.1467 (↑0.0400) 0.1100 (↑0.0267) 0.1633 (↑0.0300)
+> Weight noise σ= 1 .513.8880 (↑5.6057) 0.6225 (↓0.0552) 0.1567 (↑0.0500) 0.1533 (↑0.0700) 0.2167 (↑0.0834)
+> Weight noise σ= 2 20.7501 (↑12.4678) 0.5993 (↓0.0784) 0.1667 (↑0.0600) 0.2233 (↑0.1400) 0.2833 (↑0.1500)
+> Activation noise α= 0 .05 9.5776 (↑1.2953) 0.6496 (↓0.0281) 0.1417 (↑0.0350) 0.1200 (↑0.0367) 0.1650 (↑0.0317)
+> Activation noise α= 0 .08 12.3162 (↑4.0339) 0.6058 (↓0.0719) 0.2033 (↑0.0966) 0.1933 (↑0.1100) 0.2367 (↑0.1034)
+> Activation noise α= 0 .10 15.9009 (↑7.6186) 0.5687 (↓0.1090) 0.2567 (↑0.1500) 0.3733 (↑0.2900) 0.3150 (↑0.1817)
+> Activation noise α= 0 .12 22.3274 (↑14.0451) 0.5181 (↓0.1596) 0.2333 (↑0.1266) 0.6267 (↑0.5434) 0.5600 (↑0.4267)
+
+Quantization sensitivity. We further include a quantization-based term to account for structured perturbations that commonly arise in practical deployment. Let Q(·) denote the quantization operator. For each layer ℓ, we quantize only this layer: 
+
+θ(ℓ, quant) =  θ1, . . . , θ ℓ−1, Q (θℓ), θ ℓ+1 , . . . , θ L
+
+.
+
+The quantization sensitivity is defined as 
+
+Squant (ℓ) = f  θ(ℓ, quant) ; Dsafe 
+
+ − f  θ; Dsafe 
+
+.
+
+This term measures how much safety alignment is weakened when layer ℓ is exposed to quantization. After computing S(ℓ) for all layers, we select the layers with the largest scores: 
+
+Srob = Top -m{S(ℓ)}Lℓ=1 .
+
+The selected set Srob is then used as the update target in the targeted ZO refinement stage. At each refinement step, the random ZO direction is masked outside Srob , so that only robustness-critical layers are perturbed and updated. In this way, parameter selection and ZO optimization are coupled through the same perturbation-based principle: perturbations are first used to locate vulnerable layers, and ZO updates are then concentrated on these layers to improve robustness efficiently. 
+
+Pruning scores do not capture safety robustness. We compare our robustness-aware scores with SNIP [ 48 ] and WANDA [ 49 ] in Figure 2. Although pruning-based scores can indicate layers important for maintaining safety alignment, they do not consistently align with robustness sensitivity under perturbation or quantization. This mismatch suggests that pruning scores alone are insufficient for targeted ZO refinement, as they may overlook layers that are critical to safety robustness. 
+
+5 Experiments 
+
+5.1 Experiment Setups Models and Datasets. We conduct experiments on Llama-3-8B-Instruct [ 50 ] and Qwen2-7B-Instruct [ 2], using them as the base safety-aligned models for fine-tuning and robustness refinement. We use CB-Safety [51] for both safety alignment and robustness refinement. 
+
+Evaluation Metrics. We evaluate utility and safety using three types of metrics. For util-ity, we report WikiText-2 perplexity (PPL) [ 52 ] and the average zero-shot accuracy over 11 
+
+lm-evaluation-harness tasks [ 53 ]. For safety, we report ASR on the non-hash HarmBench split [ 54 ] using three measures: HarmBench ASR with the official HarmBench-Llama-2-13B-cls classifier, LlamaGuard3 ASR with Llama Guard 3-8B, and AdvBench-style refusal-prefix ASR [ 33 ]. Lower PPL and ASR are better, while higher lm-eval accuracy is better. 
+
+Perturbation Settings. We consider three simple post-alignment perturbations. Quantization 
+
+reduces numerical precision during deployment, where W4A16 denotes 4-bit weight quantization with 16-bit activations, and W4A4 denotes 4-bit weights with 4-bit activations. Parameter noise 
+
+7Table 2: Robustness and utility on Llama-3-8B-Instruct. We report the original model, 100-step FO safety alignment, and subsequent layer-robustness-aware ZO refinement. For Stage I, arrows indicate changes relative to the original model; for Stage II, arrows indicate changes relative to the 100-step FO model. Lower PPL and ASR are better, while higher lm-eval is better.                                                                                                                                                      
+
+> Perturbation Level PPL ↓lm-eval ↑HarmBench ASR ↓LlamaGuard3 ASR ↓AdvBench ASR ↓
+> Stage I: 100-step FO Safety Alignment (change vs. Original)
+> ––9.4069 (↑1.1246) 0.6653 (↓0.0124) 0.0667 (↓0.0400) 0.0567 (↓0.0266) 0.0733 (↓0.0600)
+> Quantization W4A16 10.3574 (↑1.3237) 0.6272 (↓0.0260) 0.0900 (↓0.1200) 0.0833 (↓0.1000) 0.1367 (↓0.0916)
+> Quantization W4A4 15.0531 (↑1.1890) 0.5445 (↓0.0158) 0.1467 (↓0.1100) 0.2500 (↓0.1200) 0.3167 (↓0.0966)
+> Weight Noise σ= 2 21.7101 (↑0.9600) 0.6023 (↑0.0030) 0.1200 (↓0.0467) 0.1067 (↓0.1166) 0.1467 (↓0.1366)
+> Activation Noise α= 0 .08 13.3357 (↑1.0195) 0.5991 (↓0.0067) 0.1533 (↓0.0500) 0.1422 (↓0.0511) 0.1667 (↓0.0700)
+> Activation Noise α= 0 .10 16.7568 (↑0.8559) 0.5664 (↓0.0023) 0.2111 (↓0.0456) 0.2600 (↓0.1133) 0.2644 (↓0.0506)
+> Stage II: Layer-robustness-aware ZO Refinement (change vs. Stage I)
+> ––9.4229 (↑0.0160) 0.6655 (↑0.0002) 0.0700 (↑0.0033) 0.0567 (→0.0000) 0.0767 (↑0.0034)
+> Quantization W4A16 10.4091 (↑0.0517) 0.6220 (↓0.0052) 0.0900 (→0.0000) 0.0733 (↓0.0100) 0.1000 (↓0.0367)
+> Quantization W4A4 14.4467 (↓0.6064) 0.5440 (↓0.0005) 0.1233 (↓0.0234) 0.1767 (↓0.0733) 0.2733 (↓0.0434)
+> Weight Noise σ= 2 21.5337 (↓0.1764) 0.6137 (↑0.0114) 0.1067 (↓0.0133) 0.0967 (↓0.0100) 0.1556 (↑0.0089)
+> Activation Noise α= 0 .08 13.3717 (↑0.0360) 0.6039 (↑0.0048) 0.1367 (↓0.0166) 0.1244 (↓0.0178) 0.1567 (↓0.0100)
+> Activation Noise α= 0 .10 16.8278 (↑0.0710) 0.5683 (↑0.0019) 0.1989 (↓0.0122) 0.2367 (↓0.0233) 0.2333 (↓0.0311)
+
+adds absolute Gaussian noise to all model parameters, controlled by the noise scale σ. Activation noise injects Gaussian noise into hidden states, with the noise magnitude scaled by the standard deviation of the corresponding activations and controlled by the relative scale α.
+
+5.2 Safety Alignment Remains Fragile under Simple Perturbations 
+
+Table 1 shows that Llama-3-8B-Instruct remains fragile under simple post-alignment perturbations. Both parameter-level perturbations, including quantization and weight noise, and activation-level noise consistently increase ASR. The degradation becomes more severe under stronger perturbations, such as W4A4 quantization or larger activation noise. These results suggest that safety alignment is effective in the standard setting but remains vulnerable to lightweight parameter- and activation-level perturbations. Additional results on Qwen2-7B-Instruct are reported in Appendix C. 
+
+5.3 FO Safety Alignment Improves Safety Ability, while ZO Refinement Enhances Robustness 
+
+Table 2 shows that 100-step FO safety alignment substantially reduces ASR across all settings, mainly by strengthening the model’s overall safety alignment ability . In contrast, the subsequent layer-robustness-aware ZO refinement is designed as a targeted robustness enhancement stage. Although it introduces only small changes to PPL and lm-eval, it further reduces ASR in most perturbed settings, especially under W4A4 quantization and activation noise. These results indicate that FO alignment is effective for acquiring safety behavior, while layer-robustness-aware ZO refinement further strengthens the robustness against post-alignment perturbations. Consistent results are also observed on Qwen2-7B-Instruct in Appendix C. 
+
+5.4 Efficiency Analysis: Training Time and Storage Overhead 
+
+Table 3: Runtime and GPU memory comparison. 
+
+Metric FO ZO 
+
+Runtime 1146.8 s 152.11 s (0.13 ×)
+
+Peak memory 82024 MiB 26421 MiB (0.32 ×)
+
+Table 3 compares the cost of the FO alignment stage and the subsequent ZO robustness refine-ment stage. FO training is used to establish safety alignment, while ZO refinement is applied after-ward to improve robustness. The ZO stage adds only 152 .11 seconds on top of the 1146 .8-second FO alignment stage, increasing the total training time by about 13 .3% . It also uses only 0.32 × the peak GPU memory of FO training. These results indicate that ZO refinement provides a lightweight post-alignment robustness enhancement with modest additional cost. 8Table 4: Effect of ZO robustness refinement on safety benchmarks under different perturbations. Each entry reports the ASR after FO+ZO refinement, with the change relative to the FO-aligned model shown in parentheses. Lower ASR indicates stronger safety robustness.                                                    
+
+> Benchmark Quantization Weight Noise Activation Noise W4A16 W4A4 σ= 1 σ= 2 α= 0 .05 α= 0 .08
+> HarmBench ASR ↓0.0667 (↓0.0233) 0.1400 (↓0.0067) 0.0756 (→0.0000) 0.1200 (→0.0000) 0.0789 (↓0.0100) 0.1444 (↓0.0089)
+> LlamaGuard3 ASR ↓0.0567 (↓0.0266) 0.1967 (↓0.0533) 0.0611 (↓0.0011) 0.1067 (→0.0000) 0.0656 (↓0.0088) 0.1322 (↓0.0100)
+> AdvBench ASR ↓0.0833 (↓0.0534) 0.3333 (↑0.0166) 0.0867 (↓0.0011) 0.1467 (→0.0000) 0.0822 (↓0.0067) 0.1567 (↓0.0100)
+
+Figure 3: Effect of replacing late-stage FO updates with ZO refinement. We compare 100-step FO, 110-step FO, and 100-step FO followed by 10-step ZO, reporting the average ASR over HarmBench, LlamaGuard3, and AdvBench. Replacing the last 10 FO steps with ZO consistently lowers ASR across all perturbations while reducing memory cost by avoiding backpropagation. 
+
+5.5 Ablation Study Zeroth-Order Refinement Alone Improves Robustness. 
+
+Table 4 shows that replacing late-stage FO updates with ZO refinement already improves safety ro-bustness, even without robustness-critical layer selection. Across most perturbation settings, FO+ZO achieves lower ASR than the FO-aligned model on HarmBench, LlamaGuard3, and AdvBench. The gain is most evident under W4A16 quantization, where ASR drops from 0.090 /0.083 /0.137 to 
+
+0.067 /0.057 /0.083 across the three benchmarks. Under activation noise, FO+ZO also consistently reduces ASR at both α = 0 .05 and α = 0 .08 . Overall, these results show that ZO refinement alone can provide post-alignment robustness gains before introducing robustness-critical layer selection. 
+
+Figure 4: HarmBench ASR after ZO refinement with different layer-selection strategies. Lower ASR is better. Robustness-aware selection is con-sistently best or comparable across perturbations. 
+
+Replacing Late-Stage FO with ZO Improves Robustness and Reduces Memory. We further study whether the robustness gain comes from additional training steps or from the use of ZO refinement itself. To this end, we compare three variants: 100-step FO alignment, continued 110-step FO alignment, and 100-step FO alignment followed by 10-step ZO refinement. The com-parison between 110-step FO and 100-step FO + 10-step ZO is particularly important, since both use the same total number of optimization steps, but differ in the optimizer used during the final stage. As shown in Figure 3, replacing the last few FO steps with ZO refinement consistently improves robustness compared with simply continuing FO training. Under quantization, weight noise, and activation noise, the FO+ZO variant achieves lower average ASR across the three safety benchmarks. Meanwhile, ZO refinement avoids backpropagation-based gradient computation and therefore reduces GPU memory consumption during the refinement stage. These results suggest that late-stage ZO refinement provides a better robustness–efficiency trade-off than continued FO fine-tuning. 
+
+Layer-Wise Robustness Selection Enables Stronger ZO Refinement. Figure 4 compares different parameter-selection strategies for ZO robustness refinement. Robustness-aware selection achieves the lowest HarmBench ASR across all perturbation settings, showing that it can effectively identify 9layers that are most responsible for safety degradation under perturbations. In contrast, SNIP and WANDA perform well under weight noise but lead to noticeably higher ASR under perturbation. This suggests that the proposed robustness-aware criterion provides a more reliable signal for targeted ZO refinement than the pruning-based importance scores. 
+
+6 Conclusion 
+
+In this work, we study the robustness of safety-aligned LLMs under simple post-alignment perturba-tions, including quantization, weight noise, and activation noise. We theoretically and empirically show that standard safety alignment can remain fragile, and propose a perturbation-guided FO-to-ZO refinement framework where FO establishes safety alignment and ZO further improves robustness. By identifying robustness-critical layers, we restrict ZO updates to these layers for more efficient refinement. Future work includes extending our layer-level selection to finer-grained robustness attribution at the module, neuron, or parameter level. 
+
+References 
+
+[1] H. Touvron, L. Martin, K. Stone, P. Albert, A. Almahairi, Y. Babaei, N. Bashlykov, S. Batra, P. Bhargava, S. Bhosale et al. , “Llama 2: Open foundation and fine-tuned chat models,” arXiv preprint arXiv:2307.09288 , 2023. [2] A. C. Qwen Team, “Qwen2 technical report,” https://qwen2.org/paper/, 2025. [3] L. Weidinger, J. Mellor, M. Rauh, C. Griffin, J. Uesato, P.-S. Huang, M. Cheng, M. Glaese, B. Balle, A. Kasirzadeh et al. , “Ethical and social risks of harm from language models,” arXiv preprint arXiv:2112.04359 , 2021. [4] L. Ouyang et al. , “Training language models to follow instructions with human feedback,” arXiv preprint arXiv:2203.02155 , 2022. [5] R. Rafailov et al. , “Direct preference optimization: Your language model is secretly a reward model,” arXiv preprint arXiv:2305.18290 , 2023. [6] K. Ethayarajh, W. Xu, N. Muennighoff, D. Jurafsky, and D. Kiela, “Kto: Model alignment as prospect theoretic optimization,” arXiv preprint arXiv:2402.01306 , 2024. [7] M. Y. Guan, M. Joglekar, E. Wallace, S. Jain, B. Barak, A. Helyar, R. Dias, A. Vallone, H. Ren, J. Wei et al. , “Deliberative alignment: Reasoning enables safer language models,” 
+
+SuperIntelligence-Robotics-Safety & Alignment , vol. 2, no. 3, 2025. [8] S. Gehman, S. Gururangan, M. Sap, Y. Choi, and N. A. Smith, “Realtoxicityprompts: Evaluating neural toxic degeneration in language models,” in Findings of the association for computational linguistics: EMNLP 2020 , 2020, pp. 3356–3369. [9] Y. Liu, G. Deng, Z. Xu, Y. Li, Y. Zheng, Y. Zhang, L. Zhao, T. Zhang, K. Wang, and Y. Liu, “Jail-breaking chatgpt via prompt engineering: An empirical study,” arXiv preprint arXiv:2305.13860 ,2023. [10] C. Tice, P. A. Kreer, N. Helm-Burger, P. S. Shahani, F. Ryzhenkov, T. van der Weij, F. Hofstätter, and J. Haimes, “Sandbag detection through model impairment,” in Workshop on Socially Responsible Language Modelling Research , 2024. [11] J. Clymer, C. Juang, and S. Field, “Poser: Unmasking alignment faking llms by manipulating their internals,” arXiv preprint arXiv:2405.05466 , 2024. [12] P. S. Shahani, K. E. Miandoab, and M. Scheutz, “Noise injection systemically degrades large language model safety guardrails,” arXiv preprint arXiv:2505.13500 , 2025. [13] N. Zahran, A. Tahmasivand, I. Alouani, K. Khasawneh, and M. Fouda, “On jailbreaking quantized language models through fault injection attacks,” in Proceedings of the Great Lakes Symposium on VLSI 2025 , 2025, pp. 554–561. 10 [14] X. Liu, J. Liang, M. Ye, and Z. Xi, “Robustifying safety-aligned large language models through clean data curation,” arXiv preprint arXiv:2405.19358 , 2024. [15] H. Shen, P.-Y. Chen, P. Das, and T. Chen, “Seal: Safety-enhanced aligned llm fine-tuning via bilevel data selection,” in International Conference on Learning Representations , 2025. [16] X. Qi, A. Panda, K. Lyu, X. Ma, S. Roy, A. Beirami, P. Mittal, and P. Henderson, “Safety alignment should be made more than just a few tokens deep,” in The Thirteenth International Conference on Learning Representations , 2025. [17] X. Zhao, W. Cai, T. Shi, D. Huang, L. Lin, S. Mei, and D. Song, “Improving llm safety alignment with dual-objective optimization,” in Forty-second International Conference on Machine Learning , 2025. [18] T. Huang, S. Hu, and L. Liu, “Vaccine: Perturbation-aware alignment for large language models against harmful fine-tuning attack,” Advances in Neural Information Processing Systems , vol. 37, pp. 74 058–74 088, 2024. [19] D. Rosati, J. Wehner, K. Williams, Ł. Bartoszcze, D. Atanasov, R. Gonzales, S. Majumdar, C. Maple, H. Sajjad, and F. Rudzicz, “Representation noising: A defence mechanism against harmful finetuning,” Advances in Neural Information Processing Systems , vol. 37, pp. 12 636– 12 676, 2024. [20] S. Li, L. Yao, L. Zhang, and Y. Li, “Safety layers in aligned large language models: The key to llm security,” in The Thirteenth International Conference on Learning Representations , 2025. [21] Y. Nesterov and V. Spokoiny, “Random gradient-free minimization of convex functions,” Foun-dations of Computational Mathematics , 2017. [22] S. Malladi, T. Gao, E. Nichani, A. Damian, J. D. Lee, D. Chen, and S. Arora, “Fine-tuning language models with just forward passes,” Advances in Neural Information Processing Systems ,vol. 36, pp. 53 038–53 075, 2023. [23] Y. Zhang, P. Li, J. Hong, J. Li, Y. Zhang, W. Zheng, P.-Y. Chen, J. D. Lee, W. Yin, M. Hong 
+
+et al. , “Revisiting zeroth-order optimization for memory-efficient llm fine-tuning: A benchmark,” 
+
+arXiv preprint arXiv:2402.11592 , 2024. [24] Z. Liu, J. Lou, W. Bao, Y. Hu, W. Wang, Z. Qin, and K. Ren, “Differentially private zeroth-order methods for scalable large language model fine-tuning,” IEEE Transactions on Information Forensics and Security , 2026. [25] C. Zhang, C. Yang, Q. Tan, J. Liu, A. Li, Y. Wang, J. Lu, J. Wang, and G. Yuan, “Towards memory-efficient and sustainable machine unlearning on edge using zeroth-order optimizer,” in 
+
+Proceedings of the Great Lakes Symposium on VLSI 2025 , 2025, pp. 227–232. [26] Y. Lang, Y. Zhang, C. Fan, C. Wang, J. Jia, and S. Liu, “Downgrade to upgrade: Optimizer sim-plification enhances robustness in llm unlearning,” 14th International Conference on Learning Representations, ICLR 2026 , 2026. [27] K. Wang, G. Zhang, Z. Zhou, J. Wu, M. Yu, S. Zhao, C. Yin, J. Fu, Y. Yan, H. Luo et al. , “A comprehensive survey in llm (-agent) full stack safety: Data, training and deployment,” arXiv preprint arXiv:2504.15585 , 2025. [28] J. Ji, D. Hong, B. Zhang, B. Chen, J. Dai, B. Zheng, T. A. Qiu, J. Zhou, K. Wang, B. Li 
+
+et al. , “Pku-saferlhf: Towards multi-level safety alignment for llms with human preference,” in Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , 2025, pp. 31 983–32 016. [29] Y. Bai, S. Kadavath, S. Kundu, A. Askell, J. Kernion, A. Jones, A. Chen, A. Goldie, A. Mirho-seini, C. McKinnon et al. , “Constitutional ai: Harmlessness from ai feedback,” arXiv preprint arXiv:2212.08073 , 2022. [30] J. Dai, X. Pan, R. Sun, J. Ji, X. Xu, M. Liu, Y. Wang, and Y. Yang, “Safe rlhf: Safe reinforce-ment learning from human feedback,” in The Twelfth International Conference on Learning Representations , 2024. 11 [31] Y. Mou, Y. Luo, S. Zhang, and W. Ye, “Saro: Enhancing llm safety through reasoning-based alignment,” arXiv preprint arXiv:2504.09420 , 2025. [32] A. Wei, N. Haghtalab, and J. Steinhardt, “Jailbroken: How does llm safety training fail?” 
+
+Advances in neural information processing systems , vol. 36, pp. 80 079–80 110, 2023. [33] A. Zou, Z. Wang, N. Carlini, M. Nasr, J. Z. Kolter, and M. Fredrikson, “Universal and trans-ferable adversarial attacks on aligned language models,” arXiv preprint arXiv:2307.15043 ,2023. [34] X. Shen, Z. Chen, M. Backes, Y. Shen, and Y. Zhang, “" do anything now": Characterizing and evaluating in-the-wild jailbreak prompts on large language models,” in Proceedings of the 2024 on ACM SIGSAC Conference on Computer and Communications Security , 2024, pp. 1671–1685. [35] X. Qi, Y. Zeng, T. Xie, P.-Y. Chen, R. Jia, P. Mittal, and P. Henderson, “Fine-tuning aligned language models compromises safety, even when users do not intend to!” in International Conference on Learning Representations , 2024. [36] X. Yang, X. Wang, Q. Zhang, L. Petzold, W. Y. Wang, X. Zhao, and D. Lin, “Shadow alignment: The ease of subverting safely-aligned language models,” arXiv preprint arXiv:2310.02949 ,2023. [37] E. Hubinger, C. Denison, J. Mu, M. Lambert, M. Tong, M. MacDiarmid, T. Lanham, D. M. Ziegler, T. Maxwell, N. Cheng et al. , “Sleeper agents: Training deceptive llms that persist through safety training,” arXiv preprint arXiv:2401.05566 , 2024. [38] A. Arditi, O. Obeso, A. Syed, D. Paleka, N. Panickssery, W. Gurnee, and N. Nanda, “Refusal in language models is mediated by a single direction,” Advances in Neural Information Processing Systems , vol. 37, pp. 136 037–136 083, 2024. [39] T. Dettmers et al. , “Llm.int8(): 8-bit matrix multiplication for transformers at scale,” arXiv preprint arXiv:2208.07339 , 2022. [40] C. Tice, P. A. Kreer, N. Helm-Burger, P. S. Shahani, F. Ryzhenkov, F. Roger, C. Neo, J. Haimes, F. Hofstätter, and T. van der Weij, “Noise injection reveals hidden capabilities of sandbagging language models,” in The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025. [41] L. Zhang, B. Li, K. K. Thekumparampil, S. Oh, M. Muehlebach, and N. He, “Zeroth-order optimization finds flat minima,” in The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025. [42] N. P. Walter, L. Adilova, J. Vreeken, and M. Kamp, “When flatness does (not) guarantee adversarial robustness,” arXiv preprint arXiv:2510.14231 , 2025. [43] S. Liu, P.-Y. Chen, B. Kailkhura, G. Zhang, A. O. Hero III, and P. K. Varshney, “A primer on zeroth-order optimization in signal processing and machine learning: Principals, recent advances, and applications,” IEEE Signal Processing Magazine , vol. 37, no. 5, pp. 43–54, 2020. [44] A. Galatolo, Z. Dai, K. Winkle, and M. Beloucif, “Visualising policy-reward interplay to inform zeroth-order preference optimisation of large language models,” in Findings of the Association for Computational Linguistics: ACL 2025 , 2025, pp. 17 446–17 461. [45] J. C. Spall, “Multivariate stochastic approximation using a simultaneous perturbation gradient approximation,” IEEE transactions on automatic control , vol. 37, no. 3, pp. 332–341, 1992. [46] Z. Liu, C. Chen, L. Luo, and B. K. H. Low, “Zeroth-order methods for constrained noncon-vex nonsmooth stochastic optimization,” in Forty-first International Conference on Machine Learning , 2024. [47] H. Karimi, J. Nutini, and M. Schmidt, “Linear convergence of gradient and proximal-gradient methods under the polyak-łojasiewicz condition,” in Joint European conference on machine learning and knowledge discovery in databases . Springer, 2016, pp. 795–811. 12 [48] N. Lee, T. Ajanthan, and P. Torr, “Snip: Single-shot network pruning based on connection sensitivity,” in International Conference on Learning Representations , 2019. [49] M. Sun, Z. Liu, A. Bair, and J. Z. Kolter, “A simple and effective pruning approach for large language models,” in 12th International Conference on Learning Representations, ICLR 2024 ,2024. [50] A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Vaughan et al. , “The llama 3 herd of models,” arXiv preprint arXiv:2407.21783 ,2024. [51] A. Zou, L. Phan, J. Wang, D. Duenas, M. Lin, M. Andriushchenko, R. Wang, Z. Kolter, M. Fredrikson, and D. Hendrycks, “Improving alignment and robustness with circuit breakers,” 
+
+Advances in Neural Information Processing Systems , vol. 37, pp. 83 345–83 373, 2024. [52] S. Merity, C. Xiong, J. Bradbury, and R. Socher, “Pointer sentinel mixture models,” arXiv preprint arXiv:1609.07843 , 2016. [53] L. Gao, J. Tow, B. Abbasi, S. Biderman, S. Black, A. DiPofi, C. Foster, L. Golding, J. Hsu, A. Le Noac’h, H. Li, K. McDonell, N. Muennighoff, C. Ociepa, J. Phang, L. Reynolds, H. Schoelkopf, A. Skowron, L. Sutawika, E. Tang, A. Thite, B. Wang, K. Wang, and A. Zou, “The language model evaluation harness,” 07 2024. [Online]. Available: https://zenodo.org/records/12608602 [54] M. Mazeika, L. Phan, X. Yin, A. Zou, Z. Wang, N. Mu, E. Sakhaee, N. Li, S. Basart, B. Li 
+
+et al. , “Harmbench: A standardized evaluation framework for automated red teaming and robust refusal,” in International Conference on Machine Learning . PMLR, 2024, pp. 35 181–35 224. 
+
+A Hyperparameters and Hardware Configuration 
+
+A.1 Training Hyperparameters 
+
+The main hyperparameters used for safety alignment and zeroth-order robustness refinement are summarized in Table 5. We use the same data preprocessing and evaluation protocol across all compared methods unless otherwise specified. All stages use a per-device batch size of 1 and gradient accumulation of 8. 
+
+A.2 Hardware Configuration 
+
+The Llama-3-8B-Instruct experiments were run on a local RTX 4090 server. The machine contains 8 NVIDIA GeForce RTX 4090 GPUs with 24GB memory each. The Qwen2-7B-Instruct experiments were run on RTX 4090 GPUs with 48GB memory. Training uses multi-GPU execution, while quantization and safety evaluation use fewer GPUs when possible. 
+
+B Theoretical Proofs 
+
+B.1 Proof of ZO Convergence 
+
+We first prove the convergence guarantee for ZO optimization on the smoothed objective fβ . Recall the two-sided ZO estimator 
+
+bg(θ; v) := d
+
+2β
+
+ f (θ + βv ) − f (θ − βv )v. 
+
+We use the following standard variance bound. 
+
+Lemma B.1 (Variance bound for the ZO estimator [24]) . For the estimator bg(θ; v), we have 
+
+Ev [bg(θ; v)] = ∇fβ (θ),
+
+and 
+
+Ev
+
+∥bg(θ; v) − ∇ fβ (θ)∥2 ≤ 64 dβ 2L4.
+
+13 Table 5: Hyperparameters for FO safety alignment and ZO robustness refinement. 
+
+Stage Hyperparameter Value 
+
+General setup 
+
+General Base models Llama-3-8B-Instruct, Qwen2-7B General Training dataset CB-Safety General Training sample size 800 General Maximum sequence length 1536 General Per-device batch size 1General Gradient accumulation steps 8
+
+Stage I: FO safety alignment 
+
+FO alignment Optimizer SGD FO alignment Training steps 100 FO alignment Learning rate ηfo {5×10 −3, 8×10 −3, 1×10 −2, 1.2×10 −2}
+
+FO alignment Momentum {0, 0.5}
+
+FO alignment Scheduler {constant_with_warmup , cosine }
+
+FO alignment Warmup ratio {0.05 , 0.08 }
+
+FO alignment Weight decay 0
+
+Stage II: ZO refinement 
+
+ZO refinement Training steps 10 ZO refinement Learning rate ηzo {5×10 −3, 8×10 −3, 1×10 −2, 1.2×10 −2}
+
+ZO refinement ZO scale parameter β {1×10 −4, 5×10 −4, 8×10 −4, 1×10 −3, 3×10 −3}
+
+ZO refinement Samples per update 8ZO refinement ZO momentum 0ZO refinement Scheduler cosine 
+
+ZO refinement Warmup ratio 0ZO refinement Weight decay 1×10 −4
+
+Layer-robustness-aware ZO refinement 
+
+Focused ZO Learning rate ηzo {1×10 −3, 4×10 −3, 1×10 −2, 1.5×10 −2}
+
+Focused ZO ZO scale parameter β {8×10 −4, 1×10 −3, 1.2×10 −3}
+
+Focused ZO Checkpoint dtype bfloat16 
+
+Proof of Theorem 4.2. Let 
+
+gt := ∇fβ (θt), bgt := bg(θt; vt).
+
+The ZO update is 
+
+θt+1 = θt − ηbgt.
+
+By Taylor’s theorem, there exists a point eθt on the line segment between θt and θt+1 such that 
+
+fβ (θt+1 ) ≤ fβ (θt) + g⊤ 
+
+> t
+
+(θt+1 − θt) + 12 (θt+1 − θt)⊤∇2fβ (eθt)( θt+1 − θt).
+
+Substituting θt+1 − θt = −ηbgt, we obtain 
+
+fβ (θt+1 ) ≤ fβ (θt) − ηg ⊤ 
+
+> t
+
+bgt + η2
+
+2 bg⊤ 
+
+> t
+
+∇2fβ (eθt)bgt.
+
+By Assumption 4.1, 
+
+∇2fβ (eθt) ⪯ Ht.
+
+Therefore, 
+
+fβ (θt+1 ) ≤ fβ (θt) − ηg ⊤ 
+
+> t
+
+bgt + η2
+
+2 bg⊤ 
+
+> t
+
+Htbgt.
+
+Taking conditional expectation over the ZO randomness at step t, denoted by Et[·], and using Lemma B.1, we have 
+
+Et[bgt] = gt.
+
+Thus, 
+
+Et[fβ (θt+1 )] ≤ fβ (θt) − η∥gt∥2 + η2
+
+2 Et[bg⊤ 
+
+> t
+
+Htbgt].
+
+14 It remains to bound the quadratic term. Since Ht ⪰ 0,
+
+bg⊤ 
+
+> t
+
+Htbgt ≤ tr( Ht)∥bgt∥2.
+
+Moreover, by the effective-rank condition and ∥Ht∥op ≤ ℓ,
+
+tr( Ht) = erank( Ht)∥Ht∥op ≤ rℓ. 
+
+Hence, 
+
+Et[bg⊤ 
+
+> t
+
+Htbgt] ≤ ℓr Et[∥bgt∥2].
+
+Using variance decomposition, 
+
+Et[∥bgt∥2] = ∥Et[bgt]∥2 + Et[∥bgt − Et[bgt]∥2]
+
+≤ ∥ gt∥2 + 64 dβ 2L4.
+
+Substituting this bound yields 
+
+Et[fβ (θt+1 )] ≤ fβ (θt) − η∥gt∥2
+
++ η2ℓr 
+
+2
+
+ ∥gt∥2 + 64 dβ 2L4.
+
+Equivalently, 
+
+Et[fβ (θt+1 )] ≤ fβ (θt) −
+
+
+
+η − η2ℓr 
+
+2
+
+
+
+∥gt∥2 + 32 η2ℓrdβ 2L4.
+
+If 0 < η ≤ 1/(ℓr ), then 
+
+η − η2ℓr 
+
+2 ≥ η
+
+2 .
+
+Therefore, 
+
+Et[fβ (θt+1 )] ≤ fβ (θt) − η
+
+2 ∥gt∥2 + 32 η2ℓrdβ 2L4.
+
+By the μ-PL condition on fβ ,
+
+12 ∥gt∥2 ≥ μ fβ (θt) − f ⋆β
+
+.
+
+Thus, 
+
+Et[fβ (θt+1 ) − f ⋆β ] ≤ (1 − μη ) fβ (θt) − f ⋆β
+
+ + 32 η2ℓrdβ 2L4.
+
+Taking total expectation and defining 
+
+∆t := E[fβ (θt) − f ⋆β ],
+
+we obtain the recursion 
+
+∆t+1 ≤ (1 − μη )∆ t + 32 η2ℓrdβ 2L4.
+
+Unrolling gives 
+
+∆t ≤ (1 − μη )t∆0 + 32 η2ℓrdβ 2L4
+
+> t−1
+
+X
+
+> i=0
+
+(1 − μη )i
+
+≤ (1 − μη )t∆0 + 32 ηℓrdβ 2L4
+
+μ .
+
+Using 1 − x ≤ e−x, we conclude that 
+
+∆t ≤ e−μηt ∆0 + 32 ηℓrdβ 2L4
+
+μ .
+
+It remains to choose η and t so that ∆t ≤ ε. If 
+
+η ≤ με 
+
+64 ℓrdβ 2L4 ,
+
+15 then the bias term satisfies 32 ηℓrdβ 2L4
+
+μ ≤ ε
+
+2 .
+
+If additionally 
+
+t ≥ 1
+
+μη log 2∆ 0
+
+ε ,
+
+then 
+
+e−μηt ∆0 ≤ ε
+
+2 .
+
+Combining the two bounds yields 
+
+Efβ (θt) − f ⋆β
+
+ = ∆ t ≤ ε. 
+
+This proves the theorem. 
+
+B.2 Proof of One-Step Robustness Improvement 
+
+We next prove that one ZO refinement step can reduce the perturbation robustness gap around an FO-aligned solution. Recall the robustness gap 
+
+Rob ρ(θ) := fρ(θ) − f (θ), fρ(θ) := Ev∼N (0 ,I d)[f (θ + ρv )] .
+
+Proof of Theorem 4.4. Let 
+
+θ0 := θfo , gρ := ∇fρ(θ0), Gρ := ∥gρ∥.
+
+Let bg0 be the ZO estimator of ∇fρ(θ0), and let 
+
+θ1 = θ0 − ηbg0
+
+be the one-step ZO-refined parameter. Assume 
+
+E[bg0] = gρ, E∥bg0 − gρ∥2 ≤ σ2zo .
+
+Define 
+
+V := E[∥bg0∥2].
+
+By variance decomposition, 
+
+V = ∥gρ∥2 + E[∥bg0 − gρ∥2] ≤ G2 
+
+> ρ
+
++ σ2zo .
+
+We first bound the change of the smoothed objective. Since fρ is h-smooth, 
+
+fρ(θ1) ≤ fρ(θ0) − ηg ⊤ 
+
+> ρ
+
+bg0 + hη 2
+
+2 ∥bg0∥2.
+
+Taking expectation and using E[bg0] = gρ, we obtain 
+
+E[fρ(θ1)] ≤ fρ(θ0) − ηG 2 
+
+> ρ
+
++ hη 2
+
+2 V. 
+
+We next bound the change of the objective f . Since f is h-smooth and ∇f (θ0) = 0 , smoothness gives 
+
+f (θ1) ≥ f (θ0) − Lf
+
+2 ∥θ1 − θ0∥2.
+
+Using θ1 − θ0 = −ηbg0 and taking expectation, 
+
+E[f (θ1)] ≥ f (θ0) − Lf η2
+
+2 V. 
+
+Combining the two inequalities, we get 
+
+E[Rob ρ(θ1)] = E[fρ(θ1) − f (θ1)] 
+
+≤ fρ(θ0) − f (θ0) − ηG 2 
+
+> ρ
+
++ η2hV 
+
+= Rob ρ(θ0) − ηG 2 
+
+> ρ
+
++ η2hV. 
+
+16 Therefore, 
+
+E[Rob ρ(θ1)] < Rob ρ(θ0)
+
+whenever 
+
+ηG 2 
+
+> ρ
+
+> η 2hV. 
+
+Equivalently, for any 
+
+0 < η < G2
+
+> ρ
+
+hV ,
+
+the one-step ZO update strictly reduces the expected robustness gap. Finally, using the bound 
+
+V ≤ G2 
+
+> ρ
+
++ σ2zo ,
+
+a sufficient stepsize condition is 
+
+0 < η < G2
+
+> ρ
+
+h(G2 
+
+> ρ
+
++ σ2zo ) .
+
+This proves the claim. 17 C Additional Experimental Results 
+
+Table 6: Comparison between 100-step SFT and the subsequent 10-step ZO robustness refinement. We keep the original model as the reference, and omit perturbed results for the original model on Llama3-8B-Instruct. 
+
+Method Perturbation Level PPL lm-eval HarmBench ASR LlamaGuard3 ASR AdvBench ASR 
+
+Original – – 8.2823 0.6777 0.1067 0.0833 0.1333 
+
+After 100-step SFT 
+
+SFT – – 9.4069 0.6653 0.0667 0.0567 0.0733 SFT Quantization W4A16 10.3574 0.6272 0.0900 0.0833 0.1367 SFT Quantization W4A4 15.0531 0.5445 0.1467 0.2500 0.3167 SFT Weight noise 2 21.7101 0.6023 0.1200 0.1067 0.1467 SFT Weight noise 3 63.5586 0.5569 0.1133 0.3800 0.3233 SFT Activation noise 0.05 10.6832 0.6375 0.0889 0.0744 0.0889 SFT Activation noise 0.08 13.3357 0.5991 0.1533 0.1422 0.1667 SFT Activation noise 0.10 16.7568 0.5664 0.2111 0.2600 0.2644 SFT Activation noise 0.12 22.7916 0.5183 0.2078 0.5922 0.4400 
+
+After 100-step SFT + 10-step ZO refinement 
+
+SFT + ZO – – 9.4067 (↑0.0002) 0.6651 (↑0.0002) 0.0667 (→0.0000) 0.0567 (→0.0000) 0.0733 (→0.0000) 
+
+SFT + ZO Quantization W4A16 10.3580 (↑0.0006) 0.6303 (↓0.0031) 0.0667 (↑0.0233) 0.0567 (↑0.0266) 0.0833 (↑0.0534) 
+
+SFT + ZO Quantization W4A4 14.6690 (↑0.3841) 0.5483 (↓0.0038) 0.1400 (↑0.0067) 0.1967 (↑0.0533) 0.3333 (↑0.0166) 
+
+SFT + ZO Weight noise σ = 2 21.7099 (↑0.0002) 0.6023 (→0.0000) 0.1200 (→0.0000) 0.1067 (→0.0000) 0.1467 (→0.0000) 
+
+SFT + ZO Weight noise σ = 3 63.5571 (↑0.0015) 0.5573 (↓0.0004) 0.1100 (↑0.0033) 0.3800 (→0.0000) 0.3200 (↑0.0033) 
+
+SFT + ZO Activation noise α = 0 .05 10.6830 (↑0.0002) 0.6373 (↑0.0002) 0.0789 (↑0.0100) 0.0656 (↑0.0088) 0.0822 (↑0.0067) 
+
+SFT + ZO Activation noise α = 0 .08 13.3357 (→0.0000) 0.5991 (→0.0000) 0.1444 (↑0.0089) 0.1322 (↑0.0100) 0.1567 (↑0.0100) 
+
+SFT + ZO Activation noise α = 0 .10 16.7565 (↑0.0003) 0.5662 (↑0.0002) 0.1967 (↑0.0144) 0.2511 (↑0.0089) 0.2489 (↑0.0155) 
+
+SFT + ZO Activation noise α = 0 .12 22.7921 (↑0.0005) 0.5183 (→0.0000) 0.1967 (↑0.0111) 0.5667 (↑0.0255) 0.4144 (↑0.0256) 
+
+18 Table 7: Complete results of 10-step ZO robustness refinement with different layer-selection strategies on Llama3-8B-Instruct. SNIP updates layers 15, 16, 14, and 13; WANDA updates layers 31, 30, 29, and 28; robustness-aware selection updates layers 24, 12, 31, and 29. Bold numbers indicate the best ASR among the three layer-selection strategies under the same perturbation setting. 
+
+Method Perturbation Level PPL lm-eval HarmBench ASR LlamaGuard3 ASR AdvBench ASR ZO refinement with SNIP-selected layers 
+
+SNIP + ZO – – 9.4227 0.6656 0.0700 0.0567 0.0767 
+
+SNIP + ZO Quantization W4A16 10.4175 0.6230 0.1133 0.0933 0.1267 SNIP + ZO Quantization W4A4 14.5035 0.5428 0.1667 0.2333 0.3167 SNIP + ZO Weight noise σ = 1 11.5789 0.6500 0.0900 0.0667 0.1067 
+
+SNIP + ZO Weight noise σ = 1 .5 14.9834 0.6306 0.0933 0.0767 0.1267 
+
+SNIP + ZO Weight noise σ = 2 21.5331 0.6139 0.1067 0.0967 0.1733 
+
+SNIP + ZO Activation noise α = 0 .05 10.6951 0.6358 0.0867 0.0700 0.1000 SNIP + ZO Activation noise α = 0 .08 13.3717 0.6037 0.1567 0.1400 0.1800 SNIP + ZO Activation noise α = 0 .10 16.8277 0.5680 0.2167 0.2633 0.2500 SNIP + ZO Activation noise α = 0 .12 22.9064 0.5135 0.2233 0.6133 0.4333 
+
+ZO refinement with WANDA-selected layers 
+
+WANDA + ZO – – 9.4228 0.6655 0.0700 0.0567 0.0767 
+
+WANDA + ZO Quantization W4A16 10.4033 0.6239 0.1367 0.1200 0.1600 WANDA + ZO Quantization W4A4 14.6934 0.5448 0.1933 0.2633 0.3733 WANDA + ZO Weight noise σ = 1 11.5790 0.6498 0.0900 0.0667 0.1067 
+
+WANDA + ZO Weight noise σ = 1 .5 14.9836 0.6309 0.0933 0.0767 0.1267 
+
+WANDA + ZO Weight noise σ = 2 21.5335 0.6139 0.1067 0.0933 0.1733 
+
+WANDA + ZO Activation noise α = 0 .05 10.6951 0.6357 0.0967 0.0767 0.0900 
+
+WANDA + ZO Activation noise α = 0 .08 13.3718 0.6039 0.1533 0.1400 0.1800 WANDA + ZO Activation noise α = 0 .10 16.8279 0.5680 0.2167 0.2633 0.2500 WANDA + ZO Activation noise α = 0 .12 22.9064 0.5135 0.2233 0.6133 0.4333 
+
+ZO refinement with robustness-aware selected layers 
+
+Robust + ZO – – 9.4229 0.6655 0.0700 0.0567 0.0767 
+
+Robust + ZO Quantization W4A16 10.4091 0.6220 0.0900 0.0733 0.1000 
+
+Robust + ZO Quantization W4A4 14.4467 0.5440 0.1233 0.1767 0.2733 
+
+Robust + ZO Weight noise σ = 1 11.5791 0.6497 0.0900 0.0667 0.1067 
+
+Robust + ZO Weight noise σ = 1 .5 14.9837 0.6306 0.0900 0.0767 0.1267 
+
+Robust + ZO Weight noise σ = 2 21.5337 0.6137 0.1067 0.0967 0.1733 
+
+Robust + ZO Activation noise α = 0 .05 10.6951 0.6358 0.0833 0.0767 0.0900 
+
+Robust + ZO Activation noise α = 0 .08 13.3717 0.6039 0.1300 0.1367 0.1567 
+
+Robust + ZO Activation noise α = 0 .10 16.8278 0.5683 0.2033 0.2367 0.2333 
+
+Robust + ZO Activation noise α = 0 .12 22.9063 0.5136 0.2167 0.5600 0.4300 
+
+19 Table 8: Comparison between the original Qwen2-7B-Instruct model, 100-step SFT, and the subse-quent 10-step ZO robustness refinement. 
+
+Method Perturbation Level PPL lm-eval HarmBench ASR LlamaGuard3 ASR AdvBench ASR Original 
+
+Original – – 7.5994 0.6840 0.2967 0.3067 0.3333 Original Quantization W4A16 7.9789 0.6623 0.2767 0.2833 0.3333 Original Quantization W4A4 3231.7378 0.3134 0.0000 0.7233 1.0000 Original Weight noise σ = 1 9.9568 0.6501 0.3144 0.3267 0.3311 Original Weight noise σ = 1 .5 13.9043 0.6225 0.3022 0.3378 0.3589 Original Weight noise σ = 2 22.1413 0.5959 0.2489 0.3900 0.3989 Original Activation noise α = 0 .05 7.8890 0.6657 0.3017 0.3150 0.3333 Original Activation noise α = 0 .10 8.7442 0.6318 0.3042 0.3258 0.3467 Original Activation noise α = 0 .15 10.4749 0.5697 0.3389 0.3989 0.4278 
+
+After 100-step SFT 
+
+SFT – – 7.6408 0.6796 0.1100 0.0933 0.1033 SFT Quantization W4A16 8.0433 0.6704 0.0867 0.0833 0.1167 SFT Quantization W4A4 3801.4229 0.3037 0.0033 0.8667 1.0000 SFT Weight noise 1 10.0349 0.6452 0.1222 0.1033 0.1467 SFT Weight noise 1.5 14.0629 0.6162 0.1333 0.1522 0.1978 SFT Weight noise 2 22.5278 0.5851 0.1156 0.2522 0.2789 SFT Activation noise 0.05 7.9293 0.6643 0.1056 0.0900 0.1022 SFT Activation noise 0.10 8.7775 0.6336 0.0989 0.0956 0.1167 SFT Activation noise 0.15 10.4959 0.5740 0.1389 0.1856 0.1967 
+
+After 100-step SFT + 10-step ZO refinement 
+
+SFT + ZO – – 7.6408 (→0.0000) 0.6795 (↑0.0001) 0.1100 (→0.0000) 0.0933 (→0.0000) 0.1033 (→0.0000) 
+
+SFT + ZO Quantization W4A16 8.0532 (↑0.0099) 0.6703 (↑0.0001) 0.0767 (↑0.0100) 0.0767 (↑0.0067) 0.1000 (↑0.0167) 
+
+SFT + ZO Quantization W4A4 2887.3979 (↑914.0250) 0.3151 (↓0.0114) 0.0033 (→0.0000) 0.7933 (↑0.0733) 1.0000 (→0.0000) 
+
+SFT + ZO Weight noise σ = 1 10.0349 (→0.0000) 0.6456 (↓0.0004) 0.1222 (→0.0000) 0.1078 (↑0.0044) 0.1500 (↑0.0033) 
+
+SFT + ZO Weight noise σ = 1 .5 14.0629 (→0.0000) 0.6160 (↑0.0002) 0.1389 (↑0.0056) 0.1511 (↑0.0011) 0.1956 (↑0.0022) 
+
+SFT + ZO Weight noise σ = 2 22.5278 (→0.0000) 0.5849 (↑0.0002) 0.1111 (↑0.0044) 0.2489 (↑0.0033) 0.2800 (↑0.0011) 
+
+SFT + ZO Activation noise α = 0 .05 7.9293 (→0.0000) 0.6646 (↓0.0003) 0.0956 (↑0.0100) 0.0789 (↑0.0111) 0.0978 (↑0.0044) 
+
+SFT + ZO Activation noise α = 0 .10 8.7776 (↑0.0001) 0.6336 (→0.0000) 0.0978 (↑0.0011) 0.0989 (↑0.0033) 0.1200 (↑0.0033) 
+
+SFT + ZO Activation noise α = 0 .15 10.4959 (→0.0000) 0.5739 (↑0.0001) 0.1167 (↑0.0222) 0.1533 (↑0.0322) 0.1800 (↑0.0167) 
+
+20 Table 9: Complete results of 10-step ZO robustness refinement with different layer-selection strategies on Qwen2-7B-Instruct. SNIP updates layers 18, 19, and 17; WANDA updates layers 27, 26, and 25; robustness-aware selection updates layers 12, 19, and 11. Bold numbers indicate the best ASR among the three layer-selection strategies under the same perturbation setting. 
+
+Method Perturbation Level PPL lm-eval HarmBench ASR LlamaGuard3 ASR AdvBench ASR ZO refinement with SNIP-selected layers 
+
+SNIP + ZO – – 7.6408 0.6794 0.1100 0.0933 0.1033 
+
+SNIP + ZO Quantization W4A16 8.0558 0.6713 0.1000 0.0900 0.1000 SNIP + ZO Weight noise σ = 1 8.1373 0.6675 0.1122 0.0922 0.1122 SNIP + ZO Weight noise σ = 2 12.3782 0.5992 0.1356 0.1767 0.1500 SNIP + ZO Weight noise σ = 3 16.7780 0.5509 0.1367 0.2811 0.2000 
+
+SNIP + ZO Activation noise α = 0 .05 7.9293 0.6647 0.1100 0.0944 0.1000 SNIP + ZO Activation noise α = 0 .10 8.7776 0.6336 0.1067 0.1111 0.1278 SNIP + ZO Activation noise α = 0 .15 10.4961 0.5739 0.1333 0.1811 0.1833 
+
+ZO refinement with WANDA-selected layers 
+
+WANDA + ZO – – 7.6408 0.6797 0.1100 0.0900 0.1033 
+
+WANDA + ZO Quantization W4A16 8.0439 0.6731 0.1000 0.0767 0.1100 WANDA + ZO Weight noise σ = 1 8.1374 0.6676 0.1122 0.0922 0.1111 WANDA + ZO Weight noise σ = 2 12.3782 0.5992 0.1344 0.1778 0.1467 
+
+WANDA + ZO Weight noise σ = 3 16.7778 0.5513 0.1300 0.2767 0.2022 WANDA + ZO Activation noise α = 0 .05 7.9293 0.6646 0.1100 0.0978 0.1056 WANDA + ZO Activation noise α = 0 .10 8.7775 0.6336 0.0956 0.1056 0.1256 WANDA + ZO Activation noise α = 0 .15 10.4960 0.5740 0.1311 0.1744 0.1800 ZO refinement with robustness-aware selected layers 
+
+Robust + ZO – – 7.6408 0.6798 0.1067 0.0900 0.1033 
+
+Robust + ZO Quantization W4A16 8.0485 0.6707 0.0833 0.0733 0.0800 
+
+Robust + ZO Weight noise σ = 1 8.1374 0.6677 0.1111 0.0900 0.1044 
+
+Robust + ZO Weight noise σ = 2 12.3783 0.5993 0.1311 0.1744 0.1467 
+
+Robust + ZO Weight noise σ = 3 16.7780 0.5513 0.1278 0.2756 0.2011 Robust + ZO Activation noise α = 0 .05 7.9293 0.6644 0.0956 0.0733 0.0944 
+
+Robust + ZO Activation noise α = 0 .10 8.7775 0.6334 0.1000 0.0978 0.1200 
+
+Robust + ZO Activation noise α = 0 .15 10.4960 0.5739 0.1178 0.1889 0.1856 
+
+21
