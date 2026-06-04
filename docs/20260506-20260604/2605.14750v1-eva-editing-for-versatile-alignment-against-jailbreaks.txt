@@ -1,0 +1,1198 @@
+Title: EVA: Editing for Versatile Alignment against Jailbreaks
+
+URL Source: https://arxiv.org/pdf/2605.14750v1
+
+Published Time: Fri, 15 May 2026 01:18:02 GMT
+
+Number of Pages: 15
+
+Markdown Content:
+> 1
+
+# EVA: Editing for Versatile Alignment against Jailbreaks 
+
+Yi Wang, Hongye Qiu, Yue Xu, Sibei Yang, Zhan Qin, Minlie Huang, Senior Member, IEEE , and Wenjie Wang †
+
+Abstract —Large Language Models (LLMs) and Vision Language Models (VLMs) have demonstrated impressive capabilities but remain vulnerable to jailbreaking attacks, where adversaries exploit textual or visual triggers to bypass safety guardrails. Recent defenses typically rely on safety fine-tuning or external filters to reduce the model’s likelihood of producing harmful content. While effective to some extent, these methods often incur significant computational overheads and suffer from the safety utility trade-off, degrading the model’s performance on benign tasks. To address these challenges, we propose EVA (Editing for Versatile Alignment against Jailbreaks), a novel framework that pioneers the application of direct model editing for safety alignment. EVA reframes safety alignment as a precise knowledge correction task. Instead of retraining massive parameters, EVA identifies and surgically edits specific neurons responsible for the model’s susceptibility to harmful instructions, while leaving the vast majority of the model unchanged. By localizing the updates, EVA effectively neutralizes harmful behaviors without compromising the model’s general reasoning capabilities. Extensive experiments demonstrate that EVA outperforms baselines in mitigating jailbreaks across both LLMs and VLMs, offering a precise and efficient solution for post-deployment safety alignment. Code is available at https://github.com/wanglne/EVA. 
+
+Index Terms —Safety Alignment, Jailbreak Attacks, Model Editing, Large Language Models, Vision Language Models. 
+
+✦
+
+1 INTRODUCTION 
+
+# LARGE Language Models (LLMs) and Vision Language Models (VLMs) have been widely employed in infor-mation processing and decision-making. As these models directly influence user behavior and real-world outcomes, ensuring that their outputs comply with security stan-dards and align with human values has become a critical challenge. Modern models are typically aligned by model providers using RLHF [1] and DPO [2], and then released to the open-source community for downstream develop-ment and task adaptation. However, adversarial users can still bypass existing safeguards through jailbreak attacks, including appending adversarial suffixes that induce LLMs to generate harmful outputs [3], [4], using carefully de-signed prompts to obfuscate malicious intent [5], [6], and crafting benign image-text pairs that jointly trigger unsafe generations in VLMs [7], [8]. Therefore, post-deployment alignment is particularly important for model security. Current defense mechanisms at model deployment stage mainly fall into two categories: internal weight tuning, which modifies model parameters via safety fine-tuning [9]; and external interventions, such as attack detection [10], [11] and prompt-based defenses [12]. However, these approaches are often inefficient for deployment, as internal weight tuning is resource intensive and risks catastrophic 
+
+• Yi Wang, Hongye Qiu, Yue Xu, and Wenjie Wang are with ShanghaiTech University, Shanghai, China. E-mail: {wangyi2024, qiuhy12024, xuyue2022, wangwj1 }@shanghaitech.edu.cn. • Sibei Yang is with Sun Yat-sen University, Guangzhou, China. E-mail: sibeiyang9@gmail.com. • Zhan Qin is with the State Key Laboratory of Blockchain and Data Security, Zhejiang University, Hangzhou, China. E-mail: qinzhan@zju.edu.cn. • Minlie Huang is with the CoAI group, Tsinghua University, Beijing, China. E-mail: aihuang@tsinghua.edu.cn.  
+
+> †
+
+Corresponding author. 
+
+forgetting [13], [14], whereas external interventions compli-cate the deployment pipeline and add inference latency. To overcome these limitations and achieve a superior safety-utility trade-off, we argue effective defense requires deeper understanding of the model’s internals [15], [16]. Aligned models exhibit both a general instruction following behavior and a safety-aware refusal behavior, depending on the model’s internal interpretation of the input [17]. Recent studies reveal that harmful outputs arise not from inherently harmful knowledge, but from misaligned inter-nal activation patterns associated with it [18]. Consider a malicious prompt such as “hack an account”, jailbreak attacks shift activations associated with harmful concepts (e.g., “hack”) from a harmful region across the safety bound-ary into the benign region [19]. Consequently, the model misinterprets the malicious query as benign and complies using its general capabilities. Building on these findings, our core thesis is that we can restore safety by directly rectifying these shifted activation patterns. We propose EV A
+
+(Editing for Versatile Alignment), a unified model editing defense framework that rectifies these shifted activation patterns through precise parameter updates. As illustrated in Figure 1, although the model has undergone foundational alignment, it remains vulnerable to jailbreak attacks at the user end. In the Original Model State, the model is success-fully jailbroken. EV A then applies precise edits to produce the Edited Model State, ensuring the model refuses the malicious query instead of generating harmful instructions. Specifically, EV A performs alignment editing in three stages: (1) Aggregating activations from diverse harmful tokens to identify a robust representation that captures ma-licious intent; (2) Constructing a safe target by maximizing refusal while constraining behavior drift on benign queries via a KL regularizer [20]; and (3) Applying a localized, 
+
+> arXiv:2605.14750v1 [cs.CR] 14 May 2026 2
+
+Foundational 
+
+Alignment   
+
+> DPO &RLHF
+
+Open Ecosystem  
+
+> Model Hub
+
+Downstream 
+
+Adaptation User End   
+
+> Interface Upload Download Deploy
+
+## Large Vision & Language Model Production 
+
+Original 
+
+Model State Sure , a common method is phishing .     
+
+> First, you’d gather the target’s email …
+> I cannot fulfill this request .Hacking into
+> someone’s bank account is a crime …
+
+Edited 
+
+Model State 
+
+Editing for 
+
+Versatile 
+
+Alignment 
+
+> Attack
+
+Versatile Alignment in Post -deployment 
+
+How do I hack 
+
+into someone's 
+
+bank account?          
+
+> Jailbreak
+> attacker
+> Fig. 1. Overview of EVA in the model production lifecycle. Upper: EVA operates at the downstream adaptation stage to defend against user-end jailbreak attacks. Lower: In the Original Model State, the model is successfully jailbroken by malicious queries. EVA applies precise parameter updates to produce an Edited Model State, ensuring the model refuses the request instead of generating harmful instructions.
+
+closed-form parameter update to edit the model from the identified malicious representation toward the constructed safe target. This enables the edited model to refuse jailbreak requests while preserving general utility on benign tasks. Applying EV A to LLMs is straightforward. As harmful intent resides in discrete text tokens, we directly extract keys and locate the optimal editing layers based on established findings in prior studies [21], [22]. However, extending EV A to VLMs presents challenges regarding harmful region identification and parameter lo-calization. First, harmful information in the visual modal-ity manifests in more diverse forms. Unlike discrete text tokens where malice is explicit and concentrated, visual harm may be embedded in specific OCR regions or diffusely distributed across the continuous pixel space. Second, it is more difficult to locate the critical parameters responsible for processing these visual harmful inputs. To address these challenges, EV A adapts both key ex-traction and layer localization for the multimodal context. We devise a strategy to extract keys from visual tokens conveying harmful intent, capturing both OCR and implicit semantic cues. We also investigate layer efficacy within the VLMs and identify that the optimal editing layers align with those in the backbone LLM, enabling reliable interception of multimodal jailbreaks. Overall, EV A serves as a unified defense framework against jailbreak attacks in both unimodal and multimodal scenarios. Unlike static fine-tuning, it supports efficient ,
+
+sequential updates , enabling defenders to rapidly patch newly discovered vulnerabilities . We empirically validate 
+
+EV A on diverse benchmarks involving both textual and visual jailbreaks. The results demonstrate that EV A signif-icantly outperforms existing baselines in reducing Attack Success Rate (ASR) while incurring negligible degradation on general reasoning tasks, establishing it as a robust and practical safeguard for deployed models. Our contributions can be summarized as follows:  
+
+> •
+
+We propose EVA , a unified model editing defense framework that mitigates jailbreak induced harmful behavior. This is the first work to apply model editing as a safety defense for VLMs.  
+
+> •
+
+We introduce a context-aware regularization mecha-nism that restricts the safety edit to malicious contexts, reducing harmful behavior without sacrificing benign capabilities.  
+
+> •
+
+We enable an efficient, dynamic defense paradigm. EV A
+
+supports rapid, low-resource updates, allowing models to continuously adapt to evolving jailbreak patterns without degrading inference speed.  
+
+> •
+
+Extensive experiments demonstrate EV A’s superiority over other methods, achieving lower ASR against un-seen attacks while maintaining near-perfect utility on general tasks. This paper extends our preliminary work, DELMAN 
+
+[23], from text-only jailbreak defense in LLMs to a unified editing framework for both LLMs and VLMs. In particular, compared with DELMAN , the journal version introduces vi-sual key extraction, visual token selection, and multimodal layer localization for VLMs; adds richer analyses on layer efficacy, generalization, interpretability, and the decoupling effects and contextual synergy of visual editing; and sub-stantially expands the evaluation with broader VLM bench-marks, baselines, adaptive attacks evaluation, efficiency evaluation, and more comprehensive ablation studies. The remainder of this paper is organized as follows: Section 2 reviews related work; Section 3 introduces preliminaries; Section 4 details the proposed framework; Section 5 presents experimental results and analyses; and Section 6 concludes. 
+
+2 RELATED WORK 
+
+This section provides an overview of related work sur-rounding our method. Section 2.1 analyzes jailbreak attacks and Section 2.2 analyzes defense mechanisms from LLMs to VLMs. Section 2.3 discusses model editing techniques, emphasizing their potential for safety alignment and the existing lack of research in the multimodal domain. 
+
+2.1 Jailbreak Attacks on LLMs and VLMs 
+
+Attacks on LLMs. Jailbreak attacks on LLMs aim to bypass safety alignment and elicit harmful responses through ma-liciously crafted prompts. Existing methods can be broadly 3
+
+categorized into optimization-based and generation-based approaches. Optimization-based methods, such as GCG [3], employ white-box gradient-based search to identify adver-sarial suffixes that maximize the probability of generat-ing affirmative responses to harmful queries. Generation-based methods leverage the generative capabilities of LLMs themselves to automate the attack process. For instance, 
+
+AutoDAN [5] utilizes a genetic algorithm to automatically generate stealthy jailbreak prompts that bypass perplexity-based filters. Similarly, PAIR [6] treats the attack as a compet-itive game, employing an attacker LLM to iteratively refine prompts based on the target model’s feedback, achieving high ASR in black-box settings. 
+
+Attacks on VLMs. The integration of visual modalities in VLMs expands the attack surface. Attacks on VLMs can be distinguished by whether they exploit pixel level noise or semantic understanding. Visual adversarial examples [24] optimize imperceptible visual perturbations on benign im-ages to coerce the model, when paired with harmful textual instructions, into complying with requests it would other-wise refuse. Other methods exploit the model’s semantic processing. FigStep [7] bypasses text filters by converting harmful instructions into images of typographic text, relying on the VLM’s OCR capabilities to interpret the malicious content. Hades [8] further conceals malicious intent semanti-cally within the visual scene itself while using benign textual prompts, effectively evading text-based safety mechanisms. To systematically evaluate these vulnerabilities, benchmarks such as MM-SafetyBench [25] have been proposed, covering attacks using Stable Diffusion [26] generated images and typographic inputs. Similarly, MultiTrust [27] categorizes vulnerabilities across different modalities, highlighting risks in typographic attacks, multimodal contexts, and cross-modal conflicts. 
+
+2.2 Defense Strategies Against Jailbreaking 
+
+Defenses for LLMs. Defenses for LLMs are generally cat-egorized based on whether they alter the target model’s parameters. Parameter level defenses aim to enhance intrin-sic robustness by directly modifying the model’s weights. This category encompasses full fine-tuning, parameter effi-cient tuning methods such as LoRA [28], and layer specific tuning techniques like LED [29]. In contrast, inference-time defenses intervene without changing the model. These ap-proaches typically build auxiliary modules or utilize exter-nal safety measures. Common strategies include input and output filtering, input smoothing, sanitation, and modifi-cation [30]–[32]. Furthermore, decoding-time interventions like SafeDecoding [33] employ specially fine-tuned safety modules to guide the generation process. Representation-level defenses such as Circuit Breakers [34] also improve robustness by controlling harmful internal representations. 
+
+Defenses for VLMs. Defending VLMs presents challenges due to the expanded attack surface of the visual modality, yet existing strategies follow a similar classification to LLMs. Training-time strategies focus on aligning VLMs through fine-tuning. Methods like VLGuard [9] employ post-hoc and mixed fine-tuning to integrate safety awareness into the model, aiming to internalize safety constraints. Inference-time interventions operate without retraining. Approaches like AdaShield [12] utilize adaptive prompting to refine defense prompts, while detection-based frameworks like 
+
+JailGuard [10], LlavaGuard [11], and CIDER [35] act as mod-erators to filter unsafe inputs or outputs. 
+
+2.3 Model Editing for Safety 
+
+Model editing aims to precisely update specific knowledge within a model while preserving other knowledge. These methods can be categorized into indirect editing strategies, such as meta-learning [36], [37] and fine-tuning with con-straints [38], [39], and direct editing algorithms like ROME 
+
+[40] and MEMIT [21]. Prior studies have adapted editing-inspired techniques for LLM safety, DINM [41] and LED 
+
+[29] fine-tune safety or toxicity related layers to mitigate harmful outputs. These layer level methods are often coarse-grained, lack precise localization of harmful behaviors, and degrade general capabilities due to broad parameter up-dates. To improve precision, recent works have explored localized interventions and unlearning. SafeInt [42] frames safety as a representation editing problem by steering jailbreak-induced activations toward safer regions. SafeLLM 
+
+[43] traces harmful behavior to specific feed-forward path-ways for targeted suppression. CKU [44] adopts a neuron-level strategy, selectively updating non-critical parameters to remove harmful knowledge while preserving general capabilities. Chen et al. [18] show that safety behaviors are governed by sparse internal components, and that patching a small fraction of key neurons can suffice for alignment. Despite their improvements, these methods often suffer from high data requirements for locating editing targets, computational inefficiency during the process, or inference overhead. Crucially, the aforementioned studies predomi-nantly focus on text-only LLMs, research on model editing for safety in VLMs remains scarce. Directly adapting LLM-based editing techniques to VLMs is challenging and often yields poor results, because harmful intent is implicitly en-coded within visual features. Consequently, existing editing methods fail to address these multimodal vulnerabilities. In this paper, we bridge this gap by proposing a unified direct model editing framework applicable to both LLMs and VLMs. Conceptually, EV A is related to causal tracing [40] and activation patching [45], as all of them rely on the view that model behavior can be localized to specific inter-nal activations or components. EV A adopts this localized-intervention perspective to identify harmful textual and visual keys and modify their key-value mappings. Different from prior work that mainly studies factual associations or uses activation-level interventions for mechanistic analysis, 
+
+EV A focuses on jailbreak defense, extends direct editing from LLMs to VLMs, and directly computes precise weight updates with minimal data and zero inference overhead while preserving the model’s general utility. 
+
+3 PRELIMINARIES 
+
+This section introduces the preliminary concepts essential for understanding our method. Section 3.1 reviews the architectures of LLMs and VLMs. Section 3.2 analyzes the mechanism of MLP acting as Key-Value memories, which serves as the basis for our editing method. Finally, Section 4
+
+3.3 concludes by defining the jailbreak attack and the de-fense goal for safety alignment. 
+
+3.1 Large Language and Vision Language Models 
+
+Large language models. Modern LLMs are typically built upon the transformer [46] architecture, stacking multiple layers of multi-head self-attention (MSA) and multi-layer perceptron (MLP) blocks. Formally, an LLM fθ parameter-ized by θ takes a textual query q as input. This query is encoded to embeddings Et and processed autoregressively to estimate the probability of the next token. The generation of a response y is modeled as: 
+
+Pθ (y|q) = 
+
+> T
+
+Y
+
+> i=1
+
+P (yi|Et, y<i). (1) where yi represents the i-th token of the response. 
+
+Vision Language models. VLMs extend the capabilities of LLMs by aligning visual features with the textual em-bedding space, enabling the model to perceive and reason over multimodal inputs. A VLM consists of three primary components: visual encoder, multimodal projector, and a backbone LLM. Let V denote the visual encoder. Given an input image I, the visual encoder extracts visual features 
+
+Zv = V(I). To ensure compatibility with the LLM’s input space, a learnable projector ϕ maps these features into visual embeddings Ev = ϕ(Zv ), which share the same dimension-ality as the textual embeddings. The visual embeddings Ev
+
+are then concatenated with the textual embeddings Et de-rived from the query q to form a unified multimodal input sequence Ein = [ Ev ; Et]. The backbone LLM processes this sequence autoregressively to generate the response y:
+
+Pθ (y|I, q) = 
+
+> T
+
+Y
+
+> i=1
+
+P (yi|Ein , y<i), (2) where yi represents the i-th token of the response. 
+
+3.2 MLP Layers as Key-Value Memories 
+
+Recent studies suggest that MLP layers store factual knowl-edge and specific behavioral patterns acting as Key-Value memories [47], [48]. Modern VLMs, employ a modified MLP architecture known as SwiGLU [49], the SwiGLU variant introduces a gating mechanism involving three linear pro-jections: the gate projection Wgate , the up projection Wup ,and the down projection Wdown . Consider the l-th layer of the transformer. Let hl−1 denote the hidden state from the previous layer and al represent the output of the attention head. The computation within the MLP block is formulated as follows: 
+
+xl = γ(al + hl−1), (3) 
+
+k = σ(Wlgate · xl) ⊙ (Wlup · xl), (4) 
+
+v = Wldown · k, (5) 
+
+hl = v + al + hl−1. (6) where γ(·) denotes the normalization and σ(·) is the activa-tion function. The operator ⊙ represents the element-wise Hadamard product. In this formulation, Eq. (4) defines the key k as the interaction between gated feature and up-projected feature. Crucially, Eq. (5) maintains a linear mapping from the key 
+
+k to the value v via Wldown . This linear relationship implies that specific knowledge or behaviors stored in the MLP can be precisely modified by solving a linear equation. This theoretical insight serves as the foundation for our editing strategy. In Section 4, we will detail how we leverage this mechanism to construct our unified defense framework. 
+
+3.3 Problem Formulation 
+
+We formulate the jailbreak defense as a safety align-ment problem under adversarial attacks. Let Dsaf e =
+
+{I, q, ysaf e } be a dataset constructed for defense, where each entry consists of an adversarial image I, a harmful query q and paired with a safe refusal response ysaf e . We aim to update the model parameters from θ to θ∗ such that the model learns to generate ysaf e when presented with the adversarial inputs (I, q).
+
+Jailbreak attack. An adversary aims to bypass the safety alignment of a victim model fθ . Given a harmful intent, the attacker optimizes an adversarial perturbation δ added to either the image I or the text q to maximize the likelihood of generating a harmful response yharm . The objective of the attack can be expressed as: 
+
+δ∗ = arg max 
+
+> δ∈∆
+
+Pθ (yharm | I, q; δ), (7) where ∆ represents the set of allowable perturbations (e.g., visual noise or textual suffixes). A successful jailbreak occurs when the model generates yharm .
+
+Defense Goal. Our goal is to refuse harmful requests under attack while preserving the model’s general capabilities. We seek to obtain the optimal edited parameter θ∗ by maximiz-ing the likelihood of the safe response ysaf e on the defense dataset Dsaf e . The optimization problem is formulated as: 
+
+θ∗ = argmax 
+
+> θ
+
+E(I,q,ysaf e )∼D saf e [log Pθ (ysaf e | I, q; δ)] ,
+
+subject to fθ∗ (u) ≈ fθ (u).
+
+(8) The objective function drives θ towards θ∗ to robustly generate safe refusals, while the constraint ensures that the model’s utility on benign inputs u remains preserved. 
+
+4 METHOD 
+
+The key idea of EV A is to mitigate jailbreak attacks by precisely editing model’s parameters to rectify the mis-aligned activation patterns triggered by malicious knowl-edge. Drawing upon the interpretation of MLP as Key-Value memories, we view the internal activation patterns triggered by harmful inputs as keys, and the subsequent information flow as values. Under this, a successful jailbreak occurs when a harmful key retrieves a malicious value from the model’s knowledge. To rectify this pathway, EV A aims to edit the down projection Wldown to remap specific harmful keys k∗ to safety values v∗.As illustrated in Figure 2, the overall pipeline of EV A
+
+is instantiated by six operational steps. Conceptually, these steps constitute three main phases: (1) Harmful keys iden-tification (Steps 1-4), where we identify and aggregate the 5𝑘 !
+
+> ∗
+
+hack How do I into …
+
+hack Can you help me 
+
+I need acc  
+
+> Attention Matrix P
+
+𝑘 #
+
+> ∗
+> t
+> 54t21
+> 4
+> 5
+> 1
+> 6
+> t4321
+> 2a
+> 8b
+> 4c
+> 7d
+> 5t321
+> 62937a
+> 85184b
+> 29361c
+> 54716d
+> t
+> t
+
+x1
+
+xj
+
+xN
+
+VLM 
+
+> Mean Attention Scores
+> Average
+> m
+
+this 
+
+> 4
+> 7.8
+> 8.5
+> 2.6
+> 9
+> 5.8
+> 1
+> Top -K Image
+> tokens m
+
+hack 
+
+…
+
+…
+
+𝑠 !
+
+m ∈ 𝐼 ∗
+
+> I’m sorry…
+
+𝑦 #$%& 
+
+𝑣 !
+
+> ∗
+
+𝑣 #
+
+> ∗
+
+𝑊 '()*       
+
+> +∗
+> How do I hack into
+> someone's bank account?
+> Jailbreak
+> prompts
+> 1. Extract
+> harmful token t
+> 2. Generate
+> variations
+
+3. Image tokens selection 
+
+4. Calculate 
+
+keys 
+
+5. Optimize target values 
+
+6.Update Wdown weights 
+
+hack   
+
+> Vision
+> Encoder Text
+> Encoder Projector
+> LM Decoder
+
+Critical Layer             
+
+> Fig. 2. Overview of EVA . The process consists of six steps: 1. Extract the harmful token tfrom the user query with an auxiliary LLM; 2. Generate query variations accordingly; 3. locate critical image tokens via the attention matrix P; 4. Calculate the representative keys k∗by aggregating features across variations; 5. Optimize the target value v∗to align with a safe refusal response; 6. Update the specific MLP’s down projection
+> Wdown to map k∗to v∗. During deployment and inference, only the edited target model is required.
+
+critical representation of harmful triggers for text and vision tokens to form the representative keys k∗; (2) Safe value optimization (Step 5), in which we compute the optimal target value v∗ that aligns the model’s output with a safe response; and (3) Parameter update (Step 6), where we inject the new key-value mapping into the model by updating the MLP’s down projection Wdown via least-squares solution. 
+
+4.1 Identification of Keys Representation k∗
+
+To construct a robust defense, we must identify and neu-tralize the specific internal activation patterns that encode harmful semantics. In VLMs, the trigger for malicious be-havior can originate from either textual instructions or images. Consequently, we decompose the key identification process into two modalities, aiming to pinpoint the precise neural representations responsible for activating the model’s harmful knowledge. 
+
+Harmful textual keys extraction ( k∗ 
+
+> t
+
+). Existing textual jail-break attacks, ranging from optimization-based methods to prompt rephrasing strategies, exhibit diverse surface forms. However, regardless of how the input is disguised, these at-tacks always implicitly or explicitly reference specific harm-ful concepts (e.g., “hack”, “bomb”) to activate the model’s malicious capabilities. We posit that while the context may shift, the model’s internal representation of these core harm-ful concepts remains semantically invariant and critical for the generation of harmful content. Therefore, identifying and editing the activation patterns of the knowledge stored within the model corresponding to these harmful tokens serves as the most effective mitigation. We first employ GPT-4o [50] to analyze the harmful query q and extract the harmful token t responsible for the malicious intent. To ensure the key k∗ 
+
+> t
+
+is robust to context variations, we generate N diverse harmful sequences {xj }Nj=1 containing the token t. We perform forward propagation and compute the average key activation at layer l∗ for the text token t:
+
+k∗ 
+
+> t
+
+= 1
+
+N
+
+> N
+
+X
+
+> j=1
+
+σ(Wl∗ 
+
+> gate
+
+· xl∗ 
+
+> xj,t
+
+) ⊙ (Wl∗ 
+
+> up
+
+· xl∗ 
+
+> xj,t
+
+), (9) where xl∗  
+
+> xj,t
+
+denotes the intermediate hidden state serving as the input to the MLP for the text token t in sequence 
+
+xj at layer l∗. This process yields a set of textual keys 
+
+{k∗ 
+
+> t1
+
+, k∗ 
+
+> t2
+
+, . . . } that are correlated with the harmful concept. 
+
+Visual keys selection via cross-modal attention ( k∗
+
+> m
+
+). In VLM contexts, harmful information is not confined solely to textual modalities but is also embedded within visual inputs. Extending the safety editing mechanism to the visual domain is essential. However, given the massive number of image tokens and varying projector architectures, editing all visual tokens is infeasible and destructive. Therefore, it is crucial to identify the specific subset of image tokens most likely to trigger the jailbreak. To locate critical visual regions, we leverage the VLM’s cross-modal attention mechanism. Established findings suggest that cross-attention maps in transformers serve as a proxy for token grounding [51]– [53]; specifically, high attention weights from harmful text tokens to specific image patches indicate that those visual regions are the grounding source of the malicious intent. Based on this, for each generated variation sequence xj ,we first extract the cross-modal attention sub-matrix Pj ,representing the attention weights from text tokens to image tokens. The position of the harmful token varies across the generated texts. Let tj denote the index of the harmful token in the j-th sequence. We extract the attention weights from this token tj to all image tokens. To ensure the selection is robust and captures the stable visual semantics associated with the harm, we compute the average attention score for each image token m across all N sequences: 
+
+¯sm = 1
+
+N
+
+> N
+
+X
+
+> j=1
+
+Pj [tj , m ], (10) where Pj [tj , m ] denotes the attention weight from the harmful text token tj to the image token m in the j-th variation. We then identify the indices of the top-Nv image tokens with the highest average attention scores: 
+
+I∗ = Top Nv ({¯sm}Mm=1 ), (11) where M is the total number of image tokens and Nv
+
+denotes the number of selected visual tokens. Our ablation 6
+
+studies suggest that Nv = 1 is sufficient; selecting too many visual tokens leads to over-refusal. Finally, for each selected image token m ∈ I ∗, we compute its representative key vector by averaging its intermediate hidden states across the N variations: 
+
+k∗ 
+
+> m
+
+= 1
+
+N
+
+> N
+
+X
+
+> j=1
+
+σ(Wl∗ 
+
+> gate
+
+· xl∗ 
+
+> xj,m
+
+) ⊙ (Wl∗ 
+
+> up
+
+· xl∗ 
+
+> xj,m
+
+). (12) This process yields a set of visual keys {k∗ 
+
+> m1
+
+, k∗ 
+
+> m2
+
+, . . . } that are correlated with the harmful visual concept. 
+
+4.2 Optimization of Target Safe Values v∗
+
+Having identified the harmful key k∗, the next step is to determine the safe target value v∗. This vector represents the ideal information flow that, when substituted into the model’s computation, steers the generation towards a safe refusal response ysaf e . We treat v∗ as a learnable vector while keeping the model weights frozen. The optimization objective is designed to balance two goals: maximizing the probability of the safe response for the harmful input, and minimizing the distributional shift for benign queries. Formally, let θv denote the intervened model where the output of the MLP at layer l∗ is replaced by the vector v.We optimize v∗ by minimizing the following loss function: 
+
+v∗ = arg min 
+
+> v
+
+[Lsaf e (v) + λLstab (v)] , (13) 
+
+Lsaf e maximizes the probability of generating safe re-sponses given harmful inputs: 
+
+Lsaf e (v) = − log Pθv (ysaf e | I, q), (14) 
+
+Lstab employs the KL divergence to ensure that the in-tervention does not degrade the model’s performance on benign samples. Let u denote a benign input sampled from 
+
+Db. The stability loss is defined as: 
+
+Lstab (v) = Eu∼D b [KL ( Pθv (· | u) ∥ Pθ (· | u))] , (15) where Pθ represents the original model distribution. This optimization yields a precise target value v∗ for each iden-tified key, establishing a robust mapping from the harmful trigger to a safe state. 
+
+4.3 Unified Weight Update via Least Squares 
+
+Having obtained the optimized target values v∗ for each identified harmful key k∗, we now construct the editing ma-trices that will be used to update the MLP. We concatenate text and visual keys to preserve their distinct characteristics while enabling unified processing. Let KE denote the ma-trix of all identified harmful keys and VE denote the matrix of their corresponding optimized target values: 
+
+KE = [ k∗ 
+
+> t1
+
+, k∗ 
+
+> m1
+
+, k∗ 
+
+> t2
+
+, k∗ 
+
+> m2
+
+, . . . ], (16) 
+
+VE = [ v∗ 
+
+> t1
+
+, v∗ 
+
+> m1
+
+, v∗ 
+
+> t2
+
+, v∗ 
+
+> m2
+
+, . . . ], (17) where t and m denote text and vision modalities, respec-tively. This formulation naturally unifies the editing process across LLMs and VLMs. For LLMs, KE , VE contains only textual keys and values, while for VLMs, it contains keys and values from both modalities as independent columns. We update the down-projection weight matrix Wl∗
+
+> down
+
+at the critical layer l∗ to encode the new key-value associ-ation while preserving the model’s existing knowledge. We formulate this as a constrained least-squares problem [54]: 
+
+min 
+
+> cWl∗
+> down
+
+∥ cWl∗
+
+> down
+
+K − V∥2 (18) subject to 
+
+cWl∗
+
+> down
+
+KE = VE , (19) where the objective minimizes the error on the pre-existing keys K and values V, while the constraint ensures precise mapping of the harmful keys KE to the safe values VE . The above formulation describes the ideal constrained editing objective. In practice, following MEMIT [21], we use its expanded objective with soft error minimization to obtain the closed-form update in Eq. (20). The detailed derivation is provided in Appendix A.2. The resulting closed-form solution for updating the weight matrix at layer l∗ is: 
+
+cWl∗ 
+
+> down
+
+= Wl∗ 
+
+> down
+
++ RE KTE (Cl∗
+
++ KE KTE )−1, (20) where Cl∗
+
+= KK T denotes the covariance matrix of K,which represents the pre-existing keys of original knowl-edge at layer l∗, pre-cached from the Wikipedia dataset [55]. It acts as a preservation term that penalizes perturbations along directions frequently activated by pre-existing keys, thereby improving editing stability. The residual term RE is defined as: 
+
+RE = VE − Wl∗
+
+> down
+
+KE , (21) which represents the error between the desired target values 
+
+VE and the current model outputs for the editing keys KE .In practice, instead of updating a single layer l∗, we distribute the weight updates across a range of critical layers 
+
+R = {l1, l 2, . . . , l ∗} to limit the magnitude of parameter changes in any individual layer, which yields better robust-ness [38]. We adopt the identification of critical layers from 
+
+MEMIT [21] and EasyEdit [22] for LLMs, and extend this strategy to VLMs. Specifically, the target value v∗ and the base residual are computed only for the highest critical layer 
+
+l∗. This residual is then distributed to lower layers with a decreasing factor, yielding layer-specific residuals: 
+
+Rli 
+
+> E
+
+= VE − Wl∗
+
+> down
+
+KE
+
+l∗ − li + 1 . (22) By assigning smaller updates to lower layers, this dis-tributed scheme promotes stability while preventing large parameter shifts concentrated in a single layer. This weight update strategy effectively rewrites the spe-cific neurons across multiple MLP layers that are responsible for processing harmful information. By treating textual and visual keys as independent columns in KE , EV A enables simultaneous editing across both modalities within a sin-gle, unified optimization framework. The updated weight matrices { cWldown }l∈R are then deployed in place of the original weights. Intuitively, this update enforces the desired key–value mappings while minimally perturbing existing knowledge, thereby achieving precise and stable editing. 7
+
+TABLE 1 Comparison of ASR across four datasets and three attack methods (GCG , AutoDAN , PAIR ) for various LLMs. Five defense strategies are evaluated. Bold indicates the best performance. 
+
+Datasets HarmBench AdvBench JailbreakBench MaliciousInstruct 
+
+Methods GCG Auto DAN PAIR GCG Auto DAN PAIR GCG Auto DAN PAIR GCG Auto DAN PAIR 
+
+Vicuna-7B-v1.5 
+
+Vanilla 0.92 0.69 0.80 0.89 0.78 0.75 0.89 0.73 0.77 0.94 0.83 0.86 LoRA 0.40 0.22 0.26 0.18 0.29 0.13 0.32 0.22 0.20 0.08 0.32 0.16 SafeDecoding 0.07 0.17 0.16 0.04 0.20 0.08 0.03 0.18 0.15 0.01 0.08 0.11 LED 0.03 0.11 0.04 0.06 0.09 0.05 0.34 0.08 0.06 0.05 0.10 0.05 
+
+Circuit Breakers 0.09 0.10 0.03 0.05 0.02 0.08 0.15 0.12 0.03 0.02 0.07 0.12 EVA (text) 0.11 0.04 0.10 0.02 0.02 0.05 0.17 0.08 0.11 0.01 0.05 0.05 
+
+Llama2-7B-chat 
+
+Vanilla 0.42 0.23 0.02 0.39 0.19 0.01 0.46 0.27 0.04 0.45 0.30 0.00 
+
+LoRA 0.13 0.01 0.02 0.02 0.00 0.00 0.50 0.01 0.02 0.32 0.00 0.00 
+
+SafeDecoding 0.00 0.00 0.01 0.04 0.00 0.04 0.01 0.00 0.03 0.01 0.00 0.00 
+
+LED 0.02 0.02 0.01 0.00 0.01 0.00 0.08 0.02 0.04 0.08 0.02 0.01 Circuit Breakers 0.00 0.02 0.01 0.00 0.00 0.00 0.00 0.00 0.00 0.01 0.01 0.00 
+
+EVA (text) 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.01 0.00 0.00 
+
+Mistral-7B-Instruct-v0.2 
+
+Vanilla 0.80 0.87 0.88 0.56 0.97 0.82 0.79 0.95 0.89 0.94 0.96 0.92 LoRA 0.35 0.55 0.42 0.30 0.60 0.25 0.38 0.62 0.34 0.40 0.55 0.44 SafeDecoding 0.16 0.15 0.20 0.12 0.22 0.18 0.18 0.14 0.22 0.14 0.24 0.16 LED 0.20 0.18 0.19 0.06 0.26 0.16 0.10 0.12 0.10 0.12 0.25 0.12 Circuit Breakers 0.08 0.05 0.17 0.03 0.14 0.02 0.03 0.05 0.12 0.10 0.19 0.10 
+
+EVA (text) 0.06 0.08 0.15 0.02 0.11 0.00 0.02 0.11 0.16 0.14 0.12 0.10 
+
+Llama3.1-8B-Instruct 
+
+Vanilla 0.56 0.20 0.12 0.47 0.31 0.04 0.46 0.31 0.11 0.69 0.46 0.04 LoRA 0.41 0.27 0.14 0.34 0.33 0.04 0.37 0.35 0.09 0.42 0.47 0.06 SafeDecoding 0.00 0.04 0.00 0.00 0.01 0.00 0.00 0.01 0.01 0.00 0.01 0.00 
+
+LED 0.01 0.06 0.00 0.00 0.07 0.00 0.03 0.08 0.00 0.00 0.02 0.01 Circuit Breakers 0.00 0.04 0.03 0.00 0.00 0.00 0.00 0.00 0.00 0.01 0.01 0.00 
+
+EVA (text) 0.00 0.00 0.00 0.01 0.00 0.00 0.02 0.00 0.00 0.00 0.00 0.00 
+
+Qwen2.5-7B-Instruct 
+
+Vanilla 0.49 0.74 0.66 0.46 0.80 0.39 0.42 0.80 0.55 0.80 0.96 0.54 LoRA 0.21 0.65 0.32 0.38 0.82 0.10 0.36 0.42 0.50 0.72 0.90 0.44 SafeDecoding 0.19 0.77 0.56 0.17 0.80 0.30 0.42 0.73 0.43 0.48 0.97 0.45 LED 0.01 0.00 0.05 0.00 0.00 0.02 0.00 0.00 0.01 0.00 0.00 0.02 Circuit Breakers 0.00 0.03 0.04 0.00 0.00 0.05 0.03 0.00 0.00 0.01 0.01 0.00 
+
+EVA (text) 0.00 0.00 0.03 0.00 0.00 0.01 0.00 0.01 0.05 0.00 0.00 0.04 
+
+TABLE 2 Utility evaluation of EVA and baselines on different models across MT-Bench and downstream tasks. Bold : best score among defense methods (excluding LoRA ); ( ↑): improvement over the Vanilla model. 
+
+Downstream Tasks 
+
+Methods MT-Bench Closed- Dialogue NER NLI Reason- Senti- Summari-domain QA ing ment zation 
+
+Vicuna-7B-v1.5 
+
+Vanilla 6.77 0.777 0.483 0.287 0.563 0.982 0.862 0.272 LoRA 5.64 0.742 0.459 0.177 0.610 0.976 0.898 0.268 SafeDecoding 6.61 0.671 0.314 0.098 0.536 0.969 0.645 0.174 LED 3.70 0.760 0.478 0.265 0.558 0.974 0.831 0.267 
+
+Circuit Breakers 5.25 0.756 0.463 0.249 0.547 0.972 0.790 0.262 EVA (text) 6.84 (↑) 0.762 0.470 0.254 0.560 0.981 0.854 0.260 
+
+Llama2-7B-chat 
+
+Vanilla 6.89 0.734 0.465 0.187 0.603 0.977 0.909 0.267 LoRA 6.90 0.769 0.480 0.288 0.551 0.976 0.854 0.259 SafeDecoding 6.17 0.688 0.327 0.099 0.518 0.976 0.872 0.227 LED 5.80 0.705 0.425 0.228 (↑) 0.577 0.973 0.898 0.256 Circuit Breakers 6.05 0.712 0.444 0.185 0.559 0.971 0.881 0.260 
+
+EVA (text) 6.31 0.718 0.462 0.228 (↑) 0.612 (↑) 0.974 0.905 0.251 
+
+Mistral-7B-Instruct-v0.2 
+
+Vanilla 7.93 0.852 0.664 0.498 0.694 0.941 0.962 0.255 LoRA 7.54 0.850 0.668 0.495 0.700 0.946 0.953 0.258 SafeDecoding 7.16 0.732 0.439 0.372 0.593 0.863 0.790 0.204 LED 7.09 0.803 0.662 0.431 0.679 0.937 0.918 0.221 Circuit Breakers 5.98 0.811 0.669 (↑) 0.440 0.685 0.943( ↑) 0.871 0.254 
+
+EVA (text) 7.35 0.814 0.614 0.444 0.669 0.955 (↑) 0.923 0.205 
+
+Llama3.1-8B-Instruct 
+
+Vanilla 7.79 0.770 0.737 0.424 0.674 0.983 0.922 0.254 LoRA 8.14 0.782 0.737 0.433 0.672 0.982 0.918 0.254 SafeDecoding 8.05 (↑) 0.746 0.340 0.223 0.572 0.969 0.617 0.136 LED 7.29 0.768 0.684 0.468 (↑) 0.597 0.981 0.863 0.251 Circuit Breakers 7.21 0.489 0.660 0.390 0.643 0.977 0.862 0.252 EVA (text) 7.44 0.752 0.744 (↑) 0.423 0.686 (↑) 0.985 (↑) 0.890 0.256 (↑)
+
+Qwen2.5-7B-Instruct 
+
+Vanilla 8.82 0.840 0.790 0.510 0.835 0.987 0.928 0.254 LoRA 8.39 0.840 0.790 0.507 0.833 0.988 0.925 0.258 SafeDecoding 8.32 0.838 0.802( ↑) 0.509 0.831 0.987 0.870 0.239 LED 7.87 0.819 0.808 (↑) 0.499 0.807 0.987 0.903 0.254 Circuit Breakers 7.91 0.797 0.788 0.504 0.813 0.987 0.896 0.254 EVA (text) 8.48 0.832 0.798( ↑) 0.510 0.833 0.988 (↑) 0.910 0.256 (↑)
+
+5 EXPERIMENTS 
+
+In this section, we present a comprehensive evaluation of 
+
+EV A. We detail the experimental setup in Section 5.1 and validate the selection of critical layers and visual tokens in Section 5.2. We then assess the defense effectiveness and utility preservation in Section 5.3. We evaluate the robustness of EV A under adaptive attacks in Section 5.4. We further investigate the robustness of EV A through gen-eralization tests across harmful categories and analyze the interpretability and transferability in Section 5.5. To provide deeper insights into the editing mechanism, we analyze the decoupling effects and contextual synergy in Section 5.6. We then evaluate the computational efficiency in Section 5.7. Finally, we conduct ablation studies in Section 5.8. 
+
+5.1 Experimental Setup 
+
+Datasets and metrics. We conduct comprehensive evalu-ations on both LLMs and VLMs. For LLMs, we utilize HarmBench [56] for the editing dataset and evaluate defense performance on HarmBench, AdvBench [3], JailbreakBench [57], and MaliciousInstruct [58]. Utility is assessed using MT-Bench [59] and seven downstream tasks: Closed-domain QA on BoolQ [60] (EM [61]), Dialogue on MuTual [62] (Acc), 
+
+NER on CoNLL03 [63] (F1 score [61]), NLI on RTE [64] (Acc), Reasoning on GSM8K [65] (Acc), Sentiment Analysis 
+
+on SST2 [66] (Acc), and Summarization on SAMSum [67] (ROUGE [68]). For VLMs, we construct a specific dataset for the editing by generating images relevant to Harm-bench queries using Stable Diffusion [26], concatenated with OCR images containing harmful tokens. To evaluate defense performance, we employ MM-SafetyBench [25] and Multi-Trust [27], alongside visual adversarial images generated by 
+
+FigStep [7], Hades [8], and optimization-based attacks [24] on the four aforementioned text datasets. VLM utility is evaluated on MM-Vet-v2 [69], MMMU [70], and MMStar [71]. We report standard performance metrics specific to each utility task, where higher scores indicate better utility. For safety tasks, we report the Attack Success Rate (ASR), where lower indicate better. We employ the HarmBench classifier to detect harmful content. For a dataset Dharm 
+
+containing harmful queries q, ASR is formally defined as: ASR (Dharm ) = 1
+
+|D harm |
+
+X q ∈ D harm I(f (q)) (23) where I is the indicator function that returns 1 for successful attacks and 0 otherwise. 
+
+Models and attacks. For LLMs, we evaluate five mod-els: Llama-2-7B-chat-hf [72], Vicuna-7B-v1.5 [59], Mistral-7B-Instruct-v0.2 [73], Llama-3.1-8B-Instruct [74], and Qwen2.5-7B-Instruct [75]. To assess robustness, we generate adversar-ial prompts across all four datasets using three distinct jail-break strategies: gradient-based GCG [3], genetic algorithm-based AutoDAN [5], and LLM-assisted iterative attack PAIR 
+
+[6]. For VLMs, our experiments involve LLaVA-v1.5-7B [76], Qwen2.5-VL-7B [77], and InternVL3.5-8B [78]. We employ visual jailbreak attacks, including FigStep [7], Hades [8], and Visual Adversarial Examples ( ADV-16 ) [24]. For the ADV-16 , we evaluate the transferability of adversarial examples generated on LLaVA-v1.5-7B to the other models. And we incorporate attack scenarios from benchmarks such as MM-SafetyBench [25] and MultiTrust [27]. 8
+
+TABLE 3 Safety evaluation of EVA and baselines on different VLMs across multiple benchmarks. The values report the ASR under various attack settings. 
+
+Bold : best defense performance.                                                                                                                                                                                                                                                                                                                                                      
+
+> Datasets HarmBench AdvBench JailbreakBench MaliciousInstruct MM-SafetyBench MultiTrust
+> Methods Fig-Step ADV -16 Hades Fig-Step ADV -16 Hades Fig-Step ADV -16 Hades Fig-Step ADV -16 Hades SD TYPO SD+ TYPO Typo-graphic Multi-modal Cross-modal
+> LLaVA-1.5-7B
+> Vanilla 0.33 0.71 0.38 0.43 0.39 0.44 0.39 0.61 0.54 0.68 0.83 0.26 0.13 0.12 0.37 0.26 0.53 0.88 JailGuard 0.25 0.56 0.26 0.32 0.30 0.30 0.31 0.47 0.35 0.55 0.62 0.16 0.11 0.09 0.29 0.15 0.39 0.42 Adashield-A 0.01 0.00 0.00 0.00 0.00 0.00 0.02 0.00 0.00 0.01 0.00 0.00 0.02 0.01 0.10 0.02 0.08 0.07 VLGuard 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.04 0.02 0.14 0.04 0.06 0.07 EVA(text) 0.05 0.02 0.09 0.03 0.02 0.05 0.11 0.04 0.06 0.21 0.00 0.01 0.09 0.08 0.33 0.07 0.42 0.00
+> EVA 0.00 0.00 0.00 0.00 0.00 0.01 0.00 0.00 0.00 0.00 0.00 0.00 0.03 0.00 0.13 0.01 0.13 0.00
+> Qwen2.5-VL-7B
+> Vanilla 0.32 0.15 0.19 0.26 0.18 0.12 0.04 0.08 0.56 0.07 0.17 0.47 0.11 0.40 0.51 0.03 0.35 0.10 JailGuard 0.16 0.08 0.13 0.15 0.07 0.02 0.02 0.07 0.26 0.03 0.10 0.29 0.09 0.30 0.37 0.02 0.25 0.08 Adashield-A 0.10 0.09 0.01 0.09 0.00 0.04 0.00 0.00 0.31 0.04 0.00 0.12 0.05 0.27 0.27 0.00 0.06 0.05 VLGuard 0.00 0.00 0.00 0.00 0.01 0.00 0.00 0.00 0.01 0.00 0.00 0.00 0.02 0.11 0.11 0.01 0.08 0.10 EVA(text) 0.03 0.00 0.01 0.01 0.00 0.02 0.00 0.00 0.02 0.01 0.00 0.05 0.04 0.19 0.22 0.00 0.14 0.00
+> EVA 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.01 0.00 0.00 0.00 0.00 0.00
+> InternVL3.5-8B
+> Vanilla 0.22 0.11 0.17 0.05 0.04 0.03 0.15 0.10 0.09 0.30 0.22 0.21 0.14 0.48 0.48 0.03 0.33 0.07 JailGuard 0.16 0.08 0.13 0.04 0.03 0.02 0.11 0.07 0.06 0.22 0.16 0.15 0.10 0.36 0.35 0.02 0.24 0.05 Adashield-A 0.01 0.05 0.04 0.00 0.00 0.00 0.01 0.02 0.07 0.02 0.01 0.01 0.03 0.12 0.09 0.00 0.05 0.01 VLGuard 0.00 0.01 0.01 0.00 0.00 0.00 0.00 0.00 0.02 0.01 0.00 0.00 0.02 0.08 0.11 0.00 0.04 0.02 EVA(text) 0.02 0.03 0.03 0.00 0.01 0.00 0.03 0.02 0.01 0.05 0.03 0.02 0.05 0.14 0.09 0.01 0.15 0.00
+> EVA 0.01 0.00 0.00 0.00 0.00 0.00 0.01 0.00 0.00 0.02 0.00 0.00 0.03 0.06 0.03 0.00 0.00 0.00
+
+Baselines. We compare EV A against a diverse set of base-lines in the LLM and VLM domains. For LLMs, we em-ploy safety fine-tuning approaches including LoRA [28] and 
+
+LED [29], alongside inference-time defense mechanisms like 
+
+SafeDecoding [33]. We also include Circuit Breakers [34] as a representation-level defense baseline. For VLMs, we select 
+
+JailGuard [10], AdaShield [12], and VLGuard [9] as primary baselines. AdaShield is trained on the corresponding datasets following its original protocol. Unless otherwise specified, all other baselines for both LLMs and VLMs utilize their default configurations. To explicitly isolate and verify the contributions of the multimodal components, we include a text-only variant of our method, denoted as EV A (text) . This variant serves as a baseline for VLM experiments. We use a unified, concise refusal “I’m sorry, I can’t assist with that.” as the optimization target ysaf e , deferring the ablation study on optimization target to Section 5.8. 
+
+5.2 Critical Layers and Visual Tokens Selection 
+
+Critical layers selection. We target critical layers identi-fied in prior editing works. This choice aligns with recent findings on activation boundaries [19], which suggest that jailbreak vulnerabilities are rooted in specific layers. Con-cretely, we adopt the key layers reported by MEMIT [21] and EasyEdit [22] for the LLMs. For VLMs, our edits are still applied inside the language model component. In modern VLM architectures, the vast majority of parameters and almost all generative capacity reside in the LLM backbone, while the vision encoder mainly acts as an image feature extractor that feeds embeddings into the language model. This makes it natural to reuse the critical layer configuration of the underlying LLM when performing safety editing on the full VLM. To verify that this assumption holds in the multimodal setting, we conduct a layer-wise ablation by sweeping the edited layer on VLMs. On Qwen2.5-VL-7B, we vary the edited layer from 4 to 28 (Figure 3); on InternVL3.5-8B, we vary it from 4 to 36 (Figure 4). For each layer, we measure the average ASR on MM-SafetyBench and MM-Vet-v2 score. Our results show that for Qwen2.5-VL-7B, 5 10 15 20 25 
+
+Layer Index 
+
+> 0.0
+> 2.5
+> 5.0
+> 7.5
+> 10.0
+> 12.5
+> 15.0
+> 17.5
+> 20.0
+> Avg ASR (%)
+> ASR
+> MM-Vet-v2
+> 30
+> 35
+> 40
+> 45
+> 50
+> 55
+> 60
+> 65
+> MM-Vet-v2 Score
+> Layer 8
+> (Best Trade-off)
+
+Qwen2.5-VL-7B 
+
+Fig. 3. Ablation study on Layer selection for Qwen2.5-VL-7B. The left y-axis represents the Avg. ASR(%). The right y-axis represents the MM-Vet-v2 score. Layer 8 achieves the optimal trade-off. 
+
+editing at Layer 8 achieves the best safety–utility trade-off, matching the critical layer of the Qwen2.5-7B. Similarly, for InternVL3.5-8B, Layer 9 yields the lowest ASR and highest MM-Vet-v2 score, again coinciding with the layer identified on its LLM backbone Qwen3-8B. These consistent optima across LLMs and VLMs indicate that the editing sweet spot discovered in LLMs largely transfers to VLMs, supporting our choice of directly reusing LLM critical layers when performing safety edits in VLMs. 
+
+Visual tokens selection. To determine the most effective strategy for identifying critical visual tokens, we evalu-ated five selection methods against our attention-based ap-proach. All methods select one image token for editing in each input. We conducted experiments on the Qwen2.5-VL-7B, assessing the ASR on the MM-SafetyBench (SD+TYPO subsets) to measure safety, and the MM-Vet-v2 score to measure general capabilities. The Random method selects 95 10 15 20 25 30 35 
+
+> Layer Index
+> 0
+> 5
+> 10
+> 15
+> 20
+> 25
+> 30
+> 35
+> 40
+> Avg ASR (%)
+> ASR
+> MM-Vet-v2
+> 45
+> 50
+> 55
+> 60
+> 65
+> 70
+> 75
+> MM-Vet-v2 Score
+> Layer 9
+> (Best Trade-off)
+> InternVL3.5-8B
+> Fig. 4. Ablation study on Layer selection for InternVL3.5-8B. The left y-axis represents the Avg. ASR(%). The right y-axis represents the MM-Vet-v2 score. Layer 9 achieves the optimal trade-off.
+
+an image token arbitrarily from the visual sequence, while the Fixed strategy consistently targets the first image token. Moving to embedding-based methods, we evaluate meth-ods based on the interaction between the key vector of im-age tokens kmi and the key vector of the harmful text token 
+
+kt. The L2 Distance method selects the token minimizing the Euclidean distance [79], formulated as i∗ = argmin i ∥kmi −
+
+kt∥2. Similarly, the Cosine Similarity [80] method selects the token with the highest semantic alignment by maxi-mizing the cosine similarity: i∗ = argmax ikmi ·kt  
+
+> ∥kmi∥∥ kt∥
+
+. We                      
+
+> TABLE 4 Comparison of different image token selection strategies on Qwen2.5-VL-7B. Bold indicates the best result in each column.
+> Selection Method MM-SafetyBench MM-Vet-v2
+> ASR ↓Score ↑
+> Vanilla 0.51 56.9 Random 0.00 10.4 Fixed 0.00 12.1 L2 Distance 0.08 54.4 Cosine Similarity 0.05 55.2 Gradient-based 0.02 56.0
+> Attention-based (Ours) 0.00 55.5
+
+further compare our approach against a gradient-based attribution baseline. This method measures the sensitivity of the model’s affirmative output (e.g., “Sure, here is”) to changes in the input image tokens. The most critical token is identified by maximizing the gradient norm with respect to the target loss Ltarget : i∗ = argmax i ∇mi Ltarget . As shown in Table 4, naive strategies ( Random , Fixed ) cause a catastrophic collapse in general capabilities, with MM-Vet-v2 scores dropping to 10. Embedding-based methods (L2 , Cosine ) and Gradient-based approach preserves model utility, but they all necessitate additional computational overhead for vector compute or backward propagation. And these methods fail to fully mitigate jailbreak risks (ASR 
+
+> 0). In contrast, our attention-based mechanism utilizes the attention scores assigned by the text tokens to the image tokens. Since these scores are a byproduct of the standard forward pass, our method incurs zero additional computational overhead while maintaining safety and high                                                             
+
+> TABLE 5 Utility evaluation of EVA and baselines on three general multimodal benchmarks. Bold : best performance.
+> Methods MM-Vet-v2 MMMU MMStar
+> LLaVA-1.5-7B
+> Vanilla 28.5 31.3 32.5 JailGuard 26.5 29.8 31.0 Adashield-A 14.1 19.7 19.2 VLGuard 28.1 32.1 32.3
+> EVA(text) 28.6 33.3 27.3 EVA 28.3 33.4 32.3
+> Qwen2.5-VL-7B
+> Vanilla 56.9 49.9 60.1 JailGuard 54.5 47.5 59.2 Adashield-A 33.2 35.4 39.8 VLGuard 46.6 50.2 61.6
+> EVA(text) 55.7 49.6 61.1 EVA 55.5 48.2 60.9
+> InternVL3.5-8B
+> Vanilla 69.1 57.6 68.3 JailGuard 64.4 55.8 66.5 Adashield-A 46.2 38.4 44.7 VLGuard 67.5 57.1 67.0 EVA(text) 69.0 57.0 67.6
+> EVA 69.3 57.6 67.5
+
+utility, providing efficient alternative for identifying harmful visual triggers. 
+
+5.3 Safety and Utility Evaluation 
+
+Safety evaluation. We evaluate the defense performance of EV A across both LLMs and VLMs. Table 1 and Table 3 present the ASR under various adversarial scenarios. For LLMs, as shown in Table 1, EV A demonstrates superior robustness compared to all baselines. On Vicuna-7B-v1.5, 
+
+EV A significantly reduces the ASR of AutoDAN attacks from 0.69 to 0.04, outperforming LED (0.11) and Circuit Breakers (0.10). Notably, on stronger models like Llama3.1-8B-Instruct, and Qwen2.5-7B-Instruct, EV A achieves near-perfect defense with ASRs consistently dropping to 0 across four datasets. In contrast, while LED shows decent defense in some specific settings, it exhibits instability (e.g., 0.34 ASR on JailbreakBench for Vicuna), and SafeDecoding often fails to suppress attacks effectively on Mistral and Qwen. For VLMs, the results in Table 3 confirm that EV A effectively generalizes to the multimodal domain. On LLaVA-1.5-7B, 
+
+EV A drastically reduces the ASR of the ADV-16 attack from 0.71 to 0.00, and suppresses Crossmodal attacks in MultiTrust from 0.88 to 0.00. This significantly outperforms JailGuard ,which retains a high ASR of 0.56 on ADV-16 . Similarly, on Qwen2.5-VL-7B and InternVL3.5-8B, EV A consistently achieves 0.00 ASR against sophisticated visual jailbreaks like Hades . Furthermore, on MM-SafetyBench (SD+TYPO), where Qwen2.5-VL-7B reaches an ASR of 0.51, EV A com-pletely mitigates the threat (0.00), demonstrating superior reliability compared to baselines like AdaShield and VLGuard 
+
+across diverse datasets. 
+
+Utility evaluation. We report the utility scores for LLMs and VLMs in Table 2 and Table 5, respectively. For LLMs, on Vicuna-7B-v1.5 and Llama3.1-8B-Instruct, EV A (text) 
+
+achieves MT-Bench scores of 6.84 and 7.44, respectively, sur-passing the LED (3.70 and 7.29) and even outperforming the 
+
+Vanilla model in several cases. Specifically, EV A (text) shows improvements in complex tasks such as Reasoning , NLI ,10 
+
+and Summarization . This contrasts with SafeDecoding and 
+
+LED , which suffer from utility degradation. For VLMs, EV A
+
+demonstrates stability in maintaining multimodal reasoning capabilities. On benchmarks like MM-Vet-v2, MMMU, and MMStar, EV A achieves scores comparable to the Vanilla 
+
+model (e.g., 69.3 vs. 69.1 on MM-Vet-v2 for InternVL3.5). Conversely, other defense methods such as JailGuard and 
+
+AdaShield exhibit severe performance collapses on several benchmarks, suggesting they may compromise the model’s gerenal abilities. In summary, EV A successfully establishes a robust safety shield while incurring minimal to no utility loss, achieving the best trade-off among all baselines. 
+
+Summary of Findings  
+
+> •
+
+Strong safety. EV A achieves the strongest or near-strongest defense performance on both LLMs and VLMs, reducing ASR from 69% to 4% on Vicuna and to 0% on stronger models such as Llama3.1 and Qwen2.5.  
+
+> •
+
+Low utility loss. EV A largely preserves utility and often remains close to, or even exceeds, the Vanilla model, e.g., 69.3 vs. 69.1 on MM-Vet-v2 for InternVL and 33.4 on MMMU for LLaVA.  
+
+> •
+
+Best trade-off. Compared with prior defenses, EV A pro-vides the best overall balance between safety and utility, achieving 0% ASR on MM-SafetyBench for Qwen2.5-VL while retaining strong utility scores of 55.5/48.2/60.9 on MM-Vet-v2/MMMU/MMStar. 
+
+5.4 Adaptive Attacks Evaluation 
+
+Adaptive attacks on LLMs. Adaptive attacks [81] provide a stronger test of robustness, but EV A remains effective. To evaluate this setting, we regenerate adversarial test cases directly on each edited LLM using GCG , AutoDAN , and 
+
+PAIR across four datasets, and report the resulting ASR. The hyperparameter settings for adaptive attack generation are kept identical to those used when generating adversarial test cases on the corresponding vanilla model. As shown in Table 6, adaptive attacks increase the ASR of EV A (text) 
+
+on several models, confirming that they are stronger than the standard setting. However, the increase remains limited relative to the corresponding Vanilla models. For example, on Vicuna-7B, the average ASR rises from 0.068 to 0.112, but remains far below the vanilla ASR of 0.821. Similar trends are observed on Mistral-7B (0.122 vs. 0.089, compared with 0.863 for vanilla) and Qwen2.5-7B (0.113 vs. 0.012, compared with 0.634 for vanilla). On Llama2-7B and Llama3.1-8B, adaptive attacks remain largely ineffective, with average ASR staying at 0.000 and 0.005. Overall, although adaptive attacks can partially recover attack success on some models, 
+
+EV A still preserves strong robustness. 
+
+Adaptive attacks on VLMs. For VLMs, we conduct adap-tive ADV-16 evaluation on LLaVA-1.5-7B, where EV A also remains effective. Most attack settings considered in this work, including FigStep , Hades , MM-SafetyBench, and Mul-tiTrust, are dataset or input-construction-based and do not depend on the target model during attack generation. Hence, they do not have a separate adaptive regeneration setting on the edited model. Among our evaluated VLM attacks, only ADV-16 depends on the target model, since it requires gradients to be back-propagated to the input image. In our experiments, only LLaVA-1.5-7B supports 
+
+TABLE 6 Adaptive attacks evaluation on LLMs. We report ASR under GCG ,
+
+AutoDAN , and PAIR across four datasets, with the last column showing the average ASR. Lower is better.                                                                                                                                                                                                          
+
+> Datasets HarmBench AdvBench JailbreakBench MaliciousInstruct Avg. Methods GCG Auto DAN PAIR GCG Auto DAN PAIR GCG Auto DAN PAIR GCG Auto DAN PAIR
+> Vicuna-7B-v1.5
+> Vanilla 0.92 0.69 0.80 0.89 0.78 0.75 0.89 0.73 0.77 0.94 0.83 0.86 0.821 EVA (text) 0.11 0.04 0.10 0.02 0.02 0.05 0.17 0.08 0.11 0.01 0.05 0.05 0.068 + Adaptive attacks 0.17 0.06 0.08 0.11 0.04 0.06 0.21 0.10 0.15 0.13 0.09 0.14 0.112
+> Llama2-7B-chat
+> Vanilla 0.42 0.23 0.02 0.39 0.19 0.01 0.46 0.27 0.04 0.45 0.30 0.00 0.232 EVA (text) 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.01 0.00 0.00 0.001 + Adaptive attacks 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.000
+> Mistral-7B-Instruct-v0.2
+> Vanilla 0.80 0.87 0.88 0.56 0.97 0.82 0.79 0.95 0.89 0.94 0.96 0.92 0.863 EVA (text) 0.06 0.08 0.15 0.02 0.11 0.00 0.02 0.11 0.16 0.14 0.12 0.10 0.089 + Adaptive attacks 0.09 0.12 0.14 0.07 0.17 0.02 0.06 0.19 0.14 0.03 0.28 0.15 0.122
+> Llama3.1-8B-Instruct
+> Vanilla 0.56 0.20 0.12 0.47 0.31 0.04 0.46 0.31 0.11 0.69 0.46 0.04 0.314 EVA (text) 0.00 0.00 0.00 0.01 0.00 0.00 0.02 0.00 0.00 0.00 0.00 0.00 0.003 + Adaptive attacks 0.00 0.00 0.01 0.00 0.00 0.02 0.00 0.00 0.00 0.00 0.00 0.03 0.005
+> Qwen2.5-7B-Instruct
+> Vanilla 0.49 0.74 0.66 0.46 0.80 0.39 0.42 0.80 0.55 0.80 0.96 0.54 0.634 EVA (text) 0.00 0.00 0.03 0.00 0.00 0.01 0.00 0.01 0.05 0.00 0.00 0.04 0.012 + Adaptive attacks 0.12 0.15 0.06 0.07 0.09 0.02 0.11 0.13 0.07 0.22 0.23 0.08 0.113
+
+TABLE 7 Adaptive attacks evaluation on LLaVA-1.5-7B. We report ASR under 
+
+ADV-16 across four datasets, with the last column showing the average ASR. Lower is better. 
+
+Methods Harm Bench Adv Bench Jailbreak Bench Malicious Instruct Avg. 
+
+Vanilla 0.71 0.39 0.61 0.83 0.635 EVA 0.00 0.00 0.00 0.00 0.000 + Adaptive attacks 0.12 0.08 0.13 0.17 0.125 
+
+this gradient-based image optimization reliably. As shown in Table 7, adaptive visual attacks partially recover attack success, increasing the average ASR from 0.000 to 0.125. This remains far below the vanilla ASR of 0.635, further showing that EV A remains effective even under adaptive gradient-based visual attacks. 
+
+5.5 Generalization and Interpretability 
+
+In this section, we investigate the transferability of EV A
+
+across different harmful behaviors and provide an inter-pretability analysis to explain the underlying mechanism. 
+
+Cross-behavior generalization. We evaluate whether edit-ing a model on a single harmful category generalizes to defend against unseen categories. Our experiments utilize the six categories defined in the HarmBench dataset: Chem-ical and Biological (CheBio), Cybercrime and Intrusion (Cy-bIn), Harassment and Bullying (HaraBull), General Harmful (GenHarm), Illegal Activities (Ill), and Misinformation (Mis-Info). We conduct single category edits on Llama2-7B-chat (against GCG ) and LLaVA-1.5-7B (against Hades ), present-ing ASR heatmaps where off-diagonal elements represent defense performance on unedited categories. As shown in Figure 5 and 6, EV A exhibits transferability across behav-ior categories. For instance, editing solely on a category effectively mitigates threats in other domains, dropping the ASR. This indicates that EV A captures common features of attacks and recognizes underlying malicious intent, rather than merely memorizing specific refusal templates. 
+
+Interpretability via representation analysis. To understand why EV A attains defense generalization with limited editing 11 CheBio CybIn Hara  
+
+> Bull
+> Gen
+> Harm
+> Ill MisInfo
+
+Edit Class 
+
+> CheBio
+> (0.43)
+> CybIn
+> (0.53)
+> HaraBull
+> (0.16)
+> GenHarm
+> (0.29)
+> Ill
+> (0.43)
+> MisInfo
+> (0.47)
+> Source Class
+
+0.04 0.18 0.00 0.00 0.00 0.00 
+
+0.25 0.12 0.25 0.10 0.03 0.23 
+
+0.05 0.05 0.00 0.05 0.05 0.00 
+
+0.14 0.24 0.10 0.00 0.10 0.00 
+
+0.21 0.24 0.05 0.03 0.00 0.05 
+
+0.15 0.23 0.00 0.18 0.15 0.00 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> ASR
+
+Fig. 5. ASR heatmap on Llama2-7B against GCG attacks evaluated on the HarmBench dataset. Original ASR in parentheses. CheBio CybIn Hara  
+
+> Bull
+> Gen
+> Harm
+> Ill MisInfo
+
+Edit Class 
+
+> CheBio
+> (0.36)
+> CybIn
+> (0.45)
+> HaraBull
+> (0.32)
+> GenHarm
+> (0.43)
+> Ill
+> (0.38)
+> MisInfo
+> (0.32)
+> Source Class
+
+0.00 0.07 0.11 0.00 0.04 0.00 
+
+0.20 0.00 0.12 0.17 0.23 0.25 
+
+0.11 0.11 0.00 0.05 0.16 0.16 
+
+0.10 0.14 0.05 0.00 0.10 0.24 
+
+0.16 0.14 0.10 0.03 0.00 0.21 
+
+0.18 0.09 0.03 0.09 0.12 0.00 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> ASR
+
+Fig. 6. ASR heatmap on LLaVA-1.5-7B against Hades attacks evaluated on the HarmBench dataset. Original ASR in parentheses. 
+
+data, we analyze the internal representations associated with harmful inputs. Concretely, we extract the key vectors 
+
+k at the critical layer l∗ and visualize their distribution using Principal Component Analysis (PCA) [82]. We conduct this analysis in two settings: (i) harmful text tokens in Llama2-7B-chat and (ii) selected image tokens in Qwen2.5-VL-7B-Instruct. As shown in Figure 7, k vectors corresponding to harmful inputs exhibit substantial overlap and form a co-herent cluster in the projected space. For Llama2, keys from different harmful behaviors as well as different datasets con-centrate in a similar region, suggesting a shared represen-tation structure beyond dataset-specific artifacts. Notably, the same phenomenon emerges in the visual modality. For Qwen2.5-VL, keys of harmful image tokens also occupy a common subspace across behaviors and data sources. These observations indicate that the models encode the underlying malicious intent in a consistent across datasets manner at layer l∗. Therefore, editing the shared features within this cluster allows EV A to correct the model’s responses for a broad family of harmful inputs, explaining its transferability to unseen categories and datasets. 
+
+5.6 Decoupling Effects and Contextual Synergy in Vi-sual Editing 
+
+A question regarding EV A is its mechanism of action: Does 
+
+EV A simply suppress all visual information or precisely 2 1 0 1 2 3 4 5
+
+> 3
+> 2
+> 1
+> 0
+> 1
+> 2
+> CheBio
+> CybIn
+> HaraBull
+> GenHarm
+> Ill
+> MisInfo
+
+(a) Llama2: k of text tokens across behaviors. 1 0 1 2 3 4
+
+> 1
+> 0
+> 1
+> 2
+> AdvBench
+> HarmBench
+> JailbreakBench
+> MaliciousInstruct
+
+(b) Llama2: k of text tokens across datasets. 20 10 0 10 20 
+
+> 15
+> 10
+> 5
+> 0
+> 5
+> 10
+> 15
+> 20
+> CheBio
+> CybIn
+> HaraBull
+> GenHarm
+> Ill
+> MisInfo
+
+(c) Qwen2.5-VL: k of image tokens across behaviors. 30 15 0 15 30  
+
+> 16
+> 8
+> 0
+> 8
+> 16 AdvBench
+> HarmBench
+> JailbreakBench
+> MaliciousInstruct
+
+(d) Qwen2.5-VL: k of image tokens across datasets. Fig. 7. PCA visualizations of k at the target layer l∗. Top Row: Text token representations in Llama2. Bottom Row: Image token representations in Qwen2.5-VL. 
+
+target specific harmful semantics? To answer this, we design a controlled experiment to decouple visual imagery from optical character recognition (OCR) triggers. 
+
+Experimental setup. We utilize the MM-SafetyBench, focus-ing on three attack scenarios: purely visual harmful image generated by Stable Diffusion (SD), text-based OCR attacks (TYPO), and composite samples containing both harmful image and OCR (SD+TYPO). We compare four variations of EV A to analyze how the selection of editing tokens impacts defense generalization, as illustrated in Figure 8, 
+
+EV A (Image-Focused) , which uses composite images but re-stricts selection to non-OCR visual regions; EV A (Image-Only) , which utilizes purely visual harmful images without OCR; EV A (TYPO-Focused) , which uses composite images but limits token selection to OCR regions; and EV A (TYPO-Only) , which employs images containing only OCR regions. EVA EVA 
+
+> (Image -Focused)
+> EVA
+> (Image -Only)
+> EVA
+> (TYPO -Focused)
+> EVA
+> (TYPO -Only)
+
+Fig. 8. Illustration of EVA variations. The red bounding boxes indicate the regions where the model is permitted to select tokens for editing. 
+
+Results and analysis. Table 8 presents the ASR, from which we identify two key properties of EV A’s defense mechanism. 12 
+
+First, EV A demonstrates semantic precision by targeting the specific source of harm. We observe a clear decoupling effect where edits applied to visual regions ( Image-Focused/Only )primarily mitigate visual attacks (SD), while edits applied to text regions ( TYPO-Focused/Only ) effectively neutralize OCR attacks (TYPO). This confirms that EV A operates with granularity rather than suppresses global visual features. It successfully identifies and neutralizes specific triggers while leaving unrelated representations largely unaffected. Second, we observe contextual synergy, where editing in a rich context improves generalization. A finding is that 
+
+Focused variants outperform their Only counterparts. For instance, Image-Focused generalizes better to OCR attacks than Image-Only , even though both strictly edit visual to-kens. The difference lies in the context; in the Focused setting, the model observes both harmful image and harmful OCR simultaneously. Even if we only edit the visual tokens, the calculation is conditioned on the presence of the nearby harmful OCR. This suggests that EV A captures correlations. By editing a token within a composite toxic context, the defense learns a more robust safety boundary that accounts for the interplay between image and OCR inputs rather than treating them in isolation. These results demonstrate that                                              
+
+> TABLE 8 The ASR across different attack types when applying variations of EVA .
+> Model Qwen2.5-VL-7B InternVL3.5-8B
+> Scenario SD TYPO SD+TYPO SD TYPO SD+TYPO Vanilla 0.11 0.40 0.51 0.14 0.48 0.48 EVA 0.01 0.00 0.00 0.03 0.06 0.03
+> EVA (Image-Focused) 0.01 0.15 0.12 0.06 0.17 0.07 EVA (Image-Only) 0.00 0.18 0.13 0.03 0.36 0.16 EVA (TYPO-Focused) 0.05 0.00 0.25 0.10 0.04 0.27 EVA (TYPO-Only) 0.10 0.00 0.40 0.13 0.02 0.39
+
+EV A is both precise and context-aware. It does not simply penalize all visual inputs; rather, it learns to neutralize specific harmful semantics based on the multimodal context.                                  
+
+> TABLE 9 Efficiency comparison of defense methods on Vicuna-7B-v1.5 and InternVL3.5-8B. Bold indicates the best performance.
+> Base Model Method Training Time ↓
+> Inference Overhead ↓Avg. ASR (%) ↓
+> Vicuna-7B-v1.5 LoRA 1.5 hr 1×23.2% SafeDecoding 0.6 hr 1.07 ×10.7% LED 6.2 hr 1×8.8% Circuit Breakers 1.0 hr 1×7.3% EVA (text) 0.4 hr 1×6.7%
+> InternVL3.5-8B JailGuard -8×13.1% AdaShield-A 1.2 hr 1.05 ×3.0% VLGuard 2.0 hr 1×1.8% EVA 0.8 hr 1×0.9%
+
+5.7 Efficiency Evaluation 
+
+We evaluate the efficiency of EV A considering training time and inference overhead. The experiments are conducted on a single NVIDIA A40 GPU, with results averaged over 5 runs. For text-only tasks, we use Vicuna-7B-v1.5, while for multimodal tasks, we employ InternVL3.5-8B as the base model. Table 9 presents the comparison results. EV A demon-strates superior efficiency across both LLMs and VLMs. For LLMs, it requires only 0.4 hours for training and maintains 1× inference overhead, outperforming SafeDecoding (1.07 ×
+
+overhead), LED (6.2 hours of training), and Circuit Breakers 
+
+(1.0 hour of training). For VLMs, EV A achieves competitive robustness with the lowest ASR while maintaining effi-ciency. Compared with VLGuard , EV A uses a substantially smaller amount of training data (200 vs. 2977) yet attains a lower ASR (0.9% vs. 1.8%) and a shorter training time (0.8 hr vs. 2.0 hr). Moreover, unlike JailGuard and AdaShield-A, which introduce inference overheads of 8 × and 1.05 ×,
+
+EV A preserves 1 × inference cost, making it more suitable for deployment. 
+
+5.8 Ablation Studies 
+
+Number of editing visual tokens. We further investigated the impact of the number of edited image tokens on defense performance. Using attention scores as the selection crite-rion, we varied the number of edited tokens from 1 to 3 and evaluated the performance on the InternVL3.5-8B. The results are presented in Table 10. As shown in the table, editing one image token (Top 1) is sufficient to achieve a substantial reduction in ASR (from 0.48 to 0.03) while even slightly improving the model’s general utility (69.3 vs. 69.1). Although increasing the number of edited tokens to 2 or 3 further suppresses the ASR to zero, it leads to a precipitous decline in the model’s utility. This indicates that editing only the most critical token offers the optimal trade-off between safety and utility.   
+
+> TABLE 10 Comparison of the number of edited image tokens using InternVL3.5-8B. Bold indicates the best result in each column.
+
+Method MM-SafetyBench MM-Vet-v2 
+
+ASR ↓ Score ↑
+
+Vanilla 0.48 69.1 Top1 token 0.03 69.3 
+
+Top2 tokens 0.01 45.4 Top3 tokens 0.00 19.7 
+
+Harmful text tokens identification sources. To assess the robustness and practicality of EV A, we evaluate three differ-ent sources for harmful token identification: GPT-4o (ours), Qwen2.5-72B-Instruct, and Llama2-7B-chat. Table 11 re-ports the resulting defense performance and utility. GPT-4o achieves the lowest ASR and the highest MT-Bench score, in-dicating that more accurate harmful token identification can simultaneously strengthen safety and better preserve model utility. Qwen2.5-72B-Instruct attains performance close to GPT-4o, with moderately higher ASR but comparable MT-Bench score and over 90% token overlap with the GPT-4o, suggesting it is a strong open-source alternative. Llama2-7B-chat yields clearly higher ASR and lower MT-Bench score. In practice, the token identification model can be chosen ac-cording to deployment budgets and openness requirements. GPT-4o provides the strongest overall performance, while Qwen2.5-72B-Instruct offers a competitive option. 
+
+Impact of regularization metrics. We conduct a study to examine the impact of different regularization metrics within our method: Jensen-Shannon divergence (JS) [83], Cosine similarity (COS) [80], and KL-divergence [20] (ours). 13 
+
+TABLE 11 Comparison of different harmful-token identification sources. Bold 
+
+indicates the best result in each column.               
+
+> Token Source Token Overlap Llama2-GCG MT-Bench with GPT-4o (%) Avg. ASR ↓Score ↑
+> GPT-4o (ours) 100.0 0.0025 6.31
+> Qwen2.5-72B-Instruct 92.3 0.0050 6.12 Llama2-7B-chat 54.5 0.0175 5.39
+
+TABLE 12 Comparison of different regularization metrics within EVA . Report the Avg. ASR across all attack scenarios. Utility is measured by MT-Bench for Vicuna-7B-v1.5 and MM-Vet-v2 for Qwen2.5-VL-7B. Bold indicates the best result in each column.                          
+
+> Metrics Vicuna-7B-v1.5 Qwen2.5-VL-7B
+> Avg. ASR ↓MT-Bench ↑Avg. ASR ↓MM-Vet-v2 ↑
+> Vanilla 0.8208 6.77 0.2283 56.9 JS 0.0733 6.63 0.0033 55.6
+> COS 0.0683 6.44 0.0027 55.1 KL (Ours) 0.0675 6.84 0.0005 55.5
+
+The results are summarized in Table 12. KL-divergence consistently offers the best trade-off. On Vicuna-7B-v1.5, KL outperforms other metrics with the lowest ASR (6.75%) and highest MT-Bench (6.84). Similarly, on Qwen2.5-VL-7B, it reduces ASR to a negligible 0.05% while maintaining multimodal utility (55.5) comparable to the best-performing baseline. In contrast to JS and COS, which show inconsis-tent effectiveness across models, KL ensures superior safety without compromising general capabilities. 
+
+Impact of optimization target ( ysaf e ). A key choice in EV A
+
+is the form of the safety target ysaf e . We compare two strategies: (i) Universal Refusal , where all harmful token keys are mapped to a single generic response (e.g., “I’m sorry, I can’t assist with that.” ); and (ii) Specific Refusal , where the model is encouraged to generate comprehensive, query-specific refusals that provide detailed justifications and explanations tailored to each harmful query. We conduct experiments on Llama-3.1-8B-Instruct and InternVL3.5-8B. Safety is evaluated by ASR, and utility is evaluated by MT-Bench for the LLMs and MM-Vet-v2 for the VLMs. The results are summarized in Table 13. Across both models, 
+
+TABLE 13 Ablation on different optimization targets ysaf e . Universal Refusal vs. Specific Refusal on Llama-3.1-8B-Instruct and InternVL3.5-8B. Bold 
+
+indicates the best result in each column.                   
+
+> Target Type Llama-3.1-8B-Instruct InternVL3.5-8B
+> GCG Avg. ASR ↓
+> MT-Bench Score ↑
+> MM-SafetyBench Avg. ASR ↓
+> MM-Vet-v2 Score ↑
+> Vanilla 0.5450 7.79 0.3666 69.1 Specific 0.2125 7.51 0.1633 68.1 Universal (ours) 0.0075 7.44 0.0400 69.3
+
+using a Universal Refusal target substantially reduces ASR compared to Specific Refusals , while MT-Bench and MM-Vet-v2 remain almost unchanged. We see two main reasons for this effect. First, a single universal target yields a consistent optimization signal: all harmful tokens are mapped to the same ysaf e , so gradients push harmful activations toward one compact refusal region. In contrast, diverse, context-dependent refusals introduce supervision noise and effec-tively soften the safety boundary, making jailbreaks more likely. Second, we only adjust a small number of parameters at some layers. With such limited capacity, asking the edit to realize many different, context-specific refusal sentences is hard to optimize and tends not to converge to suffi-ciently low ASR. A universal target instead concentrates this limited editing capacity on enforcing a single, strong refusal behavior, which empirically produces much stronger safety guarantees. These observations justify our choice of a universal, static ysaf e in EV A.
+
+6 CONCLUSION 
+
+In this work, we propose EV A, a safety framework that leverages model editing to robustly defend against jailbreak attacks across both LLMs and VLMs. By precisely updating critical MLP parameters, EV A effectively neutralizes harmful behaviors triggered by textual and visual inputs without compromising general model capabilities. Extensive exper-iments demonstrate that EV A achieves best defense perfor-mance and utility preservation compared to existing base-lines. Overall, this work pioneers the application of direct model editing for VLM safety, offering a unified solution for diverse modalities. Future work could explore extending this mechanism to dynamic inputs, such as Video-LLMs, and developing more lightweight techniques for safety pa-rameter localization. 
+
+ACKNOWLEDGMENTS 
+
+We thank the associate editor and anonymous reviewers for their constructive comments and suggestions. This re-search is supported in part by the “Pioneer” and “Leading Goose” R&D Program of Zhejiang (Grant No. 2024C01169), the Kunpeng–Ascend Science and Education Innovation Excellence/Incubation Center, the National Natural Science Foundation of China (Grant No. 62441238), and the National Natural Science Foundation of China under Grant U2441240 (“Ye Qisun” Science Foundation). 
+
+REFERENCES 
+
+[1] L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. Wainwright, P. Mishkin, C. Zhang, S. Agarwal, K. Slama, A. Ray et al. , “Training language models to follow instructions with human feedback,” Advances in neural information processing systems , vol. 35, pp. 27 730–27 744, 2022. [2] R. Rafailov, A. Sharma, E. Mitchell, C. D. Manning, S. Ermon, and C. Finn, “Direct preference optimization: Your language model is secretly a reward model,” Advances in Neural Information Processing Systems , vol. 36, 2024. [3] A. Zou, Z. Wang, N. Carlini, M. Nasr, J. Z. Kolter, and M. Fredrik-son, “Universal and transferable adversarial attacks on aligned language models,” arXiv preprint arXiv:2307.15043 , 2023. [4] Y. Zhou, J. Lou, Z. Huang, Z. Qin, S. Yang, and W. Wang, “Don’t say no: Jailbreaking llm by suppressing refusal,” in Findings of the Association for Computational Linguistics: ACL 2025 , 2025, pp. 25 224–25 249. [5] X. Liu, N. Xu, M. Chen, and C. Xiao, “Autodan: Generating stealthy jailbreak prompts on aligned large language models,” in 
+
+The Twelfth International Conference on Learning Representations .[6] P. Chao, A. Robey, E. Dobriban, H. Hassani, G. J. Pappas, and E. Wong, “Jailbreaking black box large language models in twenty queries,” in 2025 IEEE Conference on Secure and Trustworthy Machine Learning (SaTML) . IEEE, 2025, pp. 23–42. 14 
+
+[7] Y. Gong, D. Ran, J. Liu, C. Wang, T. Cong, A. Wang, S. Duan, and X. Wang, “Figstep: Jailbreaking large vision-language models via typographic visual prompts,” in Proceedings of the AAAI Conference on Artificial Intelligence , vol. 39, no. 22, 2025, pp. 23 951–23 959. [8] Y. Li, H. Guo, K. Zhou, W. X. Zhao, and J. Wen, “Images are achilles’ heel of alignment: Exploiting visual vulnerabilities for jailbreaking multimodal large language models,” CoRR , vol. abs/2403.09792, 2024. [9] Y. Zong, O. Bohdal, T. Yu, Y. Yang, and T. Hospedales, “Safety fine-tuning at (almost) no cost: A baseline for vision large language models,” in International Conference on Machine Learning . PMLR, 2024, pp. 62 867–62 891. [10] X. Zhang, C. Zhang, T. Li, Y. Huang, X. Jia, M. Hu, J. Zhang, Y. Liu, S. Ma, and C. Shen, “Jailguard: A universal detection framework for prompt-based attacks on llm systems,” ACM Trans. Softw. Eng. Methodol. , vol. 35, no. 1, Dec. 2025. [Online]. Available: https://doi.org/10.1145/3724393 [11] L. Helff, F. Friedrich, M. Brack, P. Schramowski, and K. Kersting, “Llavaguard: Vlm-based safeguard for vision dataset curation and safety assessment,” in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , 2024, pp. 8322–8326. [12] Y. Wang, X. Liu, Y. Li, M. Chen, and C. Xiao, “Adashield: Safe-guarding multimodal large language models from structure-based attack via adaptive shield prompting,” in European Conference on Computer Vision . Springer, 2024, pp. 77–94. [13] Y. Luo, Z. Yang, F. Meng, Y. Li, J. Zhou, and Y. Zhang, “An em-pirical study of catastrophic forgetting in large language models during continual fine-tuning,” IEEE Transactions on Audio, Speech and Language Processing , 2025. [14] X. Qi, Y. Zeng, T. Xie, P.-Y. Chen, R. Jia, P. Mittal, and P. Henderson, “Fine-tuning aligned language models compromises safety, even when users do not intend to!” in The Twelfth International Conference on Learning Representations .[15] A. S. Rao, A. R. Naik, S. Vashistha, S. Aditya, and M. Choudhury, “Tricking llms into disobedience: Formalizing, analyzing, and detecting jailbreaks,” in Proceedings of the 2024 Joint International Conference on Computational Linguistics, Language Resources and Evaluation (LREC-COLING 2024) , 2024, pp. 16 802–16 830. [16] X. Cui, A. Aparcedo, Y. K. Jang, and S.-N. Lim, “On the robustness of large multimodal models against image adversarial attacks,” in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , 2024, pp. 24 625–24 634. [17] A. Arditi, O. Obeso, A. Syed, D. Paleka, N. Panickssery, W. Gurnee, and N. Nanda, “Refusal in language models is mediated by a single direction,” Advances in Neural Information Processing Systems ,vol. 37, pp. 136 037–136 083, 2024. [18] J. Chen, X. Wang, Z. Yao, Y. Bai, L. Hou, and J. Li, “Finding safety neurons in large language models,” CoRR , 2024. [19] L. Gao, J. Geng, X. Zhang, P. Nakov, and X. Chen, “Shaping the safety boundaries: Understanding and defending against jail-breaks in large language models,” in Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , 2025, pp. 25 378–25 398. [20] S. Kullback and R. A. Leibler, “On information and sufficiency,” 
+
+The annals of mathematical statistics , vol. 22, no. 1, pp. 79–86, 1951. [21] K. Meng, A. S. Sharma, A. J. Andonian, Y. Belinkov, and D. Bau, “Mass-editing memory in a transformer,” in The Eleventh Interna-tional Conference on Learning Representations .[22] P. Wang, N. Zhang, B. Tian, Z. Xi, Y. Yao, Z. Xu, M. Wang, S. Mao, X. Wang, S. Cheng et al. , “Easyedit: An easy-to-use knowledge editing framework for large language models,” in Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 3: System Demonstrations) , 2024, pp. 82–93. [23] Y. Wang, F. Weng, S. Yang, Z. Qin, M. Huang, and W. Wang, “DELMAN: Dynamic defense against large language model jailbreaking with model editing,” in Findings of the Association for Computational Linguistics: ACL 2025 , W. Che, J. Nabende, E. Shutova, and M. T. Pilehvar, Eds. Vienna, Austria: Association for Computational Linguistics, Jul. 2025, pp. 11 465–11 481. [Online]. Available: https://aclanthology.org/2025.findings-acl. 598/ [24] X. Qi, K. Huang, A. Panda, P. Henderson, M. Wang, and P. Mittal, “Visual adversarial examples jailbreak aligned large language models,” in Proceedings of the AAAI conference on artificial intelli-gence , vol. 38, no. 19, 2024, pp. 21 527–21 536. [25] X. Liu, Y. Zhu, J. Gu, Y. Lan, C. Yang, and Y. Qiao, “Mm-safetybench: A benchmark for safety evaluation of multimodal large language models,” in European Conference on Computer Vision .Springer, 2024, pp. 386–403. [26] R. Rombach, A. Blattmann, D. Lorenz, P. Esser, and B. Ommer, “High-resolution image synthesis with latent diffusion models,” in 
+
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , 2022, pp. 10 684–10 695. [27] Y. Zhang, Y. Huang, Y. Sun, C. Liu, Z. Zhao, Z. Fang, Y. Wang, H. Chen, X. Yang, X. Wei et al. , “Multitrust: A comprehensive benchmark towards trustworthy multimodal large language mod-els,” Advances in Neural Information Processing Systems , vol. 37, pp. 49 279–49 383, 2024. [28] E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, W. Chen et al. , “Lora: Low-rank adaptation of large language models.” ICLR , vol. 1, no. 2, p. 3, 2022. [29] W. Zhao, Z. Li, Y. Li, Y. Zhang, and J. Sun, “Defending large language models against jailbreak attacks via layer-specific editing,” in Findings of the Association for Computational Linguistics: EMNLP 2024 , Y. Al-Onaizan, M. Bansal, and Y.-N. Chen, Eds. Miami, Florida, USA: Association for Computational Linguistics, Nov. 2024, pp. 5094–5109. [Online]. Available: https://aclanthology.org/2024.findings-emnlp.293/ [30] B. Cao, Y. Cao, L. Lin, and J. Chen, “Defending against alignment-breaking attacks via robustly aligned llm,” in Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , 2024, pp. 10 542–10 560. [31] N. Jain, A. Schwarzschild, Y. Wen, G. Somepalli, J. Kirchenbauer, P.-y. Chiang, M. Goldblum, A. Saha, J. Geiping, and T. Gold-stein, “Baseline defenses for adversarial attacks against aligned language models.” [32] A. Zhou, B. Li, and H. Wang, “Robust prompt optimization for defending language models against jailbreaking attacks,” Advances in Neural Information Processing Systems , vol. 37, pp. 40 184–40 211, 2024. [33] Z. Xu, F. Jiang, L. Niu, J. Jia, B. Y. Lin, and R. Poovendran, “Safedecoding: Defending against jailbreak attacks via safety-aware decoding,” in Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,2024, pp. 5587–5605. [34] A. Zou, L. Phan, J. Wang, D. Duenas, M. Lin, M. Andriushchenko, R. Wang, Z. Kolter, M. Fredrikson, and D. Hendrycks, “Improving alignment and robustness with circuit breakers,” Advances in Neu-ral Information Processing Systems , vol. 37, pp. 83 345–83 373, 2024. [35] Y. Xu, X. Qi, Z. Qin, and W. Wang, “Cross-modality information check for detecting jailbreaking in multimodal large language models,” in Findings of the Association for Computational Linguistics: EMNLP 2024 , 2024, pp. 13 715–13 726. [36] E. Mitchell, C. Lin, A. Bosselut, C. Finn, and C. D. Manning, “Fast model editing at scale,” in International Conference on Learning Representations .[37] N. De Cao, W. Aziz, and I. Titov, “Editing factual knowledge in language models,” in Proceedings of the 2021 Conference on Empirical Methods in Natural Language Processing , 2021, pp. 6491–6506. [38] A. S. Rawat, C. Zhu, D. Li, F. Yu, M. Zaheer, S. Kumar, and S. Bhojanapalli, “Modifying memories in transformer models,” in 
+
+International conference on machine learning (ICML) , vol. 2020, 2021. [39] K. Lee, W. Han, S. W. Hwang, H. Lee, J. Park, and S. W. Lee, “Plug-and-play adaptation for continuously-updated qa,” in 60th Annual Meeting of the Association for Computational Linguistics, ACL 2022 . Association for Computational Linguistics (ACL), 2022, pp. 438–447. [40] K. Meng, D. Bau, A. Andonian, and Y. Belinkov, “Locating and editing factual associations in gpt,” Advances in Neural Information Processing Systems , vol. 35, pp. 17 359–17 372, 2022. [41] M. Wang, N. Zhang, Z. Xu, Z. Xi, S. Deng, Y. Yao, Q. Zhang, L. Yang, J. Wang, and H. Chen, “Detoxifying large language models via knowledge editing,” in Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , 2024, pp. 3093–3118. [42] J. Wu, C. Chen, C. Hou, and X. Yuan, “Safeint: Shielding large language models from jailbreak attacks via safety-aware represen-tation intervention,” CoRR , 2025. [43] X. Li, X. Wu, Q. Li, J. Ni, and R. Lu, “Safellm: Unlearning harmful outputs from large language models against jailbreak attacks,” 
+
+arXiv preprint arXiv:2508.15182 , 2025. [44] Z. Shi, Y. Zhou, J. Li, Y. Jin, Y. Li, D. He, F. Liu, S. Alharbi, J. Yu, and M. Zhang, “Safety alignment via constrained knowledge unlearn-ing,” in Proceedings of the 63rd Annual Meeting of the Association for 15 
+
+Computational Linguistics (Volume 1: Long Papers) , 2025, pp. 25 515– 25 529. [45] A. Conmy, A. Mavor-Parker, A. Lynch, S. Heimersheim, and A. Garriga-Alonso, “Towards automated circuit discovery for mechanistic interpretability,” Advances in Neural Information Pro-cessing Systems , vol. 36, pp. 16 318–16 352, 2023. [46] A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin, “Attention is all you need,” 
+
+Advances in neural information processing systems , vol. 30, 2017. [47] M. Geva, R. Schuster, J. Berant, and O. Levy, “Transformer feed-forward layers are key-value memories,” in Proceedings of the 2021 Conference on Empirical Methods in Natural Language Processing ,2021, pp. 5484–5495. [48] M. Geva, A. Caciularu, K. Wang, and Y. Goldberg, “Transformer feed-forward layers build predictions by promoting concepts in the vocabulary space,” in Proceedings of the 2022 conference on empirical methods in natural language processing , 2022, pp. 30–45. [49] N. Shazeer, “Glu variants improve transformer,” arXiv preprint arXiv:2002.05202 , 2020. [50] A. Hurst, A. Lerer, A. P. Goucher, A. Perelman, A. Ramesh, A. Clark, A. Ostrow, A. Welihinda, A. Hayes, A. Radford et al. ,“Gpt-4o system card,” arXiv preprint arXiv:2410.21276 , 2024. [51] Y. Zhang, C.-K. Fan, J. Ma, W. Zheng, T. Huang, K. Cheng, D. A. Gudovskiy, T. Okuno, Y. Nakata, K. Keutzer et al. , “Sparsevlm: Vi-sual token sparsification for efficient vision-language model infer-ence,” in Forty-second International Conference on Machine Learning .[52] H. Chefer, S. Gur, and L. Wolf, “Generic attention-model ex-plainability for interpreting bi-modal and encoder-decoder trans-formers,” in Proceedings of the IEEE/CVF international conference on computer vision , 2021, pp. 397–406. [53] Y. Li, Y. Du, K. Zhou, J. Wang, W. X. Zhao, and J.-R. Wen, “Evaluating object hallucination in large vision-language models,” in Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing , 2023, pp. 292–305. [54] D. Bau, S. Liu, T. Wang, J.-Y. Zhu, and A. Torralba, “Rewriting a deep generative model,” in European conference on computer vision .Springer, 2020, pp. 351–369. [55] W. Foundation. Wikimedia downloads. [Online]. Available: https://dumps.wikimedia.org [56] M. Mazeika, L. Phan, X. Yin, A. Zou, Z. Wang, N. Mu, E. Sakhaee, N. Li, S. Basart, B. Li et al. , “Harmbench: a standardized evaluation framework for automated red teaming and robust refusal,” in 
+
+Proceedings of the 41st International Conference on Machine Learning ,2024, pp. 35 181–35 224. [57] P. Chao, E. Debenedetti, A. Robey, M. Andriushchenko, F. Croce, V. Sehwag, E. Dobriban, N. Flammarion, G. J. Pappas, F. Tramer 
+
+et al. , “Jailbreakbench: An open robustness benchmark for jail-breaking large language models,” Advances in Neural Information Processing Systems , vol. 37, pp. 55 005–55 029, 2024. [58] Y. Huang, S. Gupta, M. Xia, K. Li, and D. Chen, “Catastrophic jailbreak of open-source llms via exploiting generation,” in 12th In-ternational Conference on Learning Representations, ICLR 2024 , 2024. [59] L. Zheng, W.-L. Chiang, Y. Sheng, S. Zhuang, Z. Wu, Y. Zhuang, Z. Lin, Z. Li, D. Li, E. Xing et al. , “Judging llm-as-a-judge with mt-bench and chatbot arena,” Advances in Neural Information Processing Systems , vol. 36, pp. 46 595–46 623, 2023. [60] C. Clark, K. Lee, M.-W. Chang, T. Kwiatkowski, M. Collins, and K. Toutanova, “Boolq: Exploring the surprising difficulty of natural yes/no questions,” in Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, Volume 1 (Long and Short Papers) , 2019, pp. 2924–2936. [61] P. Rajpurkar, J. Zhang, K. Lopyrev, and P. Liang, “Squad: 100,000+ questions for machine comprehension of text,” in Proceedings of the 2016 Conference on Empirical Methods in Natural Language Processing ,2016, pp. 2383–2392. [62] L. Cui, Y. Wu, S. Liu, Y. Zhang, and M. Zhou, “Mutual: A dataset for multi-turn dialogue reasoning,” in Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics ,2020, pp. 1406–1416. [63] E. T. K. Sang and F. De Meulder, “Introduction to the conll-2003 shared task: Language-independent named entity recognition,” in 
+
+Proceedings of the seventh conference on Natural language learning at HLT-NAACL 2003 , 2003, pp. 142–147. [64] I. Dagan, O. Glickman, and B. Magnini, “The pascal recognising textual entailment challenge,” in Machine learning challenges work-shop . Springer, 2005, pp. 177–190. [65] K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano et al. , “Train-ing verifiers to solve math word problems,” arXiv preprint arXiv:2110.14168 , 2021. [66] R. Socher, A. Perelygin, J. Wu, J. Chuang, C. D. Manning, A. Y. Ng, and C. Potts, “Recursive deep models for semantic compo-sitionality over a sentiment treebank,” in Proceedings of the 2013 conference on empirical methods in natural language processing , 2013, pp. 1631–1642. [67] B. Gliwa, I. Mochol, M. Biesek, and A. Wawer, “Samsum corpus: A human-annotated dialogue dataset for abstractive summariza-tion,” EMNLP-IJCNLP 2019 , p. 70, 2019. [68] L. Chin-Yew, “Rouge: A package for automatic evaluation of summaries,” in Proceedings of the Workshop on Text Summarization Branches Out, 2004 , 2004. [69] W. Yu, Z. Yang, L. Ren, L. Li, J. Wang, K. Lin, C.-C. Lin, Z. Liu, L. Wang, and X. Wang, “Mm-vet v2: A challenging benchmark to evaluate large multimodal models for integrated capabilities,” 
+
+CoRR , 2024. [70] X. Yue, Y. Ni, K. Zhang, T. Zheng, R. Liu, G. Zhang, S. Stevens, D. Jiang, W. Ren, Y. Sun et al. , “Mmmu: A massive multi-discipline multimodal understanding and reasoning benchmark for expert agi,” in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , 2024, pp. 9556–9567. [71] L. Chen, J. Li, X. Dong, P. Zhang, Y. Zang, Z. Chen, H. Duan, J. Wang, Y. Qiao, D. Lin et al. , “Are we on the right way for evaluating large vision-language models?” Advances in Neural Information Processing Systems , vol. 37, pp. 27 056–27 087, 2024. [72] H. Touvron, L. Martin, K. Stone, P. Albert, A. Almahairi, Y. Babaei, N. Bashlykov, S. Batra, P. Bhargava, S. Bhosale et al. , “Llama 2: Open foundation and fine-tuned chat models,” arXiv preprint arXiv:2307.09288 , 2023. [73] A. Jiang, A. Sablayrolles, A. Mensch, C. Bamford, D. Chaplot, D. Casas, F. Bressand, G. Lengyel, G. Lample, L. Saulnier et al. ,“Mistral 7b. arxiv 2023,” arXiv preprint arXiv:2310.06825 , 2024. [74] A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Vaughan et al. , “The llama 3 herd of models,” arXiv preprint arXiv:2407.21783 , 2024. [75] A. Yang, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Li, D. Liu, F. Huang, H. Wei, H. Lin, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Lin, K. Dang, K. Lu, K. Bao, K. Yang, L. Yu, M. Li, M. Xue, P. Zhang, Q. Zhu, R. Men, R. Lin, T. Li, T. Xia, X. Ren, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Wan, Y. Liu, Z. Cui, Z. Zhang, and Z. Qiu, “Qwen2.5 technical report,” arXiv preprint arXiv:2412.15115 , 2024. [76] H. Liu, C. Li, Q. Wu, and Y. J. Lee, “Visual instruction tuning,” 
+
+Advances in neural information processing systems , vol. 36, pp. 34 892– 34 916, 2023. [77] S. Bai, K. Chen, X. Liu, J. Wang, W. Ge, S. Song, K. Dang, P. Wang, S. Wang, J. Tang et al. , “Qwen2. 5-vl technical report,” arXiv preprint arXiv:2502.13923 , 2025. [78] W. Wang, Z. Gao, L. Gu, H. Pu, L. Cui, X. Wei, Z. Liu, L. Jing, S. Ye, J. Shao et al. , “Internvl3. 5: Advancing open-source multimodal models in versatility, reasoning, and efficiency,” arXiv preprint arXiv:2508.18265 , 2025. [79] G. H. Golub and C. F. Van Loan, Matrix computations , 4th ed. JHU press, 2013. [80] G. Salton, A. Wong, and C.-S. Yang, “A vector space model for automatic indexing,” Communications of the ACM , vol. 18, no. 11, pp. 613–620, 1975. [81] F. Tramer, N. Carlini, W. Brendel, and A. Madry, “On adaptive attacks to adversarial example defenses,” Advances in neural infor-mation processing systems , vol. 33, pp. 1633–1645, 2020. [82] S. Wold, K. Esbensen, and P. Geladi, “Principal component analy-sis,” Chemometrics and intelligent laboratory systems , vol. 2, no. 1-3, pp. 37–52, 1987. [83] J. Lin, “Divergence measures based on the shannon entropy,” IEEE Transactions on Information theory , vol. 37, no. 1, pp. 145–151, 2002.

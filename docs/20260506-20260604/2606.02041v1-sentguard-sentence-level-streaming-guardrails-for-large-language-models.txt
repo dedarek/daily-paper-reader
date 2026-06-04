@@ -1,0 +1,492 @@
+Title: SentGuard: Sentence-Level Streaming Guardrails for Large Language Models
+
+URL Source: https://arxiv.org/pdf/2606.02041v1
+
+Published Time: Tue, 02 Jun 2026 02:30:12 GMT
+
+Number of Pages: 16
+
+Markdown Content:
+# SentGuard: Sentence-Level Streaming Guardrails for Large Language Models 
+
+Jiaqi Yu 1,2*, Xin Wang 1,2*, Yixu Wang 1,2, Jie Li 2
+
+Yan Teng 2†, Xingjun Ma 1†, Yingchun Wang 21Fudan University 2Shanghai AI Laboratory 
+
+Abstract 
+
+Large language models increasingly stream long, reasoning-intensive responses in real time, making when to moderate as critical as whether to moderate. Existing guardrails fall into two unsatisfactory extremes: response-level meth-ods delay intervention until the full output is generated, whereas token-level methods act on incomplete semantics, often producing unstable decisions and excessive guard invocations. To address this challenge, we propose SentGuard ,a sentence-level streaming guardrail that oper-ates in parallel with generation. A lightweight waiting buffer groups streamed tokens into sen-tence chunks and releases only verified chunks to the user, introducing a small offset that en-ables SentGuard to assess the current prefix while the target LLM decodes subsequent con-tent. To support this, we construct StreamSafe ,a benchmark with structured per-sentence an-notations across 8 harm categories, capturing the evolution of safety risks across both reason-ing and response segments. We further train SentGuard with a coarse-to-fine objective to detect unsafe intent as soon as it emerges at sentence boundaries. Experiments on 5 safety benchmarks show that SentGuard outperforms existing baselines, detecting 90.5% of unsafe cases within two sentences while maintaining a low streaming false-positive rate of 7.41%. 
+
+1 Introduction 
+
+Large language models (LLMs) (Yang et al., 2025; OpenAI, 2025; Comanici et al., 2025; Adcock et al., 2026) have achieved remarkable performance across a wide range of domains, from open-domain dialogue (Zhang et al., 2022) and code genera-tion (Wang et al., 2024) to scientific reasoning (Ko-jima et al., 2022; Ren et al., 2025) and agentic decision making (Wang et al., 2026b). LLMs are increasingly deployed as interactive assistants   
+
+> *Equal contribution.
+> †Corresponding author.
+
+Figure 1: Comparison of guardrail paradigms. Top :response-level moderation detects unsafe content only after the full response is generated. Middle : our sentence-level streaming moderation checks completed sentence chunks in parallel with generation and releases only verified content. Bottom : token-level streaming moderation acts on fragmented semantics, leading to frequent guard invocations and unstable decisions. 
+
+that stream long, reasoning-intensive responses to users in real time, making them a core component of many production systems. Despite these ad-vancements, studies indicate that even minor adver-sarial perturbations or carefully crafted jailbreak prompts can induce LLMs to generate harmful con-tent (Wang et al., 2026a; Gao et al., 2025; Wang et al., 2025; Chen et al., 2025), including instruc-tions for illegal activities, privacy violations, and unsafe operational details. As LLMs are deployed at increasingly large scale, ensuring the safety of their streaming outputs throughout generation has become a critical and time-sensitive challenge. Safety guarding (Zhao et al., 2025a; Inan et al., 2023) is a general defense strategy that deploys an auxiliary safety model to monitor the output of the target LLM and intervene when unsafe content is detected. While model-agnostic and plug-and-play, existing guardrails suffer from poor timeliness in real-time streaming deployment, which limits their practicality. Specifically, they fall into two unsatisfactory extremes in moderation granularity. Response-level guardrails (Inan et al., 2023; Chi et al., 2024) classify safety only after the full re-sponse is generated, which delays delivery, exposes 1
+
+> arXiv:2606.02041v1 [cs.CL] 1 Jun 2026
+
+unsafe content before intervention, and wastes de-coding on continuations that should have been stopped. Token-level guardrails (Zhao et al., 2025a) instead inspect each token, but fragmented token-level semantics yield unstable decisions, frequent false positives, and excessive guard invocations, especially on reasoning-heavy outputs where un-safe evidence accumulates gradually. At the core of this dilemma is the lack of appropriate moder-ation granularity , where full responses offer rich context but arrive too late, while individual tokens are timely but semantically too sparse to support accurate decisions. In this work, we propose SentGuard , a sentence-level streaming guardrail that operates concurrently with LLM generation. Instead of moderating in-dividual tokens or deferring judgment to the full response, SentGuard verifies safety at the granular-ity of sentence chunks, striking a practical balance between intervention timeliness and semantic com-pleteness. Specifically, our framework introduces a lightweight waiting buffer that groups streamed tokens into sentence chunks and releases only ver-ified chunks to the user. This buffer induces a one-sentence offset among generation, verification, and display, so that SentGuard assesses the current prefix while the target LLMs continues decoding subsequent content into the hidden buffer. As a result, SentGuard overlaps with normal decoding and avoid additional user-facing stalls beyond the initial verified chunk. To support this design, we further construct StreamSafe , a benchmark with structured per-sentence annotations over 8 harm categories that captures the temporal evolution of safety risks across both reasoning and response segments. Building on StreamSafe, SentGuard is trained with a coarse-to-fine objective that exposes the model to incrementally revealed sentence-level prefixes, encouraging early detection of unsafe in-tent at sentence boundaries while preserving stable predictions on incomplete benign prefixes. We evaluate SentGuard on 5 safety bench-marks, including BeaverTails (Ji et al., 2023), Safe-RLHF (Ji et al., 2025), XSTest (Röttger et al., 2024), WildGuardTest (Han et al., 2024), and our StreamSafe, against representative response-level guardrails and token-level guardrails, under both streaming and full-response settings. Experimental results show that SentGuard detects unsafe content within the fewest sentences, substantially earlier than existing guardrails. These findings highlight sentence-level guarding as a practical path to safe, real-time deployment of large reasoning models. In summary, our main contributions are: • We formulate sentence-level guarding for streaming LLM generation, shifting modera-tion granularity from tokens or full responses to sentences to balance timeliness and context. • We propose SentGuard , a sentence-level streaming guardrail running in parallel with LLM decoding via a lightweight buffer, and construct StreamSafe , a benchmark with per-sentence annotations over 8 harm categories, on which SentGuard is trained with a coarse-to-fine objective for early detection. • We evaluate SentGuard on 5 safety bench-marks under streaming and full-response set-tings. SentGuard detects 90.5% of unsafe cases within two sentences at a 7.41% false-positive rate and an average F1 of 88.3%, while adding minimal decoding latency. 
+
+2 Related Work 
+
+Red-Teaming of LLMs. Early approaches to LLM safety focused on manual red teaming, where human experts induce harmful outputs through targeted inputs, a process known as jailbreak-ing (Perez et al., 2022; Liu et al., 2023; Weidinger et al., 2023). While effective in uncovering subtle vulnerabilities (Li et al., 2024; the Prompter, 2024), manual methods are limited by scalability, cost, and coverage (Bai et al., 2022; Ganguli et al., 2022). To address these limitations, automated red teaming has gained attention (Yu et al., 2023; Mazeika et al., 2024), with representative techniques exploring the input space through genetic algorithms, token-level combinatorial methods, gradient-based optimiza-tion, and LLM-driven prompt refinement (Zang et al., 2020; Zou et al., 2023; Chao et al., 2025; Mehrotra et al., 2023). 
+
+Safety Guardrails for LLMs. Existing guardrails for harmful content detection largely fall into two paradigms, post-hoc and streaming. Early work adapts encoder-only models such as BERT (De-vlin et al., 2019) and RoBERTa (Liu et al., 2019) into harmfulness classifiers, but their semantic capacity lags behind modern LLMs. A more competitive approach fine-tunes LLMs as safety guards, including the LlamaGuard series (Inan et al., 2023; Chi et al., 2024), WildGuard (Han et al., 2024), ShieldGemma (Zeng et al., 2024), and 2Figure 2: Overview of SentGuard. StreamSafe is constructed through conversation collection, sentence-level prefix expansion, and structured safety annotation. SentGuard is trained with full-context SFT and prefix-progressive SFT, and is deployed in a sentence-shifted streaming pipeline. During inference, the waiting buffer groups tokens into sentence chunks, SentGuard evaluates hidden prefixes in parallel with LLM decoding, and unsafe prefixes trigger intervention before unverified content is shown to the user. 
+
+Qwen3Guard-Gen (Zhao et al., 2025a), yet these response-level guards operate post-hoc. For time-lier intervention, recent lightweight methods per-form streaming detection on token-level by reusing the backbone’s hidden states during decoding, e.g., ShieldHead (Xuan et al., 2025), SCM (Li et al., 2026), DSA (Krishna et al., 2025) and Kelp (Li et al., 2025). Different from these white-box ap-proaches, Qwen3Guard-Stream (Zhao et al., 2025a) enables real-time moderation with a dedicated token-level streaming classifier. Since response-level guards react too late and token-level guards fire on poor tokens with unstable decisions, we propose a sentence-level guardrail that treats each sentence as a self-contained semantic unit, balanc-ing latency and contextual reliability. 
+
+3 SentGuard 
+
+Figure 2 illustrates the overall pipeline of Sent-Guard. The framework consists of three tightly connected components. First, we construct Stream-Safe, a streaming-aware safety dataset that con-verts full conversations into sentence-level partial prefixes and annotates each prefix with structured safety evidence. Second, we train SentGuard with a two-stage supervised fine-tuning strategy, start-ing from full-context safety judgment and then adapting the model to prefix-level streaming super-vision. Third, during inference, SentGuard runs in a sentence-shifted manner. The target LLM continues decoding the next sentence while Sent-Guard evaluates the current hidden prefix, and the front end displays only previously verified sentence chunks. This design aligns training with deploy-ment and enables early intervention without expos-ing unverified content to the user. 
+
+3.1 Problem Formulation 
+
+Let x ∈ X denote a user query and let the target model Mϕ generate a response autoregressively, 
+
+yt ∼ pϕ(· | x, y <t ) , t = 1 , . . . , T, (1) where T is the stopping time of generation and y =
+
+y1: T is the complete response. Let Ft = σ(x, y ≤t)
+
+denote the information available after decoding step t. We characterize a streaming guard by an invocation schedule 
+
+Γ( y) = ( γk)Kk=1 , 1 ≤ γ1 < · · · < γ K ≤ T, 
+
+(2) where each γk is an online stopping time with re-spect to Ft = σ(x, y ≤t). Token-level and response-level moderation are two limiting schedules under 3this formulation, 
+
+Γtok (y) = (1 , 2, . . . , T ), Γresp (y) = ( T ),
+
+(3) with Ktok = T and Kresp = 1 . The token-level schedule minimizes invocation delay but requires one guard call per generated token and often eval-uates incomplete prefixes, whereas the response-level schedule uses the full response context but cannot intervene before generation finishes. Sentence boundaries provide a semantically meaningful fine-grained schedule for streaming moderation. Let b(y≤t) ∈ { 0, 1} indicate whether a sentence boundary is detected after step t. Start-ing from τ0 = 0 , define each τi as the first time after τi−1 at which either a sentence boundary is detected or generation ends, 
+
+τi = inf {t > τ i−1 : b(y≤t) = 1 or t = T }. (4) This yields N (y) sentence-level points. At each point τi, the guard evaluates the query-prefix pair 
+
+(x, y ≤τi ) and produces a binary decision, 
+
+di = 1 [pθ(unsafe | x, y ≤τi ) ≥ η] , (5) where η is a decision threshold, di = 0 indicates release, and di = 1 indicates blocking or revision. 
+
+3.2 StreamSafe Construction 
+
+To support sentence guard under streaming genera-tion, we construct StreamSafe , a dedicated dataset containing 62K full and partial conversations. Each instance is paired with structured annotations that describe both the current safety state and the ev-idence behind the decision. StreamSafe is built through three steps: 1) data collection, 2) data ex-pansion and 3) data annotation. 
+
+Conversation Curation. We collect full con-versations from two complementary sources. First, we generate simulated potentially harmful queries (Wang et al., 2026a), and use them to elicit paired safe and unsafe responses from LLMs. These paired responses expose different assistant behaviors under similar user intents, providing di-verse unsafe trajectories and reasoning-style cases where risks may emerge gradually. Second, we collect and clean conversations from the public Aegis2.0 (Ghosh et al., 2025) to cover more routine user interactions and benign response patterns. 
+
+Sentence Slicing. Given a full conversation, we convert it into streaming-style partial conversations. Each assistant response is segmented into sentence chunks via punctuation-based boundaries, and par-tial conversations are formed by concatenating all chunks up to a sampled prefix position. For safe responses, prefixes are sampled across diverse po-sitions to cover varied benign contexts. For unsafe responses, we sample more densely around the ear-liest sentence where unsafe evidence emerges, pro-viding finer supervision at the transition from be-nign to unsafe content. This encourages SentGuard to flag unsafe trajectories once evidence appears, rather than waiting for full responses. 
+
+Structured Annotation. Each instance is anno-tated with both structured safety evidence and a final safety state. The structured evidence includes the response mode, current risk level, and impli-cated unsafe categories. The response mode de-scribes the functional behavior of the observed re-sponse prefix, and the risk level reflects the strength of unsafe evidence exposed so far. Following prior works (Zhao et al., 2025a). The final safety state is labeled as safe , uncertain , or unsafe , using the definitions introduced above. The uncertain state supports flexible deployment, where it can trigger either continued monitoring or early intervention. 
+
+3.3 SentGuard Training 
+
+We train SentGuard on StreamSafe using a two-stage supervised fine-tuning strategy. 
+
+Full-context Training. In the first stage, we fine-tune SentGuard on full conversations, where each input contains the complete user query and assistant response. This stage helps the model learn the out-put format and acquire basic response-side safety judgment under complete context. Since the full re-sponse exposes complete safety signals, it provides stable supervision for learning response modes, risk levels, unsafe categories, and final safety states. Given the full-conversation training set Dfull , we optimize the standard SFT objective 
+
+Lfull = − X
+
+> (x,y )∈D full
+> |y|
+
+X
+
+> t=1
+
+log pθ (yt | x, y <t ) , (6) where x denotes the full conversation and y denotes the corresponding structured safety annotation. 
+
+Coarse-to-Fine Training. While full-context su-pervision provides coarse response-level safety judgment, streaming moderation requires finer con-trol over when unsafe evidence first emerges. We therefore introduce a coarse-to-fine objective with sentence-level prefix supervision. 4Table 1: Per-benchmark streaming detection results. Higher is better for Detection@K, while lower is better for MFDS and SFPR. Best results are in bold and second-best results are underlined. 
+
+Benchmark Model Det@1 Det@2 Det@4 Det@6 MFDS SFPR BeaverTails Gemini-3.5-Flash 41.22% 56.70% 71.59% 81.68% 3.62 13.40% GPT-5.5 64.68% 77.92% 87.92% 92.77% 2.24 24.55% Qwen3Guard-8B-Gen 71.96% 79.80% 87.36% 91.52% 2.19 13.98% Qwen3Guard-8B-Stream 64.63% 76.63% 84.71% 89.44% 2.48 10.79% WildGuard-7B 77.90% 82.52% 88.92% 92.56% 2.06 23.76% LlamaGuard3-8B 50.95% 58.57% 69.36% 78.65% 3.71 9.86% LlamaGuard4-12B 47.37% 56.38% 69.24% 78.82% 3.76 6.37% SentGuard 76.34% 83.50% 89.73% 93.19% 1.98 7.92% Safe-RLHF Gemini-3.5-Flash 56.11% 74.05% 84.36% 89.45% 2.54 10.54% 
+
+GPT-5.5 79.41% 93.54% 98.32% 99.45% 1.34 29.31% Qwen3Guard-8B-Gen 89.83% 94.98% 97.97% 98.92% 1.25 20.20% Qwen3Guard-8B-Stream 76.54% 91.99% 96.30% 97.72% 1.51 15.34% WildGuard-7B 93.31% 95.14% 97.09% 97.80% 1.29 26.04% LlamaGuard3-8B 80.56% 85.13% 88.75% 92.19% 1.96 15.16% LlamaGuard4-12B 70.81% 78.20% 84.18% 88.50% 2.38 12.30% 
+
+SentGuard 96.43% 98.34% 99.13% 99.71% 1.08 15.20% XSTest Gemini-3.5-Flash 76.92% 88.46% 91.03% 96.15% 2.23 4.89% GPT-5.5 84.62% 89.74% 92.31% 98.72% 1.74 11.68% Qwen3Guard-8B-Gen 87.18% 91.03% 94.87% 97.44% 1.78 5.16% Qwen3Guard-8B-Stream 74.36% 89.74% 93.59% 94.87% 2.14 3.80% 
+
+WildGuard-7B 87.18% 89.74% 92.31% 93.59% 2.42 5.71% LlamaGuard3-8B 85.90% 87.18% 89.74% 91.03% 2.67 15.22% LlamaGuard4-12B 79.49% 83.33% 88.46% 91.03% 3.23 4.35% 
+
+SentGuard 89.74% 92.31% 96.15% 100.00% 1.29 4.62% WildGuardTest Gemini-3.5-Flash 18.38% 29.41% 40.44% 47.79% 18.22 6.47% GPT-5.5 23.36% 39.42% 61.31% 72.63% 8.22 16.33% Qwen3Guard-8B-Gen 64.08% 71.48% 77.11% 79.58% 8.25 7.93% Qwen3Guard-8B-Stream 33.80% 52.82% 64.08% 67.25% 13.18 4.00% 
+
+WildGuard-7B 65.49% 71.48% 76.76% 78.52% 9.24 10.95% LlamaGuard3-8B 59.86% 63.03% 66.55% 69.72% 11.34 14.81% LlamaGuard4-12B 36.62% 41.90% 53.52% 59.86% 15.77 7.65% 
+
+SentGuard 83.45% 88.73% 92.61% 94.37% 2.58 4.49% StreamSafe Gemini-3.5-Flash 8.12% 19.54% 62.86% 76.98% 5.70 9.81% GPT-5.5 19.08% 31.12% 67.07% 88.76% 4.10 7.35% Qwen3Guard-8B-Gen 35.20% 52.03% 88.39% 95.36% 2.83 45.39% Qwen3Guard-8B-Stream 25.73% 36.94% 76.21% 90.91% 3.76 12.59% WildGuard-7B 48.46% 61.54% 86.92% 93.08% 2.80 45.15% LlamaGuard3-8B 41.92% 74.81% 84.04% 87.69% 3.35 59.41% LlamaGuard4-12B 25.38% 30.77% 63.27% 77.88% 5.15 27.06% 
+
+SentGuard 54.55% 89.75% 96.32% 99.81% 1.68 4.83% 
+
+For each conversation i ∈ D full with Ki sentence boundaries, let x(k) 
+
+> i
+
+≜ (xi, y i, ≤τk ) be the prefix up to τk and y(k) 
+
+> i
+
+its boundary-aligned annotation. Instead of enumerating all Ki prefixes, we sam-ple k ∼ πi, where πi concentrates on early trigger regions for unsafe trajectories and is uniform other-wise. This yields the coarse-to-fine objective: 
+
+Lctf = E(x,y )∼D full 
+
+ℓsft (x, y )| {z }
+
+> Lfull
+
++ λ Ei∼D full , k ∼πi
+
+ℓsft 
+
+ x(k) 
+
+> i
+
+, y (k)
+
+> i
+
+ | {z }
+
+> Lsent
+
+, (7) where λ > 0 balances global consistency against sentence sharpness. Lfull anchors well-formed de-cisions, while Lsent calibrates the model on the sentence prefixes seen at deployment, closing the gap between training and deployment. 
+
+4 Experiments 
+
+4.1 Experimental Setup Guardrail Models. We compare SentGuard with representative open-source guard models, includ-ing LlamaGuard3-8B (Grattafiori et al., 2024), LlamaGuard4-12B, WildGuard-7B (Han et al., 2024), Qwen3Guard-8B-Gen, and Qwen3Guard-8B-Stream (Zhao et al., 2025a), which together 5Table 2: Full-response evaluation F1 scores (%) across five benchmarks. This table emphasizes the classical guardrail classification capability of each model. Higher is better. Best results are in bold and second-best results are underlined.                                                 
+
+> Model BeaverT S-RLHF XST WildG StreamS Avg. Gemini-3.5-Flash 70.2 86.9 89.3 59.4 87.9 78.7 GPT-5.5 81.8 90.7 88.0 74.4 95.8 86.1 Qwen3Guard-8B 84.3 93.2 92.3 77.2 95.3 88.5 WildGuard-7B 83.8 92.3 94.7 75.3 95.4 88.3 LlamaGuard3-8B 67.7 88.7 90.4 70.7 91.8 81.9 LlamaGuard4-12B 69.8 86.3 89.0 66.7 91.0 80.6
+> SentGuard 81.2 92.5 91.2 80.0 98.7 88.7
+
+cover both response-level and token-level safety paradigms. We further include two frontier closed-source models, Gemini-3.5-Flash and GPT-5.5, evaluated under a zero-shot protocol. 
+
+Evaluation Benchmarks. We evaluate on four external safety benchmarks and our StreamSafe test set. The external benchmarks include Beaver-Tails (Ji et al., 2023), Safe-RLHF (Ji et al., 2025), XSTest (Röttger et al., 2024), and Wild-GuardTest (Han et al., 2024), covering unsafe-response detection and over-refusal scenarios. StreamSafe focuses on streaming safety monitoring in the think + output setting. 
+
+Evaluation Metrics. For streaming evaluation, we report Detection@ k, Mean First Detection Sen-tence (MFDS), and Streaming False Positive Rate (SFPR). Detection@ k measures the fraction of un-safe responses detected within the first k sentences; MFDS measures how early the first unsafe deci-sion occurs; SFPR measures how often safe re-sponses are incorrectly flagged at any prefix. For full-response evaluation, we report F1 under the unified binary decision space. 
+
+Implementation Details . Our SentGuard model was trained on one NVIDIA A800 GPU, using the language model Qwen3-4B-Instruct-2507 as the base and MS-Swift (Zhao et al., 2025b) as the train-ing framework. For the two-stage SFT on Sent-Guard, we applied LoRA-based supervised fine-tuning in both stages, with LoRA rank r = 16 ,LoRA scaling factor α = 32 , and a learning rate of 5.0 × 10 −5. In the second-stage SFT, we opti-mized a combined objective, where an additional coefficient λ = 4 balances the standard SFT loss and the auxiliary training objective. 
+
+4.2 Main Results Streaming Performance. Table 1 compares streaming detection across five benchmarks. Sent-Guard consistently achieves the best Det@2, Det@4, Det@6, and MFDS, while ranking first or second on Det@1, showing that it detects unsafe trajectories earlier than both response-level and token-level guardrails. Averaged over all bench-marks, SentGuard detects 90.5% of unsafe re-sponses within the first two sentences and reaches an MFDS of 1.72, indicating that most unsafe cases are identified shortly after sufficient evi-dence appears. The advantage is particularly clear on more challenging streaming settings. On WildGuardTest, SentGuard improves Det@2 from 71.48% to 88.73% and reduces MFDS from 8.22 to 2.58 compared with the strongest baseline. On StreamSafe, which focuses on the think + output 
+
+setting, SentGuard reaches 89.75% Det@2 and 99.81% Det@6, substantially outperforming ex-isting guardrails that either wait for more context or overreact to incomplete prefixes. Importantly, the early detection gains do not come from overly conservative blocking. SentGuard maintains a low average SFPR of 7.41% and obtains the best or second-best SFPR on three benchmarks, suggest-ing that sentence-level monitoring improves inter-vention timeliness while preserving stable behavior on safe streaming responses. 
+
+Full-response Performance. Table 2 presents the full-response F1 scores across five benchmarks, evaluating the standard guardrail classification ca-pability of each model. SentGuard remains compet-itive in this setting, achieving the best performance on WildGuardTest and StreamSafe with F1 scores of 80.0% and 98.7%, respectively. Notably, it also obtains an average F1 score of 88.7%, ranking first among all methods and performing best overall. These results show that SentGuard does not lose conventional moderation capability while gaining strong streaming detection ability. In other words, our method improves early detection without sacri-ficing full-response performance. 
+
+4.3 Effect of Sentence Supervision. 
+
+Table 3 compares full-response-only training with training augmented by sentence-prefix supervision. Full-response supervision teaches coarse safety judgment but does not indicate when unsafe ev-idence first appears during streaming generation. Sentence supervision consistently improves early detection. On WildGuardTest, Det@1 and Det@2 increase from 53 .87% and 61 .27% to 83 .45% and 
+
+88 .73% , while MFDS drops from 8.87 to 2.58 .On StreamSafe, Det@2 improves from 66 .92% to 6Table 3: Ablation study on full-response-only training versus full-response plus partial-response training under strict mapping. Det@k is reported in percentage. MFDS denotes mean first detection sentence. Green values show the improvement after adding partial-response supervision; lower is better for MFDS.                                                 
+
+> Benchmark Training Data Det@1 Det@2 Det@4 MFDS Score ∆Score ∆Score ∆Score ∆
+> WildG Full only 53.87 –61.27 –70.77 –8.87 –WildG Full + Partial 83.45 (+29.58 ↑)88.73 (+27.46 ↑)92.61 (+21.84 ↑)2.58 (-6.29 ↓)
+> StreamS Full only 49.90 –66.92 –91.30 –2.15 –StreamS Full + Partial 54.55 (+4.65 ↑)89.75 (+22.83 ↑)96.32 (+5.02 ↑)1.68 (-0.47 ↓)
+
+89 .75% and MFDS decreases from 2.15 to 1.68 .Gains persist at later prefixes, so this is not a mere threshold shift, confirming that sentence supervi-sion is essential for calibrating SentGuard on in-complete but semantically coherent prefixes. 
+
+4.4 Effectiveness across Backbones 
+
+Table 4 evaluates the same training formulation on different Qwen backbones, ranging from Qwen2.5-3B to Qwen3-30B-A3B. The variants show highly consistent streaming behavior and full-response F1 on StreamSafe, with Det@1 within 53 .77% –
+
+54 .55% , MFDS within 1.68 –1.71 , and Full F1 within 98 .64% –98 .94% . This suggests that the ben-efit of SentGuard mainly comes from the data con-struction and supervision design rather than from a specific backbone choice. 
+
+Table 4: Backbone generalization on StreamSafe. Det@K and Full F1 are reported in %.                          
+
+> Backbone Det@1 Det@2 Det@4 MFDS Full F1 Qwen2.5-3B-Instruct 53.77 89.75 95.94 1.70 98.64 Qwen2.5-7B-Instruct 54.16 89.75 95.94 1.70 98.94 Qwen3-4B-Instruct 54.55 89.75 96.32 1.68 98.65 Qwen3-30B-A3B-Instruct 54.35 89.56 95.74 1.71 98.74
+
+4.5 Streaming Latency Overhead 
+
+We further analyze SentGuard’s latency overhead when no early stop is triggered, covering safe re-sponses or unsafe ones allowed to complete, which captures the extra cost of streaming safety monitor-ing during normal serving. As shown in Figure 3, post-hoc moderation invokes the guard only after full generation, while blocking sentence-level mod-eration pauses decoding after each chunk. In con-trast, our asynchronous waiting-buffer framework evaluates the prefix ˆy1: i while the LLM decodes the next chunk si+1 , hiding most guard inference behind generation. We estimate the overhead by re-playing test-set responses as simulated traces. The average response contains 160 tokens across 16 
+
+Figure 3: Timeline of three moderation strategies, high-lighting the overlap between guard inference and LLM decoding in our asynchronous framework. 
+
+chunks (about 10 tokens each), with a mean Sent-Guard inference latency of 36 ms per call. We sweep decoding speeds v ∈ { 20 , 40 , 80 , 160 , 320 }
+
+tokens/s and compare three strategies. Post-hoc moderation adds one guard call after full genera-tion, blocking sentence-level moderation adds 16 sequential calls, and our asynchronous framework invokes the guard at the same granularity but over-laps each intermediate call with next-chunk decod-ing. As a result, guard inference contributes user-facing delay only when slower than next-chunk generation, leaving the final check as a small cost. Figure 4 reports the additional latency over raw decoding. Post-hoc moderation adds a constant 36 ms, but it provides no safety decision until the full response is generated. Blocking sentence-level moderation incurs 576 ms of overhead because all 16 guard calls are serialized with decoding. By con-trast, the asynchronous waiting-buffer framework adds only 36 ms from 20 to 160 tokens/s, matching post-hoc moderation while still performing online sentence-level monitoring. This is because generat-ing an average 10-token chunk takes at least 62.5 ms in this speed range, which is longer than the 7Figure 4: Latency comparison across decoding speeds. 
+
+36 ms SentGuard call and thus fully covers inter-mediate guard inference. At 320 tokens/s, chunk generation becomes slightly faster than guard in-ference, but the total overhead remains only 102.5 ms, about 5.6 × smaller than blocking moderation. These results show that SentGuard preserves the low no-intervention latency of post-hoc modera-tion while maintaining continuous safety checks throughout generation. 
+
+4.6 Reduced Decoding Cost 
+
+We further evaluate the complementary case where SentGuard triggers early intervention on unsafe responses. In contrast to the no-intervention set-ting, this analysis focuses on how much unnec-essary generation can be avoided before an un-safe response is fully completed. Under the strict decision setting, we measure the fraction of re-sponse tokens consumed before the first unsafe decision and the number of decoding tokens saved relative to full-response moderation. As shown in Figure 5, full-response moderation always re-quires observing 100% of the response, whereas SentGuard makes decisions after only a small pre-fix across all benchmarks, using 26.69%, 18.73%, 7.15%, 4.67%, and 9.00% of tokens on Beaver-Tails, Safe-RLHF, XSTest, WildGuardTest, and StreamSafe, respectively. This early stopping trans-lates into substantial decoding savings, reducing generation by 64.08, 89.89, 253.43, 450.69, and 164.16 tokens on average. The benefit is especially pronounced on benchmarks with longer unsafe continuations, where post-hoc moderation would continue generating harmful content until comple-tion. Together with the no-intervention latency analysis, these results show that the waiting-buffer  
+
+> Figure 5: Efficiency of SentGuard streaming detec-tion compared with conventional full-response detection. Left: shows the percentage of response tokens required before making a decision across benchmarks. Right: shows the average number of decode tokens saved by streaming early-stop detection.
+
+framework provides system-level efficiency in both regimes. For safe or completed responses, guard inference is largely hidden behind normal decod-ing, while for unsafe responses, SentGuard reduces harmful-content exposure and user waiting time by stopping generation as soon as sentence-prefix-level unsafe evidence becomes available. Notably, this efficiency gain requires no modification to the target LLM, since SentGuard only supplies prefix-level safety signals that are mapped to stop actions by the streaming guard framework. 
+
+5 Conclusion 
+
+In this paper, we propose a new paradigm for streaming LLM safety moderation at the sentence level. Instead of relying on delayed response-level moderation or fragmented token-level checks, our formulation treats safety guarding as an online de-tection and intervention problem over sentence-level prefixes, thereby aligning moderation with the incremental nature of streamed generation. Fol-lowing this paradigm, we introduce SentGuard, a sentence-level streaming guardrail that moni-tors LLM outputs during generation through a lightweight waiting-buffer framework. We fur-ther construct StreamSafe, a sentence-level safety dataset designed to support both training and eval-uation under realistic streaming scenarios. Ex-periments across streaming and full-response set-tings show that SentGuard outperforms existing guardrails in early unsafe-content detection while maintaining stable full-response moderation capa-bility and low deployment overhead. These results demonstrate the practical value of sentence-level guarding and provide a promising direction for 8safer real-time LLM serving. 
+
+Limitations 
+
+This work focuses on sentence-level safety modera-tion for text-only LLM generation. While Sent-Guard demonstrates strong effectiveness in the streaming setting, its current formulation is de-veloped and evaluated exclusively on textual re-sponses, and does not yet address multimodal gen-eration scenarios involving audio, images, or video. In particular, extending sentence-level streaming guarding to audio outputs raises additional chal-lenges, as unsafe content may unfold continuously in the acoustic signal without explicit sentence boundaries, requiring new chunking and supervi-sion strategies aligned with speech or audio seg-ments. We therefore view the extension of stream-ing safety guarding to audio and broader multi-modal generation as an important direction for fu-ture work. 
+
+References 
+
+Aaron Adcock, Aayushi Srivastava, Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pande, Abhinav Pandey, Abhinav Sharma, Abhishek Kadian, Abhishek Ku-mawat, Adam Kelsey, and 1 others. 2026. The llama 4 herd: Architecture, training, evaluation, and deploy-ment notes. arXiv preprint arXiv:2601.11659 .Yuntao Bai, Saurav Kadavath, Sandipan Kundu, Amanda Askell, Jackson Kernion, Andy Jones, Anna Chen, Anna Goldie, Azalia Mirhoseini, Cameron McKinnon, and 1 others. 2022. Constitutional ai: Harmlessness from ai feedback. arXiv preprint arXiv:2212.08073 .Patrick Chao, Alexander Robey, Edgar Dobriban, Hamed Hassani, George J Pappas, and Eric Wong. 2025. Jailbreaking black box large language models in twenty queries. In IEEE SaTML .Yunhao Chen, Xin Wang, Juncheng Li, Yixu Wang, Jie Li, Yan Teng, Yingchun Wang, and Xingjun Ma. 2025. Evolve the method, not the prompts: Evolu-tionary synthesis of jailbreak attacks on llms. arXiv preprint arXiv:2511.12710 .Jianfeng Chi, Ujjwal Karn, Hongyuan Zhan, Eric Smith, Javier Rando, Yiming Zhang, Kate Plawiak, Zacharie Delpierre Coudert, Kartikeya Upasani, and Mahesh Pasupuleti. 2024. Llama guard 3 vision: Safeguarding human-ai image understanding conver-sations. arXiv preprint arXiv:2411.10414 .Gheorghe Comanici, Eric Bieber, Mike Schaekermann, Ice Pasupat, Noveen Sachdeva, Inderjit Dhillon, Mar-cel Blistein, Ori Ram, Dan Zhang, Evan Rosen, and 1 others. 2025. Gemini 2.5: Pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities. arXiv preprint arXiv:2507.06261 .Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova. 2019. Bert: Pre-training of deep bidirectional transformers for language understand-ing. In Proceedings of the 2019 conference of the North American chapter of the association for com-putational linguistics: human language technologies, volume 1 (long and short papers) , pages 4171–4186. Deep Ganguli, Liane Lovitt, Jackson Kernion, Amanda Askell, Yuntao Bai, Saurav Kadavath, Ben Mann, Ethan Perez, Nicholas Schiefer, Kamal Ndousse, and 1 others. 2022. Red teaming language models to re-duce harms: Methods, scaling behaviors, and lessons learned. arXiv preprint arXiv:2209.07858 .Kuofeng Gao, Yiming Li, Chao Du, Xin Wang, Xingjun Ma, Shu-Tao Xia, and Tianyu Pang. 2025. Imper-ceptible jailbreaking against large language models. 
+
+arXiv preprint arXiv:2510.05025 .Shaona Ghosh, Prasoon Varshney, Makesh Narsimhan Sreedhar, Aishwarya Padmakumar, Traian Rebedea, Jibin Rajan Varghese, and Christopher Parisien. 2025. Aegis2. 0: A diverse ai safety dataset and risks taxon-omy for alignment of llm guardrails. In Proceedings of the 2025 Conference of the Nations of the Amer-icas Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers) , pages 5992–6026. Aaron Grattafiori, Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten, Alex Vaughan, and 1 others. 2024. The llama 3 herd of models. arXiv preprint arXiv:2407.21783 .Seungju Han, Kavel Rao, Allyson Ettinger, Liwei Jiang, Bill Yuchen Lin, Nathan Lambert, Yejin Choi, and Nouha Dziri. 2024. Wildguard: Open one-stop mod-eration tools for safety risks, jailbreaks, and refusals of llms. Advances in neural information processing systems , 37:8093–8131. Hakan Inan, Kartikeya Upasani, Jianfeng Chi, Rashi Rungta, Krithika Iyer, Yuning Mao, Michael Tontchev, Qing Hu, Brian Fuller, Davide Testuggine, and 1 others. 2023. Llama guard: Llm-based input-output safeguard for human-ai conversations. arXiv preprint arXiv:2312.06674 .Jiaming Ji, Donghai Hong, Borong Zhang, Boyuan Chen, Josef Dai, Boren Zheng, Tianyi Alex Qiu, Ji-ayi Zhou, Kaile Wang, Boxun Li, and 1 others. 2025. Pku-saferlhf: Towards multi-level safety alignment for llms with human preference. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,pages 31983–32016. Jiaming Ji, Mickel Liu, Josef Dai, Xuehai Pan, Chi Zhang, Ce Bian, Boyuan Chen, Ruiyang Sun, Yizhou 
+
+9Wang, and Yaodong Yang. 2023. Beavertails: To-wards improved safety alignment of llm via a human-preference dataset. Advances in Neural Information Processing Systems , 36:24678–24704. Takeshi Kojima, Shixiang Shane Gu, Machel Reid, Yu-taka Matsuo, and Yusuke Iwasawa. 2022. Large lan-guage models are zero-shot reasoners. Advances in neural information processing systems , 35:22199– 22213. Kundan Krishna, Joseph Y Cheng, Charles Maalouf, and Leon A Gatys. 2025. Disentangled safety adapters enable efficient guardrails and flexi-ble inference-time alignment. arXiv preprint arXiv:2506.00166 .Nathaniel Li, Ziwen Han, Ian Steneker, Willow Primack, Riley Goodside, Hugh Zhang, Zifan Wang, Cristina Menghini, and Summer Yue. 2024. Llm defenses are not robust to multi-turn human jailbreaks yet. arXiv preprint arXiv:2408.15221 .Xiaodan Li, Mengjie Wu, Yao Zhu, Yunna Lv, YueFeng Chen, Cen Chen, Jianmei Guo, and Hui Xue. 2025. Kelp: A streaming safeguard for large models via latent dynamics-guided risk detection. arXiv preprint arXiv:2510.09694 .Yang Li, Qiang Sheng, Yehan Yang, Xueyao Zhang, and Juan Cao. 2026. From judgment to interference: Early stopping llm harmful outputs via streaming content monitoring. Advances in Neural Information Processing Systems , 38:54305–54333. Yi Liu, Gelei Deng, Zhengzi Xu, Yuekang Li, Yaowen Zheng, Ying Zhang, Lida Zhao, Tianwei Zhang, and Yang Liu. 2023. Jailbreaking chatgpt via prompt engineering: An empirical study. arXiv preprint arXiv:2305.13860 .Yinhan Liu, Myle Ott, Naman Goyal, Jingfei Du, Man-dar Joshi, Danqi Chen, Omer Levy, Mike Lewis, Luke Zettlemoyer, and Veselin Stoyanov. 2019. Roberta: A robustly optimized bert pretraining ap-proach. arXiv preprint arXiv:1907.11692 .Mantas Mazeika, Long Phan, Xuwang Yin, Andy Zou, Zifan Wang, Norman Mu, Elham Sakhaee, Nathaniel Li, Steven Basart, Bo Li, and 1 others. 2024. Harm-bench: A standardized evaluation framework for auto-mated red teaming and robust refusal. arXiv preprint arXiv:2402.04249 .Anay Mehrotra, Manolis Zampetakis, Paul Kassianik, Blaine Nelson, Hyrum Anderson, Yaron Singer, and Amin Karbasi. 2023. Tree of attacks: Jailbreak-ing black-box llms automatically. arXiv preprint arXiv:2312.02119 .OpenAI. 2025. Update to gpt-5 system card: Gpt-5.2. Ethan Perez, Saffron Huang, Francis Song, Trevor Cai, Roman Ring, John Aslanides, Amelia Glaese, Nat McAleese, and Geoffrey Irving. 2022. Red team-ing language models with language models. arXiv preprint arXiv:2202.03286 .Shuo Ren, Can Xie, Pu Jian, Zhenjiang Ren, Chunlin Leng, and Jiajun Zhang. 2025. Towards scientific intelligence: A survey of llm-based scientific agents. 
+
+arXiv preprint arXiv:2503.24047 .Paul Röttger, Hannah Kirk, Bertie Vidgen, Giuseppe Attanasio, Federico Bianchi, and Dirk Hovy. 2024. Xstest: A test suite for identifying exaggerated safety behaviours in large language models. In Proceed-ings of the 2024 Conference of the North American Chapter of the Association for Computational Lin-guistics: Human Language Technologies (Volume 1: Long Papers) , pages 5377–5400. Pliny the Prompter. 2024. L1B3RT45: Jailbreaks for All Flagship AI Models. Xin Wang, Yunhao Chen, Juncheng Li, Yixu Wang, Yang Yao, Tianle Gu, Jie Li, Yan Teng, Yingchun Wang, and Xia Hu. 2026a. Openrt: An open-source red teaming framework for multimodal llms. arXiv preprint arXiv:2601.01592 .Xin Wang, Jie Li, Zejia Weng, Yixu Wang, Yifeng Gao, Tianyu Pang, Chao Du, Yan Teng, Yingchun Wang, Zuxuan Wu, and 1 others. 2025. Freezevla: Action-freezing attacks against vision-language-action mod-els. arXiv preprint arXiv:2509.19870 .Xingyao Wang, Yangyi Chen, Lifan Yuan, Yizhe Zhang, Yunzhu Li, Hao Peng, and Heng Ji. 2024. Executable code actions elicit better llm agents. In Forty-first International Conference on Machine Learning .Zijun Wang, Haoqin Tu, Letian Zhang, Hardy Chen, Juncheng Wu, Xiangyan Liu, Zhenlong Yuan, Tianyu Pang, Michael Qizhe Shieh, Fengze Liu, and 1 others. 2026b. Your agent, their asset: A real-world safety analysis of openclaw. arXiv preprint arXiv:2604.04759 .Laura Weidinger, Maribeth Rauh, Nahema Marchal, Arianna Manzini, Lisa Anne Hendricks, Juan Mateos-Garcia, Stevie Bergman, Jackie Kay, Conor Griffin, Ben Bariach, and 1 others. 2023. Sociotechnical safety evaluation of generative ai systems. arXiv preprint arXiv:2310.11986 .Zitao Xuan, Xiaofeng Mao, Da Chen, Xin Zhang, Yuhan Dong, and Jun Zhou. 2025. Shieldhead: Decoding-time safeguard for large language models. In Find-ings of the Association for Computational Linguistics: ACL 2025 , pages 18129–18143. An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, and 1 others. 2025. Qwen3 technical report. arXiv preprint arXiv:2505.09388 .Jiahao Yu, Xingwei Lin, Zheng Yu, and Xinyu Xing. 2023. Gptfuzzer: Red teaming large language mod-els with auto-generated jailbreak prompts. arXiv preprint arXiv:2309.10253 .
+
+10 Yuan Zang, Fanchao Qi, Chenghao Yang, Zhiyuan Liu, Meng Zhang, Qun Liu, and Maosong Sun. 2020. Word-level textual adversarial attacking as combi-natorial optimization. In ACL .Wenjun Zeng, Yuchi Liu, Ryan Mullins, Ludovic Peran, Joe Fernandez, Hamza Harkous, Karthik Narasimhan, Drew Proud, Piyush Kumar, Bhaktipriya Radharapu, and 1 others. 2024. Shieldgemma: Generative ai content moderation based on gemma. arXiv preprint arXiv:2407.21772 .Susan Zhang, Stephen Roller, Naman Goyal, Mikel Artetxe, Moya Chen, Shuohui Chen, Christopher De-wan, Mona Diab, Xian Li, Xi Victoria Lin, and 1 others. 2022. Opt: Open pre-trained transformer language models. arXiv preprint arXiv:2205.01068 .Haiquan Zhao, Chenhan Yuan, Fei Huang, Xiaomeng Hu, Yichang Zhang, An Yang, Bowen Yu, Dayi-heng Liu, Jingren Zhou, Junyang Lin, and 1 others. 2025a. Qwen3guard technical report. arXiv preprint arXiv:2510.14276 .Yuze Zhao, Jintao Huang, Jinghan Hu, Xingjun Wang, Yunlin Mao, Daoze Zhang, Zeyinzi Jiang, Zhikai Wu, Baole Ai, Ang Wang, and 1 others. 2025b. Swift: a scalable lightweight infrastructure for fine-tuning. In Proceedings of the AAAI Conference on Artificial Intelligence .Andy Zou, Zifan Wang, Nicholas Carlini, Milad Nasr, J Zico Kolter, and Matt Fredrikson. 2023. Univer-sal and transferable adversarial attacks on aligned language models. arXiv preprint arXiv:2307.15043 .
+
+A Details of StreamSafe 
+
+A.1 Dataset Motivation and Scope 
+
+StreamSafe is designed to support response-side safety monitoring under streaming generation. Un-like conventional response-level safety datasets, where a guard receives the complete assistant re-sponse, StreamSafe exposes the assistant response incrementally at sentence-level boundaries. This design matches the deployment setting of Sent-Guard: the guard observes a user query together with a partial assistant response and must decide whether the observed prefix is safe to release, should continue to be monitored, or should trig-ger intervention. The dataset focuses on text-only assistant re-sponses. Each example contains a user query, an as-sistant response or response prefix, and a structured safety annotation. The annotation includes a final safety state, response mode, risk level, and violated safety categories when applicable. StreamSafe is intended for research on streaming guardrails, early unsafe-content detection, response-side safety clas-sification, and safety-aware serving. It is not in-tended to be used as a source of harmful instruc-tions or as a tool for optimizing jailbreak prompts. 
+
+A.2 Data Sources 
+
+StreamSafe is constructed from two complemen-tary sources. First, we generate simulated po-tentially harmful user queries following the red-teaming setting in Section 4.1 and use LLMs to elicit paired safe and unsafe responses. These paired responses are useful because the same or similar user intent can lead to different assis-tant behaviors, such as direct refusal, high-level safety-oriented explanation, ambiguous continu-ation, or unsafe assistance. Second, we collect and clean public safety-related conversations from Aegis2.0 (Ghosh et al., 2025). This source im-proves coverage of routine user interactions, be-nign assistant behavior, and naturally occurring safety-relevant conversations. For both sources, we remove malformed exam-ples, empty responses, duplicated query–response pairs, and samples whose safety label cannot be reliably mapped to our response-side schema. We also separate train, validation, and test splits at the full-conversation level before sentence-prefix ex-pansion to avoid leakage across splits. 
+
+A.3 Dataset Statistics 
+
+Table 5 summarizes the current StreamSafe split. The training and validation splits contain both full conversations and sentence-prefix partial conver-sations. The test split contains full conversations, and streaming evaluation constructs prefixes on the fly using the same sentence segmentation protocol as training. The current version contains approxi-mately 62K annotated full and partial instances. 
+
+A.4 Safety Taxonomy 
+
+StreamSafe follows an eight-category safety taxon-omy aligned with the guardrail evaluation setting used in the main paper. Table 6 summarizes the taxonomy used in our annotation. 
+
+A.5 Annotation Schema 
+
+Each StreamSafe instance is annotated with a struc-tured record. We use the following fields. 
+
+Final safety state. The final state is one of safe ,
+
+uncertain , or unsafe . A prefix is labeled safe 
+
+when the observed assistant content is benign, re-fuses unsafe requests, or discusses safety-relevant 11 Table 5: StreamSafe dataset statistics. 
+
+Split Full conv. Partial conv. Total inst. Safe Unsafe/Uncertain Train 7.0K 49.0K 56.0K 26.5K 29.5K Valid 0.7K 3.6K 4.3K 2.1K 2.2K Test 1.2K – 1.2K 683 517 Total 8.9K 52.6K 61.5K 29.3K 32.2K 
+
+Table 6: Safety taxonomy used for StreamSafe annotation. 
+
+Category Description and boundary Violent Content that provides detailed instructions, methods, or advice on how to commit acts of violence, including the manufacture, acquisition, or use of weapons. Also includes depictions of violence. Non-violent Illegal Acts Content providing guidance or advice for non-violent illegal activities, such as hacking, unauthorized drug production, or stealing. Sexual Content or Sexual Acts Content offering sexual imagery, references, or descriptions featuring individuals. Also includes explicit sexual imagery, references, or descriptions involving illegal or unethical sexual acts, such as rape, bestiality, incest, and sexual slavery. Personally Identifiable Informa-tion Content offering unauthorized sharing or disclosure of sensitive personal identifying information, such as names, ID numbers, addresses, phone numbers, medical records, financial details, account passwords, and related private information. Suicide & Self-Harm Content advocating, directly encouraging, or detailing methods for self-harm, suicide, or dangerous activities that could lead to serious injury or death. Unethical Acts Immoral or unethical content or acts, including but not limited to bias, discrimination, stereotypes, injustice, hate speech, offensive language, harassment, insults, threats, defamation, extremism, ethically harmful misinformation, and other behaviors that may not be illegal but are still considered unethical. Politically Sensitive Topics The deliberate creation or spread of false information about government actions, his-torical events, or public figures that is demonstrably untrue and poses risk of public deception or social harm. Copyright Violation Content offering unauthorized reproduction, distribution, public display, or derivative use of copyrighted materials, such as novels, scripts, lyrics, and other creative works protected by law, without explicit permission from the copyright holder. 
+
+topics without actionable harmful assistance. A prefix is labeled unsafe when it has already ex-posed clear harmful assistance or policy-violating content. A prefix is labeled uncertain when it con-tains risk signals but the evidence is incomplete, ambiguous, or not yet sufficient for a confident unsafe judgment. 
+
+Response mode. The response mode describes what the assistant is doing at the observed pre-fix. We use the following draft values: benign ,
+
+refusal , cautionary , ambiguous , and unsafe .
+
+Risk level. The risk level is one of low , medium ,or high . Low risk indicates benign content or a safe refusal. Medium risk indicates ambiguous risk signals, incomplete harmful intent, or a topic where later content may become unsafe. High risk indicates explicit harmful assistance, operational detail, or a direct policy violation. 
+
+Violated categories. For unsafe examples, the annotation pipeline records one or more violated categories from Table 6. For safe and most 
+
+uncertain examples, this field is empty or set to 
+
+none . Multi-label category assignment is allowed when a prefix violates multiple categories. 
+
+A.6 Sentence Segmentation and Prefix Construction 
+
+We expand each full response into sentence-prefix training instances using a fixed heuristic sampler. Before segmentation, we remove the special tags 
+
+<think> , </think> , <output> , and </output> 
+
+from the response. The current implementation uses a lightweight regular-expression splitter that extracts punctuation-terminated chunks. The bound-ary symbols include English commas, periods, question marks, and exclamation marks, as well as their Chinese counterparts. Boundary punctuation is retained in the extracted chunk. Since the splitter only returns spans that end with one of these punctuation marks, trailing text without terminal punctuation is not used in prefix expansion. We do not apply special handling for abbreviations, 12 decimal numbers, URLs, or code snippets in the current implementation. Let the segmented response be s1, . . . , s L. Aprefix at position k is defined as 
+
+p(k) = 
+
+> k
+
+M
+
+> t=1
+
+st. (8) Each expanded example is formatted as the origi-nal user query followed by the truncated assistant prefix p(k).For a safe response, we create two safe-labeled examples: one early prefix and one full-response prefix. Let 
+
+h = max(1 , min( ⌊L/ 2⌋, 6)) . (9) We sample an early index u uniformly from 
+
+{1, . . . , h } and use the two prefix indices 
+
+Ksafe = {u, L }. (10) Both prefixes are labeled as safe . This exposes the model to both incomplete benign outputs and complete benign outputs. For an unsafe response, we use the annotated earliest unsafe-evidence sentence to determine the transition point. Let g denote this sentence. We first take the text before the first occurrence of g
+
+and segment it using the same splitter. Let 
+
+m = Seg  Pre( y, g ) , (11) where Pre( y, g ) denotes the substring before g.Thus, s1, . . . , s m are treated as pre-trigger chunks. We then sample safe-labeled prefixes from the pre-trigger region. If m = 0 , no safe prefix is created from this unsafe response. If m = 1 , we use the only pre-trigger prefix. If m > 1, we additionally sample one earlier pre-trigger prefix: 
+
+v ∼ Unif {1, . . . , m − 1}. (12) The safe prefix set is therefore 
+
+Kpre =
+
+
+
+∅, m = 0 ,
+
+{m}, m = 1 ,
+
+{v, m }, m > 1.
+
+(13) All prefixes in Kpre are labeled as safe .For unsafe-labeled prefixes, we sample a short fixed window immediately after the transition point and always include the full response. The current implementation uses delay window d = 3 . When 
+
+L > m , define 
+
+r = min( m + d, L − 2) . (14) We use the post-trigger indices 
+
+Kpost = {m + 1 , . . . , r } ∪ { L}, (15) where the range is empty when r < m + 1 . If 
+
+L ≤ m, no unsafe prefix is created. All prefixes in 
+
+Kpost are labeled as unsafe .Overall, this fixed expansion strategy produces three types of prefix-level supervision: early safe prefixes from safe responses, pre-trigger safe pre-fixes from unsafe responses, and post-trigger un-safe prefixes from unsafe responses. The design en-courages the model to avoid premature false alarms on benign partial outputs while switching to an un-safe decision shortly after the first unsafe evidence appears. 
+
+A.7 Annotation Quality Control 
+
+We use a multi-stage quality-control process. First, examples with missing fields, invalid category names, or inconsistent final states are removed. Second, we check label consistency between full responses and their prefixes: if a prefix is labeled 
+
+unsafe , later prefixes from the same response should not revert to safe unless the earlier label is corrected. Third, a subset of examples is manually inspected to verify that the earliest unsafe-evidence sentence and the structured evidence are consistent with the observed prefix. For examples containing potentially identifying personal information, we remove or mask names, addresses, emails, phone numbers, account identi-fiers, and other unique identifiers when they are not essential to the safety label. Because the dataset intentionally includes unsafe or offensive content for safety research, we mark such content in the dataset documentation and recommend controlled access for any released version. 
+
+B Training and Implementation Details 
+
+B.1 SentGuard Training Configuration 
+
+SentGuard is initialized from 
+
+Qwen3-4B-Instruct-2507 and trained using MS-Swift (Zhao et al., 2025b). We use LoRA-based supervised fine-tuning in both training stages. Table 7 lists the hyperparameters used in our experiments. 13 Table 7: Training hyperparameters for SentGuard.                             
+
+> Item Value Base model Qwen3-4B-Instruct-2507
+> Training framework MS-Swift (Zhao et al., 2025b) Fine-tuning method LoRA SFT LoRA rank r16 LoRA alpha α32 LoRA dropout 0.05 Target modules all-linear
+> Learning rate 5.0×10 −5
+> Scheduler cosine Warmup ratio 0.1 Optimizer AdamW Weight decay 0.01 Batch size per GPU 16 Gradient accumulation 2Effective batch size 32 Epochs 2Maximum sequence length 2048 Precision bf16 Random seed 42 Stage-2 loss coefficient λ4Hardware 1 NVIDIA A800 GPU Training time 2 GPU hours
+
+The first stage uses full conversations and teaches the model the response-side safety task and output format. The second stage mixes full-conversation supervision with sentence-prefix su-pervision using the coarse-to-fine objective in Sec-tion 4.1. Unless otherwise stated, the reported Sent-Guard numbers are from a single fine-tuning run. 
+
+B.2 Output Format 
+
+SentGuard is trained as an instruction-following guard model that emits a short answer followed by structured evidence. We use an answer-first format so that the deployment system can parse the safety decision before reading the full explanation. 
+
+> <answer>safe/uncertain/unsafe</answer> <evidence> <response_mode>...</response_mode> <risk_level>...</risk_level> <violated_categories>... </violated_categories> </evidence>
+
+The <answer> field is used for low-latency con-trol decisions. The <evidence> field is used for analysis and for selecting risk-adaptive interven-tions such as stopping generation, replacing the continuation with a refusal, or constraining the gen-erator to continue with high-level safety-oriented information only. 
+
+B.3 Prompt Template 
+
+The following prompt template is used for Sent-Guard training and inference. 
+
+> Task: You are a guardrail streaming evaluator. ,→
+> Judge the safety of the CURRENT AGENT RESPONSE only and do not judge the user query itself.
+> ,→
+> ,→
+> The response may be incomplete. Return XML only. <BEGIN CONVERSATION> User: {USER_QUERY} Agent: {AGENT_PREFIX} <END CONVERSATION>
+
+B.4 Inference Configuration 
+
+During streaming evaluation, assistant responses are revealed sentence by sentence. SentGuard is invoked after each completed sentence prefix. The guard output is parsed deterministically using the first valid label appearing inside <answer> when-ever possible. If the output does not contain a valid 
+
+<answer> tag, we fall back to a keyword parser over the first line of the generated text. The maximum number of generated tokens for the guard output is set to 64, which is sufficient for the answer and structured evidence fields. 
+
+C Evaluation Protocol and Metrics 
+
+C.1 Unified Decision Space 
+
+Different guardrail models use different label spaces and safety taxonomies. To ensure fair com-parison, we map all model outputs into a unified binary decision space, safe versus unsafe , at the system-decision level. For SentGuard, we primar-ily use the strict mapping in streaming experiments: 
+
+unsafe strict = {uncertain , unsafe }. (16) We also consider a loose mapping in which only 
+
+unsafe triggers blocking: 
+
+unsafe loose = {unsafe }. (17) The strict mapping prioritizes early intervention, while the loose mapping prioritizes lower false pos-itives. For baselines, we follow their official prompts and output conventions when available. Llama-Guard, WildGuard, and Qwen3Guard outputs are parsed according to their released label formats; closed-source models are evaluated with a zero-shot prompt that asks for a binary safety decision over the observed query–response pair. 14 C.2 Streaming Evaluation 
+
+For a response segmented into N sentence chunks, streaming evaluation constructs the prefix sequence 
+
+(x, y ≤1), (x, y ≤2), . . . , (x, y ≤N ). (18) For unsafe responses, the guard is invoked on each prefix until the first unsafe decision is produced. If no prefix is flagged, the example is counted as a missed detection. For safe responses, the guard is invoked on all prefixes; if any prefix is incor-rectly flagged as unsafe, the example is counted as a streaming false positive. 
+
+C.3 Metrics 
+
+Let U be the set of unsafe responses and S be the set of safe responses. For an unsafe response j,let fj denote the first sentence index at which the guard predicts unsafe. If the guard never predicts unsafe, we set fj = ∞.
+
+Detection@ K. Detection@ K measures the frac-tion of unsafe responses detected within the first K
+
+sentence prefixes: 
+
+Det@ K = 1
+
+|U| 
+
+X
+
+> j∈U
+
+1[fj ≤ K]. (19) 
+
+Mean First Detection Sentence. MFDS mea-sures how early unsafe responses are detected: 
+
+MFDS = 1
+
+|U det |
+
+X
+
+> j∈U det
+
+fj , (20) where Udet = {j ∈ U : fj < ∞} .
+
+Streaming False Positive Rate. SFPR measures whether a safe response is incorrectly blocked at any prefix: 
+
+SFPR = 1
+
+|S| 
+
+X
+
+> j∈S
+
+1 [∃k ∈ { 1, . . . , N j } : dj,k = 1] .
+
+(21) This metric is stricter than full-response false pos-itive rate because a single erroneous unsafe pre-diction at any prefix counts as a streaming false positive. 
+
+Full-response F1. For full-response evaluation, each guard receives the complete query–response pair and produces one final binary decision. We re-port F1 over the unified safe/unsafe decision space. 
+
+C.4 Descriptive Statistics 
+
+Unless otherwise stated, streaming and full-response results are computed over the full test split of each benchmark and reported as aggregate percentages. 
+
+D Additional Experimental Details 
+
+D.1 Latency Measurement 
+
+We analyze latency by replaying test-set responses as simulated generation traces. Let N be the num-ber of response tokens, M be the number of sen-tence chunks, D be the mean SentGuard latency per call, and v be the target LLM decoding speed in tokens per second. The raw decoding time is 
+
+Tdec = Nv . (22) For post-hoc moderation, blocking sentence-level moderation, and asynchronous waiting-buffer mod-eration, the total latency is estimated as 
+
+Tpost = Tdec + D, (23) 
+
+Tblock = Tdec + M D, (24) 
+
+Tasync = Tdec + ( M − 1)∆ + D, (25) where 
+
+∆ = max 
+
+
+
+0, D − N/M v
+
+
+
+. (26) The last D term in Tasync is the final tail check after the last chunk, where no subsequent generation step is available for overlap. In our main analysis, the average response has 160 tokens and 16 sentence chunks, and the measured mean SentGuard latency is 36 ms per call. 
+
+E Ethical Considerations and Checklist-Relevant Discussion 
+
+E.1 Potential Risks 
+
+This work studies safety guardrails and therefore may involve dual-use risks. First, StreamSafe con-tains examples of unsafe or offensive assistant be-havior. If released without controls, such examples could be misused as a source of harmful content or as training material for adversarial prompt op-timization. Second, a guard model can produce false negatives, allowing unsafe content to pass, or false positives, incorrectly blocking benign or safety-seeking content. Third, streaming moder-ation creates a system-level risk: content already 15 released before a later unsafe decision cannot be withdrawn from the user. Our waiting-buffer de-sign mitigates this risk by releasing only verified sentence chunks, but it does not eliminate all pos-sible exposure. Fourth, guardrails may amplify policy bias or over-refusal if the training data are imbalanced across topics, demographic groups, or linguistic styles. We mitigate these risks in several ways. The dataset is documented as a safety-research artifact, and any public release should use controlled access, redaction of highly actionable harmful details, and clear terms of use. We evaluate both early detection and SFPR to measure the trade-off between safety and over-blocking. We also recommend deploying SentGuard together with input-side filtering, tool-use permission checks, retrieval safeguards, and human escalation in high-risk domains. SentGuard should not be treated as a complete safety solution. 
+
+E.2 Scientific Artifacts, Licenses, and Intended Use 
+
+This work uses and creates scientific artifacts, in-cluding models, datasets, and evaluation scripts. Existing artifacts include Qwen3 (Yang et al., 2025), MS-Swift (Zhao et al., 2025b), Aegis2.0 (Ghosh et al., 2025), BeaverTails (Ji et al., 2023), Safe-RLHF (Ji et al., 2025), XSTest (Röttger et al., 2024), WildGuardTest and WildGuard (Han et al., 2024), LlamaGuard models (Inan et al., 2023; Grattafiori et al., 2024; Chi et al., 2024), and Qwen3Guard (Zhao et al., 2025a). We also use proprietary commercial language models, includ-ing GPT-5.5-class and Gemini-3.5-flash models, for selected generation and evaluation procedures. We create StreamSafe and SentGuard. Stream-Safe is intended for research on streaming safety evaluation and guardrail training. SentGuard is in-tended as a research prototype for text-only stream-ing moderation. Neither artifact is intended for gen-erating harmful content, conducting surveillance, or making high-stakes automated decisions with-out additional safeguards. We use existing artifacts consistently with their intended research and evalu-ation purposes. The artifacts used in this work follow their re-spective original licenses and usage terms. Open-source models, datasets, and codebases are used in compliance with their associated licenses. Pro-prietary commercial models accessed via APIs, in-cluding GPT-5.5-class systems, are subject to the corresponding provider terms and are not redis-tributed. The code, evaluation scripts, and newly created annotations developed in this work will be released under an appropriate open-source license upon publication. 
+
+E.3 Personally Identifying Information and Offensive Content 
+
+StreamSafe may contain offensive or harmful con-tent because the dataset is designed to evaluate safety moderation. We screen examples for person-ally identifying information and remove or mask direct identifiers such as names, emails, phone num-bers, addresses, account names, and credentials when they are not necessary for the safety label. We also recommend warning users of the dataset that it contains safety-sensitive material and should be handled with care. 
+
+E.4 Human Subjects and Annotators 
+
+No crowdworkers or external human subjects were recruited for this work. Dataset construction used simulated prompts, public research artifacts, and author-side inspection for quality control. Because no private human-subject data were collected and no external annotators were recruited, formal par-ticipant recruitment, payment, and consent proce-dures were not applicable. 
+
+E.5 Use of AI Assistants 
+
+AI assistants were used for limited research sup-port, including grammar polishing, LaTeX for-matting, code boilerplate suggestions, and draft-ing non-substantive text. They were not used to autonomously design the experiments, fabricate results, or make final scientific claims. All AI-assisted text, code, and analysis were reviewed and edited by the authors. The authors remain responsible for the correctness of the manuscript, experiments, and conclusions. 
+
+F Dataset Release Statement 
+
+If StreamSafe is released, we will provide a dataset card describing its sources, intended use, known limitations, safety taxonomy, preprocessing steps, and content warnings. Because the dataset con-tains safety-sensitive and potentially offensive ma-terial, we recommend a gated research release or a redacted public release. The release should pro-hibit using the dataset to generate harmful content, train models to bypass safety systems, identify pri-vate individuals, or deploy high-stakes automated moderation without additional validation. 16

@@ -1,0 +1,223 @@
+Title: Strengthening Polymorphic Prompt Assembling: Dynamic Separator Generation Against Emerging Prompt Injection Attacks
+
+URL Source: https://arxiv.org/pdf/2605.30534v1
+
+Published Time: Mon, 01 Jun 2026 00:10:49 GMT
+
+Number of Pages: 5
+
+Markdown Content:
+# Strengthening Polymorphic Prompt Assembling: Dynamic Separator Generation Against Emerging Prompt Injection Attacks 
+
+Nima Dorzhiev †, Peng Liu ‡†Pennsylvania State University, State College, USA nxd5381@psu.edu 
+
+‡Pennsylvania State University, State College, USA pxl20@psu.edu 
+
+Abstract —Polymorphic Prompt Assembling (PPA) defends LLM agents against prompt injections by randomly selecting separator pairs from a fixed pool to isolate user input from system instructions. Although effective, static pool reuse exposes a blast-radius vulnerability: once a separator leaks, it can be exploited in future requests. We propose dynamic per-request separator generation using domain-separated SHA-256 digests keyed on the timestamp, session identifier, and cryptographic nonce. Each assembled prompt receives a unique (BEGIN, END) canary pair, thereby limiting leakage exposure to a single request. We evaluated our extension against 16 injection payloads on Llama-3.3-70B-Instruct-Turbo, with cross-model validation on DeepSeek-V4-Flash. Against the M1 obfuscation payload (leetspeak + urgency), dynamic mode reduces the Attack Success Rate (ASR) from 0.88 to 0.38, yielding a statistically significant 2.3× mitigation verified by non-overlapping 95% Wilson confidence intervals. Against format_breakout_salad , static separator leakage (leak_rate = 0 .467 ) is eliminated entirely in dynamic mode (0.000), confirming blast-radius reduction in practice. The im-plementation requires no model fine-tuning, adds 2.7 μs prompt-assembly overhead per request, and is backward compatible with the existing PPA SDK. 
+
+Index Terms —prompt injection, LLM agents, prompt assem-bling, separator generation, attack success rate, dynamic canary 
+
+I. I NTRODUCTION 
+
+LLM agents have become foundational components of mod-ern AI systems, orchestrating tool calls, retrieving documents, and acting on user instructions with growing autonomy [1]. Their effectiveness depends on a clean separation between trusted system instructions and untrusted user inputs. Prompt injection attacks exploit the absence of this separation: ad-versarial text embedded in user data or retrieved documents overrides the agent’s intended behavior, redirecting it toward attacker-controlled goals [2]. Lupinacci et al. [3] evaluated 18 state-of-the-art LLMs across three attack surfaces and found that 94.4% were vulnerable to direct prompt injections. More critically, 100% of the models that resisted direct injection were compromised when the payload arrived via a peer agent, a vector the authors termed 
+
+Inter-Agent Trust Exploitation . These findings confirm that prompt injections pose an active and escalating threat that current safety training does not reliably address. Wang et al. [4] introduced Polymorphic Prompt Assembling (PPA), which randomizes the separator pair used to delimit user input on each request. By drawing from a pool of eighty-four genetic-algorithm-optimized separators, PPA ensures that an attacker cannot predict the boundary structure in advance. PPA achieves overall attack success rates below 2% on GPT-3.5 and GPT-4 and ranks second on the PINT benchmark, with 97.68% accuracy. Despite its effectiveness, PPA’s static pool design introduces a structural limitation: if a separator leaks from a model response, that delimiter remains valid for all future requests. An attacker who observes or extracts a separator from one interaction can reuse it to craft targeted bypass payloads in subsequent interactions. This pool-reuse blast radius is an architectural property of static selection that is independent of separator quality. We address this limitation by introducing dynamic per-request separator generation. Instead of selecting from a fixed pool, each assembled prompt receives a unique (BEGIN, END) pair derived from the SHA-256 digest of the current timestamp, session identifier, and cryptographic nonce. A leaked separator from one request is useless in any other request because it is request-scoped by construction. We further evaluated the extended system against post-publication attack payloads from Lupinacci et al. [3], assessing whether dynamic separators improve ASR reduction beyond the static baseline. Our main contributions are as follows: (1) a dynamic separator generator with provably unique per-request canaries, integrated into the existing PPA SDK without breaking back-ward compatibility; (2) an evaluation harness supporting 16 named attack payloads with payload-aware classifiers; and (3) empirical evidence that dynamic mode reduces M1 ASR from 0.88 to 0.38 (non-overlapping Wilson CIs, N =100 ) and eliminates format_breakout_salad separator leakage entirely ( 0.467 → 0.000 ). II. R ELATED WORK 
+
+A. Prompt Injection Attacks 
+
+Prompt injection attacks were first systematically character-ized by Perez and Ribeiro [2], who demonstrated that appending override directives to user input reliably redirected GPT-3 from 
+
+> arXiv:2605.30534v1 [cs.CR] 28 May 2026
+
+its intended task. Subsequent work catalogued 12 distinct attack categories [5], [6], including naive injection, context ignoring, payload splitting, virtualization, and adversarial suffix attacks. Lupinacci et al. [3] introduced post-training attack payloads M1 (leetspeak obfuscation with urgency priming) and M2 (cognitive override), which remain effective against models published after the original PPA evaluation. 
+
+B. Detection-Based Defenses 
+
+Commercial and open-source detectors—Lakera Guard [7], Azure AI Prompt Shield [8], Meta Prompt Guard [9], and ProtectAI deberta-v3-base [10] —frame prompt injection as binary classification on input text. On the PINT benchmark [11], Lakera achieved 95.22% accuracy and Azure 89.12%. These approaches are complementary to PPA: they operate at the input filtering layer, whereas PPA enforces boundaries at the prompt assembly layer. A single request may benefit from both. 
+
+C. Prevention-Based Defenses 
+
+Prevention mechanisms modify the prompt structure rather than classifying inputs. Delimiter-based isolation [2], [5] uses fixed brackets to separate user content from instructions; its static nature makes it vulnerable to escape attacks once the delimiter is known [4]. SPIN [12] introduced a self-supervised reversal mechanism that achieved strong results but increased inference latency by 5.8×. Attack-inspired defenses [13] invert common injection strategies to reinforce instructions but are static. PPA [4] is the first randomized prevention mechanism with near-zero overhead (0.06 ms per request). Our work extends PPA by replacing static pool selection with per-request dynamic generation. III. D YNAMIC SEPARATOR GENERATION 
+
+A. Threat Model 
+
+We adopt the white-box adversary model from Wang et al. [4]: the attacker knows the PPA assembly strategy and separator pool. Under static PPA, knowledge of the pool (publicly available in the open-source repository) reduces security to the per-separator breach probability Pi. We extend the threat model to include a separator leakage adversary —an attacker who can extract a separator from one model response and reuse it in future requests. Dynamic generation eliminates pool-reuse attacks by ensur-ing that no separator repeats across requests. The attacker’s knowledge of the generation algorithm provides no advantage without the per-request nonce. We do not claim cryptographic authentication strength in this study; HMAC-SHA256 with an application secret is the recommended production hardening step (Section V). 
+
+B. Separator Construction 
+
+Each request generates an independent (BEGIN, END) 
+
+pair via domain-separated SHA-256 digests as follows: 
+
+left = ====BEGIN-∥HB [:24] ∥==== 
+
+right = ====END-∥HE [:24] ∥==== 
+
+where: 
+
+HB = SHA-256 ("BEGIN:" ∥ts ∥sid ∥nonce )
+
+HE = SHA-256 ("END:" ∥ts ∥sid ∥nonce )
+
+ts is a nanosecond-resolution timestamp via 
+
+time.time_ns() , sid is a UUIDv4 session identifier, and 
+
+nonce is 16 bytes from secrets.token_hex(16) . The domain prefix ( "BEGIN:" / "END:" ) ensures that the two digests cannot collide even with identical inputs. Truncation to 24 hex characters (96 bits) gives a collision probability below 
+
+2−96 across the separator space. The resulting markers satisfy all PPA separator con-straints: non-empty, single-line, bounded length (≤80 characters), and free of user-controlled raw text. A
+
+validate_separator() call enforces these properties at generation time. The DynamicSeparatorProvider 
+
+callable produces a fresh pair on every invocation, even with a fixed session identifier, because ts and nonce change for each call. 
+
+C. Integration and Backward Compatibility 
+
+PPA accepts a separator_mode parameter (’static’ | ’dynamic’ ) and an optional rng for seeded static selection. All existing callers default to static mode; no API change is required for the upgrade. The double_prompt_assemble() method returns 
+
+(system_prompt, user_prompt, canary) ,where canary = (left, right) . The extended 
+
+leak_detect_detail(response, canary) method reports per-side leakage via {left: bool, right: bool, detected: bool }, enabling attribution of which boundary was echoed. IV. E VALUATION 
+
+A. Experimental Setup 
+
+The target model was Together AI 
+
+meta-llama/Llama-3.3-70B-Instruct-Turbo 
+
+(primary), with DeepSeek-V4-Flash used for cross-model validation on M1. The classifier was a deterministic success-marker classifier ( classify_response_by_marker ) for 10 override payloads and an LLM-based salad-vs-hamburger rubric ( classify_response_llama via Llama-3.1-8B-Instruct-Turbo) for six salad-family payloads (formatting-scrambling and distractor-text injections designed to elicit boundary echo or task derailment). The static mode seed was 1337, and all runs used double_prompt_assemble() 
+
+with the EIBD system prompt format (the standard inject-before-delimiter assembly format from Wang et al. [4]). We evaluated 16 named payloads across two separator modes (static and dynamic). The first category consists of 14 payloads drawn directly from Wang et al.’s attack registry [4], covering 12 standard injection categories, including naive instruction override, payload splitting, role confusion, adversarial suffixes, and combined multi-vector attacks. All payloads are determinis-tic string templates, not model-generated, eliminating stochastic [System Prompt] 
+
+SELECT fixed separator 
+
+(e.g. ====BEGIN -
+
+A1B2C3D4====) 
+
+[User Input] 
+
+Reuse same separator next request 
+
+[System Prompt] 
+
+GENERATE per -request token 
+
+SHA -256(... )[:24] 
+
+(e.g. ====BEGIN -
+
+f3a8c2e1d9b7====) 
+
+[User Input] 
+
+New separator every request 
+
+Leakage limited to 
+
+one request 
+
+Leakage can affect 
+
+future requests 
+
+Static PPA Dynamic PPA Fig. 1. Static vs. Dynamic PPA: Assembly Pipeline and Leakage Blast Radius. Left panel shows static mode with pool reuse; right panel shows dynamic mode with per-request unique canaries. 
+
+variation in the attack stimulus. The second category comprises two post-publication payloads adapted from Lupinacci et al. [3]—M1 (obfuscated leetspeak injection with urgency framing) and M2 (cognitive override via context manipulation)— evaluated at N =100 to support Wilson confidence interval analysis; all remaining payloads use N =30 (Wilson CI ±0.09 
+
+at p=0 .5). We do not re-run the PINT benchmark: PINT measures binary detection accuracy, a metric appropriate for classifier-based defenses, whereas PPA and its dynamic extension operate as prevention mechanisms evaluated by ASR reduction; the two measurement frameworks are not directly comparable. The false-positive rate for local classifiers was measured on 20 benign control inputs evaluated separately from the payload registry. The 95% Wilson score confidence interval for an observed proportion ˆp over n trials is: CI = ˆp + z2 
+
+> 2n
+
+± z
+
+q ˆp(1 − ˆp) 
+
+> n
+
++ z2
+
+> 4n2
+
+1 + z2
+
+> n
+
+(1) where z=1 .96 for 95% coverage. 
+
+B. Lupinacci Payload Results ( N =100 )
+
+Table I presents results for M1_injection (leetspeak + urgency) and M2_injection (cognitive override), both adapted from Lupinacci et al. [3], Appendix B, with malware content replaced by the benign success marker ‘Injection successful. Payload delivered.’ The 95% Wilson CIs for M1 are:                                            
+
+> TABLE I LUPINACCI PAYLOAD RESULTS (N=100 PER MODE ,SEED =1337) Payload Mode Attacked Defended ASR Leak
+> M1_injection static 88 12 0.88 0
+> M1_injection dynamic 38 62 0.38 0
+> M2_injection static 991 0.09 0
+> M2_injection dynamic 0100 0.00 0
+> Cross-model validation (DeepSeek-V4-Flash, N=100 , seed=1337)
+> M1_injection static 45 55 0.45 0
+> M1_injection dynamic 38 62 0.38 0
+
+static [0.802, 0.930] and dynamic [0.291, 0.478]; the intervals do not overlap. The dynamic mode reduced M1 ASR from 0.88 to 0.38—a 
+
+2.3× improvement. Non-overlapping Wilson CIs confirm the reduction is statistically significant at N =100 . M2 ASR was reduced from 0.09 to 0.00. Zero separator leakage was observed across all 400 runs. The static mode exhibited the expected pool reuse ( max_observed_separator_reuse = 8 , 46 reused pairs out of 100), whereas dynamic mode produced unique separators on every attempt (max_reuse = 1). Cross-model validation on DeepSeek-V4-Flash yielded static ASR 0.45 [0.356, 0.548] and dynamic ASR 0.38 [0.291, 0.478]; overlapping intervals indicate no statistically significant reduction on this backend, suggesting that dynamic separator benefit scales with baseline model susceptibility. TABLE II FULL PAYLOAD SWEEP (N =30 PER MODE , CORRECTED CLASSIFIER ). S = S TATIC , D = D YNAMIC , C LS = C LASSIFIER TYPE .Payload S-ASR D-ASR S-Lk D-Lk Cls                                                                                              
+
+> naive_injection 0.100 0.067 0.000 0.000 mrk
+> fake_completion 0.000 0.000 0.000 0.000 mrk
+> double_character 0.133 0.000 0.000 0.000 mrk
+> virtualization 0.000 0.000 0.000 0.000 mrk
+> role_playing 0.100 0.000 0.000 0.000 mrk
+> payload_splitting 0.867 0.133 0.000 0.000 mrk
+> adversarial_suffix 0.000 0.000 0.000 0.000 mrk
+> combined_attack 0.400 0.200 0.000 0.000 mrk
+> baseline_salad 0.000 0.000 0.000 0.000 llm
+> direct_override_salad 0.000 0.000 0.000 0.000 llm
+> role_confusion_salad 0.000 0.000 0.000 0.000 llm
+> format_breakout_salad 0.000 0.000 0.467 0.000 llm
+> separator_echo_salad 0.067 0.000 1.000 1.000 llm
+> benign_summary 0.000 0.000 0.000 0.000 llm mrk = marker classifier; llm = LLM rubric; Wilson CI ±0.09 at p=0 .5,
+> N=30 .TABLE III CLASSIFIER COMPARISON ON 16 P AYLOADS (FPR ON N=20 BENIGN CONTROLS )Defense Type ASR not caught FPR Meta Prompt Guard Detection 26.67% 0.00 ProtectAI deberta-v3 Detection 6.67% 0.00 Deepset deberta-v3 Detection 0.00% 0.30
+
+C. Full Payload Sweep ( N =30 )
+
+Table II presents the corrected sweeps across all 14 remaining payloads. Dynamic mode matched or improved static mode for every payload where static ASR was non-zero. The strongest injection signal was payload_splitting (static 0.867 →
+
+dynamic 0.133 ), consistent with the multi-message fragmen-tation strategy being disrupted by unpredictable boundaries. 
+
+combined_attack shows partial improvement ( 0.400 →
+
+0.200 ); this delta is directional at N =30 and requires a larger 
+
+N for confirmation. The critical leakage result is format_breakout_salad :static leak_rate 0.467 versus dynamic 0.000 , with ASR 
+
+= 0.000 in both modes. The format-breakout technique injects synthetic boundary markers to elicit separator echo; dynamic per-request canaries do not match any injected pattern, eliminating the leakage vector. separator_echo_salad 
+
+records leak_rate = 1 .00 in both modes, confirming that no separator design prevents the model from complying with explicit repeat-the-boundary instructions. This represents a fundamental limit of the defense layer, addressed in Section V. 
+
+D. Classifier Comparison 
+
+Table III presents ASR-not-caught and false positive rate (FPR) for three open-source prompt injection classifiers evalu-ated on the same 16-payload registry. The FPR is measured on 20 separate benign control inputs not drawn from the attack registry. Meta Prompt Guard missed 4 of 15 injections, includ-ing M1_injection and payload_splitting —the two payloads where dynamic PPA produces its strongest reduc-tion (0.88 →0.38 and 0.867 →0.133, respectively). ProtectAI achieved the best precision-recall balance: 6.67% ASR-not-caught with FPR = 0 .00 , missing only baseline_salad .Deepset catches all 15 injections but produces FPR = 0 .30 on benign inputs, flagging 6 of 20 benign controls as injections— a false alarm rate likely prohibitive in production. Detection-and prevention-based defenses are complementary; a layered deployment combining ProtectAI filtering with dynamic PPA assembly addresses both attack surfaces. 
+
+E. Latency Overhead 
+
+Dynamic separator generation adds 2.7 μs overhead per request over static pool selection (mean prompt assembly: 4.1 ms vs. 1.4 ms end-to-end; N =1000 local iterations, popu-lation σ reported). This overhead is negligible relative to LLM inference latency, which typically exceeds 500 ms per request. Dynamic mode timings include OS-level entropy collection (secrets.token_hex ) and a monotonic clock read per invocation, as these are inseparable from the SHA-256 hashing step by design. To assess whether dynamic PPA affects response quality on legitimate tasks, we ran 100 benign requests across five task categories (summarization, Q&A, translation, math, and code explanation) under three conditions—no PPA, static PPA, and dynamic PPA—using an LLM-as-judge scoring protocol (1–5 scale, judge: Llama-3.3-70B-Instruct-Turbo). Dynamic PPA achieved a mean score of 5.00 ( σ=0 .00 ), static PPA 4.98 (σ=0 .14 ), and unprotected baseline 4.96 ( σ=0 .40 ). Dynamic PPA showed no degradation relative to the unprotected baseline. V. L IMITATIONS 
+
+The dynamic separator generator uses unkeyed SHA-256 over publicly derivable inputs. If an attacker obtains the session identifier, timestamp, and nonce—for exam-ple, through log access or side-channel observation—they can reproduce the separator deterministically. The per-call 
+
+secrets.token_hex(16) nonce provides unpredictability against external adversaries but not against insiders or log readers. In closed-source deployments, this risk is substantially reduced; however, any deployment in which source code is accessible should replace the current construction with HMAC-SHA256 keyed to a per-deployment application secret not derivable from observable request metadata. The evaluated construction uses unkeyed SHA-256, whereas we recommend HMAC-SHA256 for production deployment. Under unkeyed SHA-256, prediction requires knowledge of the full input triple ( timestamp_ns ∥ session_id ∥
+
+nonce ); under HMAC-SHA256, it additionally requires a server-side secret key. HMAC provides defense-in-depth against implementation leakage but does not alter the attack surface evaluated here. A formal re-evaluation under HMAC remains future work. The evaluation covers two model backends: Llama-3.3-70B-Instruct-Turbo (primary) and DeepSeek-V4-Flash (cross-model validation on M1). Wang et al. [4] demonstrated that PPA effectiveness varies across model families; LLaMA-3 showed higher ASR (8.17%) than GPT-3.5 (1.83%) under static PPA. On DeepSeek-V4-Flash, dynamic mode yielded ASR 0.38 [0.291, 0.478] versus static 0.45 [0.356, 0.548]; overlapping intervals indicate no statistically significant reduction, sug-gesting dynamic separator benefit scales with baseline model susceptibility. A fixed random seed (1337) was used for all runs. Most payload results use N =30 , giving Wilson CI half-width 
+
+±0.09 at p=0 .5; claims for payloads with small observed deltas (e.g., combined_attack 0.400 → 0.200 ) are directional only. The marker-based classifier was calibrated on 100 benign model outputs with no injected payload. The false-positive rate was 0/100 (FPR = 0 .00 ), confirming the classifier did not spuriously record attack success on legitimate completions. The absolute ASR values reported in Section IV are therefore not subject to upward bias from classifier false positives. 
+
+separator_echo_salad achieves a leak_rate of 1.00 in both static and dynamic modes. This payload explicitly instructs the model to repeat boundary strings. Dynamic separators limit the blast radius of such leakage—a leaked dynamic canary is useless in any future request—but do not prevent initial disclosure. Mitigation requires a response-level output filter that detects separator-shaped strings before returning the response to the caller, which is beyond the scope of the current study. This evaluation did not re-run the PINT benchmark [11]. The original PPA achieved 97.68% accuracy on PINT (sec-ond only to Lakera Guard at 95.22%). PPA operates as a defense preprocessor at the prompt assembly layer, not as a binary input classifier; mapping its behavior to the PINT 
+
+eval_function(text) -> bool interface requires a proxy adapter that introduces its own methodological assump-tions. A direct comparison of dynamic PPA against PINT-evaluated detectors on a shared attack corpus remains future work. While preliminary validation on 100 benign requests indi-cates that dynamic separators do not disrupt standard model capabilities, this evaluation was localized and relied on manual inspection rather than automated metrics against a held-out unprotected baseline. A comprehensive, large-scale benchmark mapping trade-offs in task-specific semantic understanding remains an open requirement for production-grade deployment validation. VI. C ONCLUSION 
+
+We presented a dynamic separator generation mechanism for Polymorphic Prompt Assembling that replaces static pool selection with per-request SHA-256-derived canaries. The extension eliminates the pool-reuse blast radius by ensuring that leaked separators are request-scoped and non-reusable. An empirical evaluation on Llama-3.3-70B demonstrated a 
+
+2.3× reduction in M1 attack success rate ( 0.88 → 0.38 , non-overlapping Wilson CIs at N =100 ), complete elimination of 
+
+format_breakout_salad separator leakage ( 0.467 →
+
+0.000 ), and ASR improvement across every payload where the static baseline showed non-zero rates. The implementation is backward-compatible with the existing PPA SDK and requires no model modifications. Future work should address three directions. First, HMAC-SHA256 hardening with a per-deployment application se-cret should replace the current unkeyed construction for production. Second, multi-model evaluation across GPT-4 and DeepSeek-V3 is needed to assess whether the ASR reduction generalizes across architectures, following the four-model approach of the original PPA paper. Third, a response-level output filter for separator-shaped strings would close the separator_echo_salad vulnerability, which dynamic generation alone cannot address. REFERENCES [1] Z. Xi et al., “The rise and potential of large language model based agents: A survey,” arXiv:2309.07864 , 2023. [2] F. Perez and I. Ribeiro, “Ignore previous prompt: Attack techniques for language models,” arXiv:2211.09527 , 2022. [3] M. Lupinacci et al., “Dark side of LLMs: Prompt injection attacks against LLM-integrated applications,” arXiv:2507.06850 , 2025. [4] Z. Wang et al., “To protect the LLM agent against the prompt injection attack with polymorphic prompt assembling,” arXiv:2506.05739 , 2025. [5] Y. Liu et al., “Formalizing and benchmarking prompt injection attacks and defenses,” arXiv:2310.12815 , 2024. [6] S. Rossi et al., “An early categorization of prompt injection attacks on large language models,” arXiv:2402.00898 , 2024. [7] Lakera, “Lakera Guard,” https://www.lakera.ai/lakera-guard, 2024. [8] Microsoft, “Azure AI Prompt Shield,” https://learn.microsoft.com/azure/ ai-services/content-safety, 2024. [9] Meta AI, “Prompt-Guard-86M,” https://huggingface.co/meta-llama/ Prompt-Guard-86M, 2024. [10] ProtectAI, “deberta-v3-base-prompt-injection-v2,” https://huggingface.co/ protectai, 2024. [11] Lakera AI, “PINT Benchmark,” https://github.com/lakeraai/ pint-benchmark, 2024. [12] L. Zhou et al., “SPIN: Self-supervised prompt injection,”
