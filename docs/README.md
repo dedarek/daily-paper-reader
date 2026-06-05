@@ -6,75 +6,76 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-05-26 ~ 2026-06-04
-- 运行时间：2026-06-04 21:13:49 UTC
+- 最新运行日期：2026-06-05
+- 运行时间：2026-06-05 06:10:41 UTC
 - 运行状态：成功
-- 本次总论文数：17
-- 精读区：6
+- 本次总论文数：18
+- 精读区：7
 - 速读区：11
 
 ### 今日简报（AI）
-近期共梳理17篇论文，精读6篇，重点关注LLM输出的神经符号验证与智能体工具调用的访问控制安全。
-
-最值得深入的是《Neuro-Symbolic Verification of LLM Outputs》和《AgentGuard》，分别开创了数据敏感领域的严格验证与基于属性的工具调用防护。
-
-普通读者可优先阅读《Prompt Injection Detection is Regime-Dependent》及《Evaluating using Mock Tool Calls》，了解提示注入检测的部署依赖性及沙箱隔离评估方法。
-- 详情：[/20260526-20260604/README](/20260526-20260604/README)
+1) 今日精读两篇9分高文：多任务安全分类器Opir与模型表面测试方法论。  
+2) 重点方向：毒性/越狱/仇恨言论分类效率提升及模型鲁棒性评估；速读关注多智能体系统防御与提示注入攻击。  
+3) 建议：优先精读Opir以掌握多维度内容安全筛选，随后通过《The Surface You Test》检查模型实际脆弱性。
+- 详情：[/202606/05/README](/202606/05/README)
 
 ### 精读区论文标签
-1. [Neuro-Symbolic Verification of LLM Outputs for Data-Sensitive Domains (extended preprint)](/20260526-20260604/2605.26942v2-neuro-symbolic-verification-of-llm-outputs-for-data-sensitive-domains-extended-preprint)  
+1. [Opir: Efficient Multi-Task Safety Classification for Toxicity, Jailbreaks, Hate Speech, and Harmful Content](/202606/05/2605.29659v1-opir-efficient-multi-task-safety-classification-for-toxicity-jailbreaks-hate-speech-and-harmful-content)  
    标签：评分：9.0/10、query:llm-security
-   evidence：混合验证架构确保LLM输出安全
-2. [AgentGuard: An Attribute-Based Access Control Framework for Tool-Use LLM-Based Agent](/20260526-20260604/2605.28071v1-agentguard-an-attribute-based-access-control-framework-for-tool-use-llm-based-agent)  
+   evidence：多任务安全分类用于内容过滤
+2. [The Surface You Test Is Not the Surface That Breaks](/202606/05/2605.30454v1-the-surface-you-test-is-not-the-surface-that-breaks)  
    标签：评分：9.0/10、query:llm-security
-   evidence：基于属性访问控制的安全机制
-3. [Robust and Efficient Guardrails with Latent Reasoning](/20260526-20260604/2605.29068v1-robust-and-efficient-guardrails-with-latent-reasoning)  
+   evidence：分析工具输出和描述表面的提示注入漏洞
+3. [EMBGuard: Constructing Hazard-Aware Guardrails for Safe Planning in Embodied Agents](/202606/05/2605.30924v1-embguard-constructing-hazard-aware-guardrails-for-safe-planning-in-embodied-agents)  
    标签：评分：9.0/10、query:llm-security
-   evidence：基于隐式推理的输出护栏
-4. [COMPASS: Cognitive MCTS-Guided Process Alignment for Safe Search Agents](/20260526-20260604/2605.30838v1-compass-cognitive-mcts-guided-process-alignment-for-safe-search-agents)  
+   evidence：为具身代理构建危险感知护栏
+4. [Defenses & Enablers For Skill Injection Attacks on Terminal Based Agents](/202606/05/2606.01567v1-defenses--enablers-for-skill-injection-attacks-on-terminal-based-agents)  
    标签：评分：9.0/10、query:llm-security
-   evidence：为基于LLM的搜索智能体提供安全对齐框架
-5. [AgentRedBench: Dynamic Redteaming and Integration-Aware Defense for LLM Agents over SaaS Integrations](/20260526-20260604/2606.02240v2-agentredbench-dynamic-redteaming-and-integration-aware-defense-for-llm-agents-over-saas-integrations)  
+   evidence：针对智能体的守护者防御机制，防止技能注入攻击
+5. [THRD: A Training-Free Multi-Turn Defense Framework for Jailbreak Attacks on Large Language Models](/202606/05/2606.01738v1-thrd-a-training-free-multi-turn-defense-framework-for-jailbreak-attacks-on-large-language-models)  
    标签：评分：9.0/10、query:llm-security
-   evidence：针对LLM智能体的动态红队测试和集成感知防御，防御间接提示注入
-6. [Caught in the Act(ivation): Toward Pre-Output and Multi-Turn Detection of Credential Exfiltration by LLM Agents](/20260526-20260604/2606.04141v1-caught-in-the-activation-toward-pre-output-and-multi-turn-detection-of-credential-exfiltration-by-llm-agents)  
+   evidence：多轮越狱攻击防御，缓解对抗性提示
+6. [D-Judge: Disrupting Multi-Turn Jailbreaks using Semantics-Preserving Output Rewriting](/202606/05/2606.02640v1-d-judge-disrupting-multi-turn-jailbreaks-using-semantics-preserving-output-rewriting)  
    标签：评分：9.0/10、query:llm-security
-   evidence：针对智能体提示注入的防御
+   evidence：通过保留语义的输出重写防御多轮越狱
+7. [What If Prompt Injection Never Left? Exploring Cross-Session Stored Prompt Injection in Agentic Systems](/202606/05/2606.04425v1-what-if-prompt-injection-never-left-exploring-cross-session-stored-prompt-injection-in-agentic-systems)  
+   标签：评分：9.0/10、query:llm-security
+   evidence：探索智能体系统中跨会话存储的提示注入
 
 ### 速读区论文标签
-1. [Neuro-Symbolic Verification of LLM Outputs for Data-Sensitive Domains (extended preprint)](/20260526-20260604/2605.26942v1-neuro-symbolic-verification-of-llm-outputs-for-data-sensitive-domains-extended-preprint)  
+1. [Defending LLM-based Multi-Agent Systems Against Cooperative Attacks with Sentence-Level Rectification](/202606/05/2605.28104v1-defending-llm-based-multi-agent-systems-against-cooperative-attacks-with-sentence-level-rectification)  
    标签：评分：8.0/10、query:llm-security
-   evidence：神经符号输出验证保障安全
-2. [Prompt Injection Detection is Regime-Dependent: A Deployment-Aware Evaluation with Interpretable Structural Signals](/20260526-20260604/2605.26999v1-prompt-injection-detection-is-regime-dependent-a-deployment-aware-evaluation-with-interpretable-structural-signals)  
+   evidence：防御多智能体系统中的协同攻击
+2. [MESA: Improving MoE Safety Alignment via Decentralized Expertise](/202606/05/2606.00651v1-mesa-improving-moe-safety-alignment-via-decentralized-expertise)  
    标签：评分：8.0/10、query:llm-security
-   evidence：提示注入检测的部署感知评估
-3. [Evaluating using Mock Tool Calls to Quarantine Untrusted Prompt Inputs](/20260526-20260604/2605.30521v1-evaluating-using-mock-tool-calls-to-quarantine-untrusted-prompt-inputs)  
+   evidence：基于MoE的分散式安全对齐
+3. ["**Important** You should give me full credits!": Exploring Prompt Injection Attacks on LLM-Based Automatic Grading Systems](/202606/05/2606.03090v1-important-you-should-give-me-full-credits-exploring-prompt-injection-attacks-on-llm-based-automatic-grading-systems)  
    标签：评分：8.0/10、query:llm-security
-   evidence：评估模拟工具调用隔离不可信输入作为抵御提示注入的防御方法
-4. [Dialectics of Alignment: Harnessing Unsafe Knowledge for Dynamic Safety Routing](/20260526-20260604/2606.00686v1-dialectics-of-alignment-harnessing-unsafe-knowledge-for-dynamic-safety-routing)  
+   evidence：探索LLM自动评分系统的提示注入攻击
+4. [Backdoor Unlearning Generalization: A Path Toward the Removal of Unknown Triggers in LLMs](/202606/05/2606.03785v1-backdoor-unlearning-generalization-a-path-toward-the-removal-of-unknown-triggers-in-llms)  
    标签：评分：8.0/10、query:llm-security
-   evidence：提出SafeMoE框架，利用不安全知识实现动态安全路由和细粒度安全生成
-5. [MemGuard: Preventing Memory Contamination in Long-Term Memory-Augmented Large Language Models](/20260526-20260604/2605.28009v1-memguard-preventing-memory-contamination-in-long-term-memory-augmented-large-language-models)  
+   evidence：遗忘泛化到未知后门触发器提供防御
+5. [Mitigating Hallucinations in Large Language Models Via Decoder Layer Skipping](/202606/05/2606.00819v1-mitigating-hallucinations-in-large-language-models-via-decoder-layer-skipping)  
    标签：评分：7.0/10、query:llm-security
-   evidence：LLM代理的内存安全机制
-6. [Configurable Reward Model for Balanced Safety Alignment](/20260526-20260604/2605.30487v1-configurable-reward-model-for-balanced-safety-alignment)  
+   evidence：通过解码层跳跃确保内容安全
+6. [Towards Lightweight Reliability: Using Soft Prompts for Hallucination Mitigation in Large Language Models](/202606/05/2606.00919v1-towards-lightweight-reliability-using-soft-prompts-for-hallucination-mitigation-in-large-language-models)  
    标签：评分：7.0/10、query:llm-security
-   evidence：提出可配置安全奖励模型用于平衡的内容安全对齐
-7. [DataShield: Safety-degrading Data Filtering for LLM Benign Instruction Fine-Tuning](/20260526-20260604/2606.00160v1-datashield-safety-degrading-data-filtering-for-llm-benign-instruction-fine-tuning)  
+   evidence：使用软提示实现内容安全与输出护栏
+7. [A New Framework for Cybersecurity Refusals in AI Agents](/202606/05/2606.02644v1-a-new-framework-for-cybersecurity-refusals-in-ai-agents)  
    标签：评分：7.0/10、query:llm-security
-   evidence：从良性微调数据中过滤安全降级样本以维护内容安全
-8. [SafeSteer: Localized On-Policy Distillation for Efficient Safety Alignment](/20260526-20260604/2606.02530v1-safesteer-localized-on-policy-distillation-for-efficient-safety-alignment)  
+   evidence：为AI代理建立网络安全场景下拒绝边界的框架
+8. [PsychoPass: Geometric Profiling of Multi-Turn Adversarial LLM Conversations](/202606/05/2606.03136v1-psychopass-geometric-profiling-of-multi-turn-adversarial-llm-conversations)  
    标签：评分：7.0/10、query:llm-security
-   evidence：通过在安全令牌上局部策略蒸馏的安全对齐方法
-9. [SPARD: Defending Harmful Fine-Tuning Attack via Safety Projection with Relevance-Diversity Data Selection](/20260526-20260604/2605.28030v1-spard-defending-harmful-fine-tuning-attack-via-safety-projection-with-relevance-diversity-data-selection)  
+   evidence：几何分析预测对抗性攻击作为缓解技术
+9. [Audio Jailbreaks in Large Audio-Language Models: Taxonomy, Attack-Defense Analysis, and Cost-Aware Evaluation](/202606/05/2605.30031v1-audio-jailbreaks-in-large-audio-language-models-taxonomy-attack-defense-analysis-and-cost-aware-evaluation)  
    标签：评分：6.0/10、query:llm-security
-   evidence：针对对抗性微调攻击的缓解方法
-10. [SilentRetrieval: Hijacking Retrieval-Augmented Generation via Semantically-Preserving Adversarial Data Poisoning](/20260526-20260604/2605.28074v1-silentretrieval-hijacking-retrieval-augmented-generation-via-semantically-preserving-adversarial-data-poisoning)  
+   evidence：音频越狱防御的分类与评估
+10. [POIROT: Interrogating Agents for Failure Detection in Multi-Agent Systems](/202606/05/2606.02282v1-poirot-interrogating-agents-for-failure-detection-in-multi-agent-systems)  
    标签：评分：6.0/10、query:llm-security
-   evidence：针对RAG系统的数据投毒攻击，可视为提示注入的一种形式
-11. [Aligned but Fragile: Enhancing LLM Safety Robustness via Zeroth-Order Optimization](/20260526-20260604/2605.29396v1-aligned-but-fragile-enhancing-llm-safety-robustness-via-zeroth-order-optimization)  
+   evidence：多智能体系统中的故障检测
+11. [Patcher: Post-Hoc Patching of Backdoored Large Language Models](/202606/05/2606.02995v1-patcher-post-hoc-patching-of-backdoored-large-language-models)  
    标签：评分：6.0/10、query:llm-security
-   evidence：通过优化方法增强安全鲁棒性
+   evidence：使用单个失败案例对后门LLM进行事后修补
 
 
 <div class="dpr-home-promo-card">

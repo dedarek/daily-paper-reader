@@ -1,0 +1,391 @@
+Title: THRD: A Training-Free Multi-Turn Defense Framework for Jailbreak Attacks on Large Language Models
+
+URL Source: https://arxiv.org/pdf/2606.01738v1
+
+Published Time: Tue, 02 Jun 2026 02:07:48 GMT
+
+Number of Pages: 11
+
+Markdown Content:
+# THRD: A Training-Free Multi-Turn Defense Framework for Jailbreak Attacks on Large Language Models 
+
+Zhiqing Ma 1, Zhonghao Xu 1, Dong Yu 1, Chen Kang 1,Changliang Li †, Pengyuan Liu 1†1Beijing Language and Culture University 
+
+Abstract 
+
+Multi-turn jailbreak attacks pose a growing threat to LLMs by exploiting conversational dynamics such as gradual escalation and cross-turn coordination. Existing defenses either rely on costly retraining—often degrading model utility—or apply single-turn analysis indepen-dently at each turn, failing to capture how risk accumulates along interaction trajectories. We observe that safety behavior in multi-turn in-teraction is trajectory-dependent: dialogue his-tory continuously reshapes the model’s condi-tioning context, making it insufficient to eval-uate each turn in isolation. Motivated by this insight, we present THRD, the first training-free framework that explicitly models temporal risk accumulation for multi-turn jailbreak de-fense. THRD integrates four modules: a Turn-level Risk Assessor (TRA) for instantaneous risk estimation, a Historical Context Analyzer (HCA) for cross-turn intent escalation detec-tion, a Response Evaluator (RE) for identify-ing facilitative outputs, and a Decision Mod-ule that combines these signals through a time-evolving scoring mechanism with attenuation-based modulation and trend-aware adjustment. Experiments against state-of-the-art multi-turn attacks—including tree-search-based and multi-agent collaborative methods—across two tar-get models show that THRD reduces ASR to 0.2–4.0% while preserving model utility within 1.5% degradation on MMLU and GSM8K. Ab-lation studies confirm non-redundant module contributions and stable cross-architecture gen-eralization. Analysis of first rejection triggers reveals that over 70% of multi-turn attacks re-quire Turn 2 or later to detect, validating the necessity of explicit temporal aggregation. 
+
+1 Introduction 
+
+Large Language Models (LLMs) such as GPT-5 (OpenAI, 2025), Claude 4 (Anthropic, 2025), Llama-3 (Dubey et al., 2024), and Qwen2.5 (Qwen 
+
+> †Corresponding authors
+
+et al., 2025) have been widely deployed across critical applications. Despite extensive safety alignment efforts through supervised fine-tuning and reinforcement learning from human feed-back (Ouyang et al., 2022b; Christiano et al., 2017), these models remain vulnerable to jailbreak attacks. Early single-turn attacks primarily relied on handcrafted prompts (Liu et al., 2023; Shen et al., 2024) or automated optimization methods includ-ing GCG (Zou et al., 2023), AutoDAN (Liu et al., 2024a), PAIR (Chao et al., 2025), and GPT-Fuzzer (Yu et al., 2023). More recently, multi-turn jailbreak attacks have emerged as a challeng-ing threat by exploiting conversational interactions that gradually weaken safety boundaries across turns (Russinovich et al., 2025; Ren et al., 2024; Rahman et al., 2025; Zhou and Arel, 2025; Ying et al., 2025). Defending against multi-turn jailbreak attacks remains challenging because harmful intent of-ten emerges gradually across conversation turns rather than through a single explicit request. At-tackers can further adapt their strategies based on intermediate model responses, while seemingly be-nign turns—including model outputs—may col-lectively steer the interaction toward harmful out-comes. Training-based defense methods (Ding et al., 2025b; Jiang and Pan, 2025; Lin et al., 2024; Zhai et al., 2023) struggle in this setting, as static retraining cannot easily cover the combinatorial and adaptive space of interaction-driven attack tra-jectories. Existing inference-time defense meth-ods (Ding et al., 2025a; Zhao et al., 2025a; Hu et al., 2025), on the other hand, often rely on single-turn analysis or static rules, limiting their ability to detect attacks whose risk becomes ap-parent only through cross-turn accumulation and response-level facilitation. A key limitation of existing defenses is the im-plicit assumption that safety decisions can be made based on the current input in isolation. In multi-
+
+> arXiv:2606.01738v1 [cs.CL] 1 Jun 2026
+
+Conversation Timeline Turn 1 Turn 2 Turn i-1 Turn i     
+
+> Attacker: ...
+> Target: ...
+> Attacker: ...
+> Target: ...
+> Attacker: ...
+> Target: ...
+> Attacker: ...
+> Target: ...
+
+... 
+
+> Attacker
+> Turn i
+> Turn-level Risk Assessor （TRA ）
+> Instantaneous risk assessment of current input
+> Historical Context Analyzer （HCA ）
+> Analyzes ALL previous conversation history up to turn i-1
+> FULL CONVERSATION HISTORY
+> Turn 1 to Turn i-1
+> Conversation Structure Analysis
+> Examine conversational form, roles, framing, and evolution
+> Historical Intent Analysis
+> Identify intents and extract cumulative core intent
+> Historical Strategy Analysis
+> Detect jailbreak strategies and coordination
+> Historical Safety Analysis
+> Detect cross-turn safety risks and benign facillitation
+> Historical Judgment
+> Turn i-1
+> Response Evaluator(RE)
+> Evaluates the previous model output
+> Content Safety
+> Detect harmful or policy-violating content
+> Information Sensitivity
+> Measure potential harm if information is misused
+> Boundary Compliance
+> Check for inappropriate hints or encouragment
+> Tone Nertrality
+> Ensure neutral tone, non-encouraging behavior
+> Response Judgment
+
+Decision Model  
+
+> Integrates TRA, HCA, RE
+> Target
+> MF: May Facilitate Attack WNF: Will Not Facilitate Attack
+> Inputs (Signals)
+> Temporal Scoring Formula
+> Risk-to-Action Mapping
+> Low Risk Medium Risk High Risk
+> (1:Very Safe, 5:Very Risky)
+> Risk Score
+> Normal Response
+> Controlled Response
+> Refuse Response
+> Harmful Content Detection
+> Detect hramful or policy-violating content
+> Bypass Attempt Detection
+> Identify instructions to bypass ethical guideliness
+> Request Decomposition
+> Decompose nested or complex requests
+> Intent & Structure Analysis
+> Analyze logical structure and potential hidden purposes
+
+Figure 1: Overview of the THRD framework at turn i. TRA evaluates the current input, HCA analyzes conversation history, RE assesses the generated response, and the Decision Module integrates these signals into a time-evolving risk score to determine the final response strategy. 
+
+turn interactions, however, dialogue history con-tinuously reshapes the model’s conditioning con-text, meaning that risk may evolve progressively across turns. Attackers can exploit this by con-structing conversations in which individual turns appear benign while the accumulated context grad-ually steers the model toward harmful compliance. These observations motivate inference-time de-fenses that explicitly incorporate conversational history and evolving risk signals across turns. To address this challenge, we propose THRD, a training-free framework for multi-turn jailbreak defense. THRD tracks how instantaneous risk, cumulative intent, and response-level facilitation evolve throughout a conversation, enabling effec-tive inference-time defense against adaptive multi-turn jailbreak attacks. Specifically, THRD decom-poses conversational safety assessment into four functional components: a Turn-level Risk Asses-sor that captures current-turn risk signals, a His-torical Context Analyzer that analyzes cumulative intent across turns, a Response Evaluator that as-sesses whether generated outputs may facilitate downstream harm, and a Decision Module that ag-gregates these signals through a lightweight tempo-ral scoring mechanism. Rather than relying solely on isolated turn-level judgments, THRD combines current-turn and historical signals within a unified inference-time framework. Extensive experiments demonstrate that THRD achieves strong defense performance while preserving model utility. 
+
+2 Related Work 
+
+2.1 Multi-turn Jailbreak Attacks on LLMs 
+
+Multi-turn jailbreak attacks exploit conversational dynamics to systematically erode safety guardrails across multiple interaction turns. Unlike single-turn attacks that rely on engineered prompts, multi-turn methods leverage conversational coher-ence to gradually accumulate partial compliance. Crescendo (Russinovich et al., 2025) pioneered in-cremental escalation from benign questions toward harmful topics. ActorAttack (Ren et al., 2024) in-corporated actor-network theory to discover diverse attack paths while concealing harmful intent. Tem-pest (Zhou and Arel, 2025) employs breadth-first tree search to explore multiple adversarial paths si-multaneously, tracking how minor concessions ac-cumulate into policy violations. RACE (Ying et al., 2025) reformulates harmful queries into benign reasoning tasks through attack state machines. X-Teaming (Rahman et al., 2025) introduces a multi-agent framework for collaborative attack planning, optimization, and verification. These methods col-lectively demonstrate that extended conversations can bypass safety alignment mechanisms designed primarily for single-turn interactions. 
+
+2.2 Defenses Against Jailbreak Attacks 
+
+Existing defenses can be broadly categorized into learning-based and strategy-based approaches. Learning-based methods enhance safety through post-training techniques such as SFT (Ouyang et al., 2022a) or RLHF (Christiano et al., 2017; Ko-rbak et al., 2023; Wang et al., 2024). SDGO (Ding et al., 2025b) leverages the model’s discrimination capabilities as reward signals to improve genera-tion safety. MetaDefense (Jiang and Pan, 2025) introduces a two-stage approach that detects harm-ful queries before generation and monitors par-tial responses during generation. Strategy-based methods rely on prompt guidance and content de-tection without retraining. SAGE (Ding et al., 2025a) aligns safety discrimination with generation through discriminative analysis and response mod-ules. SafeBehavior (Zhao et al., 2025a) simulates human-like multistage reasoning for jailbreak de-tection. CCFC (Hu et al., 2025) introduces a dual-track framework that isolates semantic cores to de-fend against structural attack patterns. While these methods avoid retraining, most focus on single-turn analysis and lack explicit modeling of how risk evolves across conversation turns. 
+
+3 THRD Framework 
+
+We formulate multi-turn jailbreak defense as a tem-poral risk aggregation problem, where safety de-pends on how risk accumulates across conversation turns rather than on isolated inputs. This formula-tion reflects a key insight: in multi-turn interaction, each turn shifts the model’s effective conditioning context, and safety behavior becomes trajectory-dependent rather than governed by a fixed decision boundary. As a conversation progresses, earlier turns, including the model’s own responses, estab-lish contextual momentum that can progressively lower the barrier to harmful compliance, even when no individual turn is overtly malicious. THRD oper-ationalizes this insight through a modular architec-ture that prioritizes principled decomposition and task-specific integration over component-level re-design. For analysis mechanisms already validated in prior work, we deliberately adopt and adapt these proven modules rather than re-engineering them for structural novelty alone. The core design effort centers on decomposing the evolving risk trajec-tory into three complementary signals, adapting each module to its specific role within a temporal defense context, and orchestrating their joint evolu-tion through a time-evolving decision mechanism. As illustrated in Figure 1, THRD decomposes con-versational risk into four functional modules corre-sponding to three complementary dimensions, in-tegrated through a unified scoring framework that captures cross-turn dynamics. 
+
+3.1 Turn-level Risk Assessor 
+
+The Turn-level Risk Assessor (TRA) estimates in-stantaneous risk for the current turn, identifying preparatory or escalatory behavior that may signal an emerging attack. Since individual turns may appear benign while contributing to an evolving attack, we adopt the two-stage analysis paradigm from prior work (Ding et al., 2025a) to capture both semantic and structural signals indicative of emerging threats. Each request is assigned an or-dinal score Ri ∈ [1 , 5] , serving as a current-state estimate rather than a standalone decision, which provides fine-grained risk gradations to support downstream temporal aggregation. As the first line of defense in each turn, TRA’s scoring feeds into the risk computation and influ-ences how the Decision Module calibrates its re-sponse. An overly sensitive TRA propagates false alarms through the pipeline, leading to unnecessary refusals; an insufficiently sensitive TRA allows early-stage attack signals to pass undetected, un-dermining downstream temporal aggregation. This gatekeeping role makes TRA’s calibration partic-ularly critical. We explore three prompt variants beyond the base two-stage analysis to address this calibration challenge: Variant A adds explicit guid-ance that individual sensitive keywords do not in-dicate risk and enumerates high-risk structural pat-terns; Variant B extends Variant A by requiring both benign and harmful interpretations before scor-ing, defaulting to a lower score unless concrete structural evidence supports the harmful reading; 
+
+Variant C adds only a single instruction to focus on request structure rather than individual keywords. The impact of these variants is discussed in Sec-tion 4.2, with details in Appendix. 
+
+3.2 Historical Context Analyzer 
+
+The Historical Context Analyzer (HCA) infers cu-mulative intent by analyzing the conversation as a temporally ordered interaction. It identifies cross-turn escalation and coordination patterns that are invisible at the single-turn level. To capture these patterns, we analyze conversation structure through three dimensions: conversational form charac-teristics (e.g., role-play setups), evolution pat-terns (topic sensitivity progression), and attack chain completeness (whether prior turns form a progression toward harmful objectives), and adopt the multi-stage framework from ARMOR (Zhao et al., 2025c) for semantic reasoning, including in-tent extraction, strategy identification, and safety judgment. HCA produces a binary judgment Jh ∈{SAFE , UNSAFE } indicating whether the conver-sation trajectory exhibits malicious intent. Details are provided in Appendix. 
+
+3.3 Response Evaluator 
+
+The Response Evaluator (RE) assesses whether a generated response may facilitate downstream harm , even when it complies with policy. This design is motivated by the discriminator–generator gap (Ding et al., 2025b), where models identify harmful content more effectively during evaluation than during generation, making response-level assessment essential for mitigating progressive multi-turn attacks. We evaluate response safety across three dimensions: content safety , informa-tion sensitivity , and boundary compliance . RE operates after the current turn’s response has been issued and feeds its judgment into the Decision Module at the next turn (Eq. 3), rather than intercepting the current response. This post-hoc design reflects the cumulative nature of multi-turn attacks: a single partially facilitative response rarely constitutes a complete safety violation, but it signals that the conversation trajectory is shifting toward harm. By elevating the risk score at the next turn, THRD ensures timely intervention before the attack chain reaches completion, while avoiding the computational cost of generate-then-filter within each turn. RE employs conditional triggering: it activates when Ri indicates medium risk, when Ri is high but Jh = SAFE ,or during late conversation stages (details in Appendix. RE outputs a binary judgment Jr ∈{MAY_FACILITATE , WILL_NOT_FACILITATE }
+
+for the Decision Module. Details are provided in Appendix. 
+
+3.4 Decision Module 
+
+The Decision Module integrates Ri, Jh, and Jr
+
+into a time-evolving risk score , enabling responses ranging from normal generation to refusal. This formulation distinguishes isolated risk from sus-tained escalation, capturing the iterative nature of multi-turn defense. At each turn i, we convert the binary judgments from HCA and RE into numeri-cal scores: 
+
+ˆJ(i−1)  
+
+> h
+
+=
+
+(
+
+γ, if J(i−1)  
+
+> h
+
+= UNSAFE 
+
+0, if J(i−1)  
+
+> h
+
+= SAFE 
+
+(1) 
+
+ˆJ(i−1)  
+
+> r
+
+=
+
+(
+
+γ, if J(i−1)  
+
+> r
+
+= May Facilitate 
+
+0, if J(i−1)  
+
+> r
+
+= Will Not Facilitate (2) The risk score for turn i is computed as: 
+
+F (i) = Ri + Λ( Ri) · Ω( ˆJ(i−1)  
+
+> h
+
+, ˆJ(i−1)  
+
+> r
+
+) (3) where Ri is the current-turn risk score from TRA, and Λ( Ri) = 1 − Ri−14 is an attenuation function that modulates historical signal influence based on current-turn severity. The composite function Ω
+
+aggregates historical and response-level risks: 
+
+Ω( ˆJ(i−1)  
+
+> h
+
+, ˆJ(i−1)  
+
+> r
+
+) = 
+
+q
+
+α( ˆJ(i−1)  
+
+> h
+
+)2 + β( ˆJ(i−1)  
+
+> r
+
+)2
+
+(4) To capture progressive attack patterns, we apply a trend-based adjustment when risk scores ex-hibit monotonic increase across consecutive turns (F (i−2) ≤ F (i−1) ≤ F (i)), adding a penalty of +δ
+
+to the risk score. The final adjusted score F (i) 
+
+> adj
+
+is mapped to three risk levels: low (≤ τlow ), medium 
+
+(τlow < F (i) 
+
+> adj
+
+≤ τhigh ), and high (> τ high ), cor-responding to normal generation, controlled gen-eration with safety constraints, and direct refusal, respectively. Once a refusal is triggered at any turn, all subsequent turns are refused unconditionally without further evaluation. This irreversible esca-lation reflects a key property of multi-turn attacks: once the conversation trajectory has been identi-fied as malicious, subsequent turns—regardless of their surface-level content—are likely contin-uations of the same attack chain, and re-evaluating them would only provide opportunities for the at-tacker to craft evasive follow-ups. This design prioritizes security-oriented deployment settings, where preventing recovery from false negatives is considered more critical than recovering from occa-sional false positives. Detailed response strategies are provided in Appendix, with hyperparameters in Appendix and the complete decision process detailed in Algorithm (Appendix). ASR ( ↓) Utility ( ↑) Over-Ref. ( ↓)                                                                                                             
+
+> X-Teaming Tempest
+> Model Defense Harm Adv Harm Adv MMLU GSM8K XSTest No Defense 100% 98.0% 84.3% 90.0% 82.0% 92.9% 9.6%
+> PROACT 63.5% ↓36.5 67.0% ↓31.0 2.6% ↓81.7 3.1% ↓86.9 78.6% ↓3.4 79.2% ↓13.7 19.7% ↑10.1
+> Qwen2.5-7B SAGE 86.2% ↓13.8 83.6% ↓14.4 4.9% ↓79.4 2.8% ↓87.2 68.3% ↓13.7 68.9% ↓24.0 61.2% ↑51.6
+> Ours 4.0% ↓96.0 1.3% ↓96.7 2.1% ↓82.2 0.5% ↓89.5 81.7% ↓0.3 92.6% ↓0.3 12.4% ↑2.8
+> No Defense 86.7% 92.0% 84.7% 73.0% 72.4% 83.4% 16.0%
+> PROACT 47.4% ↓39.3 24.0% ↓68.0 2.4% ↓82.3 2.5% ↓70.5 71.4% ↓1.0 82.8% ↓0.6 16.8% ↑0.8
+> Llama3-8B SAGE 17.5% ↓69.2 21.2% ↓70.8 6.7% ↓78.0 3.5% ↓69.5 60.6% ↓11.8 74.2% ↓9.2 99.6% ↑83.6
+> Ours 1.6% ↓85.1 0.2% ↓91.8 0.6% ↓84.1 1.0% ↓72.0 70.9% ↓1.5 82.5% ↓0.9 18.8% ↑2.8
+
+Table 1: Defense performance on multi-turn jailbreak attacks. We evaluate on two target models against X-Teaming and Tempest, measuring ASR on HarmBench (Harm) and AdvBench (Adv), model utility via MMLU (0-shot) and GSM8K, and over-refusal rate via XSTest. Blue indicates improvement over No Defense, red indicates degradation. 
+
+4 Experiments 
+
+4.1 Experimental Setup Target Models and Infrastructure. We evaluate on two target models: Qwen2.5-7B-Instruct (Qwen et al., 2025) and Llama-3-8B-Instruct (Dubey et al., 2024), served locally via SGLang on a sin-gle NVIDIA RTX 4090 GPU. We use Qwen3-32B (Yang et al., 2025) as the attacker model and GPT-4o (OpenAI et al., 2024) as the safety judge. 
+
+Attacks. We test against two state-of-the-art multi-turn attacks: X-Teaming (Rahman et al., 2025), a multi-agent collaborative framework where GPT-4o (OpenAI et al., 2024) generates at-tack strategies following the original protocol, and Tempest (Zhou and Arel, 2025), which employs breadth-first tree search with a branch factor of 5. We also include the single-turn attack Auto-DAN (Liu et al., 2024b) to assess generalization beyond multi-turn settings. 
+
+Baselines. We compare against two inference-time defenses originally designed for single-turn settings: PROACT (Zhao et al., 2025b) and SAGE (Ding et al., 2025a). Since these methods do not explicitly model persistent cross-turn risk, we apply them independently at each conversation turn to simulate multi-turn deployment. 
+
+Evaluation. Safety is measured by Attack Suc-cess Rate (ASR 1) (Zou et al., 2023) on Harm-Bench (Mazeika et al., 2024) and 100 sampled in-
+
+> 1
+
+Since THRD generates substantive safe responses rather than template-based refusals, we use GPT-4o as the safety judge. Manual annotation on randomly sampled conversa-tions confirms high consistency with GPT-4o’s assessments. Keyword-based metrics systematically overestimate ASR in this setting; see Appendix for details. 
+
+structions from AdvBench (Zou et al., 2023). Util-ity is assessed via MMLU (Hendrycks et al., 2020) (0-shot, 11 selected domains) and GSM8K (Cobbe et al., 2021). Over-defensiveness is measured by XSTest (Röttger et al., 2024). 
+
+4.2 Main Results Defense Performance. Table 1 presents the over-all defense performance. Since no existing defense specifically targets multi-turn jailbreak attacks, we apply two single-turn inference-time defenses— PROACT and SAGE—independently at each con-versation turn to simulate multi-turn defense. A notable pattern emerges across baselines: all defenses perform reasonably well on Tempest, but diverge sharply on X-Teaming. PROACT defends well against Tempest (2.6% and 3.1% on Qwen; 2.4% and 2.5% on Llama) and maintains low over-refusal (19.7% on Qwen, 16.8% on Llama), but remains highly vulnerable to X-Teaming (63.5% and 67.0% on Qwen; 47.4% and 24.0% on Llama)— indicating that low over-refusal does not compen-sate for weak attack detection. SAGE achieves moderate ASR on X-Teaming on Llama (17.5% and 21.2%) but fails catastrophically on Qwen (86.2% and 83.6%), and incurs severe over-refusal (61.2% on Qwen, 99.6% on Llama) and substantial utility loss (MMLU drops of 13.7% and 11.8%). This divergence suggests that Tempest’s tree-search strategy produces attack patterns detectable even by per-turn analysis, while X-Teaming’s multi-agent coordination generates more sophisticated cross-turn escalation that exposes the limitations of single-turn defenses applied independently at each turn. THRD achieves consistently low ASR across Model Defense Harm Adv                 
+
+> Qwen2.5-7B No Defense 76.9% 81.0% PROACT 00SAGE 00
+> Ours 00
+> Llama3-8B No Defense 60.0% 75.0% PROACT 00SAGE 00
+> Ours 00
+
+Table 2: ASR ( ↓) against AutoDAN (single-turn attack). All three defenses achieve complete protection, con-firming that multi-turn defense mechanisms preserve single-turn robustness. 
+
+both attacks on Qwen (4.0% and 1.3% on X-Teaming; 2.1% and 0.5% on Tempest) and Llama (1.6% and 0.2% on X-Teaming; 0.6% and 1.0% on Tempest), while maintaining utility within 1.5% of the undefended baseline on both models (domain-wise results in Appendix. THRD is the only de-fense that simultaneously achieves low ASR across both attack types, preserves model utility, and main-tains acceptable over-refusal rates, demonstrating that explicit temporal risk modeling can address the trade-off between defense effectiveness and us-ability that single-turn methods struggle to balance. For over-refusal, analysis of false positives reveals that the primary source is TRA’s sensitivity to indi-vidual keywords in benign queries (e.g., kill” in kill the process”), rather than the temporal aggregation mechanism itself. We design three TRA prompt variants (Section 3.1) that shift scoring emphasis from keyword-level content to request-level struc-ture; the best-performing variant achieves 12.4% on Qwen, narrowing the gap to only 2.8 percent-age points above the undefended baseline (9.6%). On Llama, over-refusal (18.8%) leaves room for further calibration. Detailed comparison across all variants is provided in Appendix. 
+
+Single-Turn Defense Effectiveness. To verify that multi-turn defense does not compromise single-turn robustness, we further evaluate against Auto-DAN (Liu et al., 2024b), a representative single-turn attack. As shown in Table 2, THRD, SAGE, and PROACT all achieve 0% ASR on both models, confirming that the additional temporal aggregation introduced by THRD does not interfere with the tar-get model’s ability to handle single-turn adversarial inputs.              
+
+> Configuration ASR ↓
+> Full Framework (THRD) 1.59% w/o Persistent Rejection 5.15% ↑3.56
+> w/o TRA 25.37% ↑23.78
+> w/o HCA 26.07% ↑24.48
+> w/o RE 17.07% ↑15.48
+> w/o HCA & RE 33.30% ↑31.71
+
+Table 3: Ablation study on X-Teaming (Llama3-8B, HarmBench). Red: degradation compared to Full Framework. Persistent Rejection operates only after a high-risk refusal is triggered and does not affect single-turn over-refusal measurements.               
+
+> Module Qwen2.5-7B Llama3-8B
+> TRA 3.68s 3.26s HCA 9.60s 17.24s RE 1.92s 1.72s Decision ≈0s ≈0s THRD Total ≈15.2s ≈22.2s SAGE 5.37s 8.27s
+
+Table 4: Per-turn single-call latency (mean). 
+
+4.3 Ablation Study Module Ablation. Table 3 presents the contribu-tion of each component on X-Teaming (Llama3-8B, HarmBench). Removing Persistent Rejection in-creases ASR from 1.59% to 5.15%, confirming that attackers actively attempt to recover from rejected turns through evasive follow-ups. Among the three analysis modules, removing TRA or HCA causes the largest and comparable degradation (+23.78% and +24.48%), confirming that current-turn and cross-turn analysis are equally critical and non-redundant. Removing RE yields a smaller but sub-stantial degradation (+15.48%), demonstrating its complementary role in detecting response-level fa-cilitation that sustains attack trajectories even when TRA and HCA correctly identify risk. Removing both HCA and RE produces the worst performance (+31.71%), though TRA alone still reduces ASR from the undefended 86.7% to 33.30%, indicat-ing meaningful baseline protection from turn-level assessment. 
+
+4.4 Analysis Computational Overhead. Table 4 reports per-module single-call latency measured on a single RTX 4090 GPU. HCA is the dominant bottle-neck, accounting for 63.2% of total overhead on Qwen2.5-7B (9.60s / 15.2s) and 77.7% on Llama3-8B (17.24s / 22.2s), as it performs cross-turn se-History Order Qwen2.5-7B Llama3-8B                                 
+
+> Ordered 0.7% 0.8% Shuffled 1.3% 1.2%
+> Table 5: Effect of shuffling conversation history on ASR (Tempest, AdvBench). Disrupting temporal order degrades defense on both models.
+> ΛΩQwen Llama
+> Linear Decay L2 Norm 0.57% 0.85%
+> Λvariants
+> No Decay L2 Norm 0.32% 1.91% Half Decay L2 Norm 1.14% 1.96% Inverse Decay L2 Norm 0.69% 1.93%
+> Ωvariants
+> Linear Decay Weighted Sum 0.25% 1.53% Linear Decay Max 0.83% 1.15% Linear Decay Geo. Mean 0.47% 1.79%
+> Table 6: Decision formula ablation (ASR ↓). The first row is the shared configuration across both ablation groups. Evaluated on Tempest with 100 AdvBench instructions.
+
+mantic analysis over the full conversation history. The higher HCA latency on Llama3-8B likely re-sults from longer unblocked responses expanding the context. Compared to SAGE (5.37s on Qwen, 8.27s on Llama), THRD’s total latency of 15–22s is higher, but this trades controlled latency for sub-stantially stronger defense: SAGE fails catastrophi-cally on X-Teaming (Table 1) despite lower over-head. Since HCA dominates the overall latency, future optimization efforts could focus on reduc-ing its input length through context compression techniques, or merging TRA and HCA into a uni-fied module that jointly performs current-turn and historical analysis in a single inference call. 
+
+History Order Sensitivity. To verify that HCA relies on temporal ordering rather than bag-of-turns content, we shuffle the conversation history before passing it to HCA while keeping all other mod-ules unchanged. Table 5 shows the results on Tempest (AdvBench). Shuffling increases ASR on both models (Qwen: 0.7% →1.3%; Llama: 0.8% →1.2%), confirming that HCA exploits se-quential structure—the ordering of turns estab-lishes contextual momentum that progressively con-ditions the model toward compliance, and disrupt-ing this ordering weakens the accumulated condi-tioning effect. However, the shuffled configuration still maintains low absolute ASR ( ≤1.3%), indicat-ing that conversation history also contains valuable 
+
+> Figure 2: Distribution of first defense trigger turn on X-Teaming (up to 7 turns). Over 70% of attacks require Turn 2 or later to detect.
+
+content-level signals—such as recurring sensitive topics and cumulative intent—that HCA can lever-age even without temporal ordering. This validates our design choice of retaining the full conversa-tion history: temporal structure provides critical ordering cues, while the content of earlier turns contributes complementary evidence, and the com-bination of both enables THRD’s robust cross-turn defense. 
+
+Decision Formula Analysis. We ablate the at-tenuation function Λ and aggregation function Ω
+
+in the Decision Module. We denote the four Λ
+
+variants as: Linear Decay (1 − Ri−1 
+
+> Rmax −1
+
+), No De-cay (Λ = 1), Half Decay (Λ = 0.5), and In-verse Decay ( Ri−1 
+
+> Rmax −1
+
+). The four Ω variants are: 
+
+L2 Norm (
+
+q
+
+α ˆJ2 
+
+> h
+
++ β ˆJ2 
+
+> r
+
+), Weighted Sum (α ˆJh +
+
+β ˆJr), Max (max( α ˆJh, β ˆJr)), and Geometric Mean 
+
+(
+
+q
+
+ˆJh · ˆJr). All experiments are conducted on Tem-pest with 100 AdvBench instructions. Table 6 shows the results. All seven configura-tions achieve low absolute ASR ( <2%), confirming robustness to specific functional choices. However, the variants differ in cross-architecture consis-tency : most alternatives achieve low ASR on Qwen but degrade on Llama (e.g., No Decay: 0.32% vs. 1.91%; Weighted Sum: 0.25% vs. 1.53%). Linear Decay paired with L2 Norm yields the most sta-ble performance across both models (0.57% and 0.85%), with the smallest cross-architecture gap of 0.28 percentage points. 
+
+First Rejection Trigger Analysis. A natural question is whether single-turn detection suffices or multi-turn awareness is genuinely necessary. Fig-ure 2 shows the distribution of the turn at which THRD first triggers a rejection on X-Teaming (up to 7 turns). Only 18.0% (Qwen) and 29.1% (Llama) of attacks are caught at Turn 1; the majority are first detected at Turn 2 (55.8% and 61.8%), with a 1.0 1.5 2.0 2.5 3.0 3.5 4.0         
+
+> Threshold ( low ,high )
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Rate (%)  low =2.0 high =3.5
+> Threshold Sensitivity Analysis: Llama vs Qwen
+> Llama ASR ( better)
+> Llama Over-refusal ( better)
+> Qwen ASR ( better)
+> Qwen Over-refusal ( better)
+
+Figure 3: Threshold sensitivity analysis. ASR ( ↓ better) and over-refusal rate ( ↓ better) under different threshold values. τlow = 2 .0 and τhigh = 3 .5 are selected as optimal trade-off points. 
+
+non-trivial portion requiring Turn 3 or later (26.2% and 9.1%). This concentration at Turn 2 highlights that multi-turn attacks deliberately design the first turn to appear benign, deferring boundary-probing to subsequent turns—explaining why over 70% of attacks evade first-turn detection. However, nearly all attacks are detected within the first three turns, suggesting that current multi-turn attack methods exhibit relatively predictable escalation patterns. More sophisticated attacks that distribute intent more gradually across longer trajectories would pose a greater challenge, motivating continued re-search on both fronts. 
+
+Threshold and Risk Dynamics. Figure 3 shows ASR and over-refusal rate as a function of the decision threshold. ASR is defined as the pro-portion of attack conversations whose final-turn risk score falls below the threshold, while over-refusal measures the proportion of benign queries incorrectly flagged above it. Attack conversations consistently receive high risk scores: even at the lowest threshold ( τ = 1 .0), ASR remains below 3% on both models, indicating that THRD assigns elevated scores to nearly all attack trajectories. Over-refusal, however, is highly sensitive to the threshold—dropping sharply from near 100% at 
+
+τ = 1 .0 to below 20% at τ = 2 .0 on both models. This confirms that the primary challenge lies not in detecting attacks but in avoiding false positives on benign inputs, and motivates our selection of 
+
+τlow = 2 .0 and τhigh = 3 .5 as the operating points that balance these two objectives. Figure 4 further illustrates how risk scores evolve across conversation turns. At Turn 1, scores are distributed across all levels—49.3% in the 2.0–3.0 range and 36.8% in 3.0–4.0—reflecting the am-
+
+Figure 4: Distribution of risk levels across conversation turns. High-risk conversations increase significantly after Turn 1. 
+
+biguity of initial turns designed to appear benign. From Turn 2 onward, scores rapidly concentrate in the 4.0+ range (69.4% →84.8% →91.9%), demon-strating that THRD’s temporal scoring mechanism effectively captures attack escalation once cross-turn patterns emerge. Additional visualizations are provided in Appendix. 
+
+5 Conclusion 
+
+We present THRD, a training-free framework for defending against multi-turn jailbreak attacks. THRD combines turn-level risk assessment, his-torical context analysis, response evaluation, and lightweight cross-turn risk aggregation within a unified inference-time framework. By incorporat-ing both current-turn and historical signals, THRD effectively detects progressive attack patterns that are inherently difficult to identify through isolated single-turn analysis. Experiments against state-of-the-art multi-turn attacks—including tree-search-based and multi-agent collaborative methods— across multiple target models show that THRD achieves consistently low attack success rates while largely preserving model utility. Ablation studies further confirm that each module provides non-redundant contributions, and that the decision for-mula generalizes stably across model architectures. Further analysis reveals that over 70% of multi-turn attacks evade first-turn detection, underscoring the practical necessity of incorporating cross-turn tem-poral information in jailbreak defense. Future work may explore context compression and module uni-fication to reduce computational overhead, as well as adaptive or lightweight learned components to further improve the balance between defense effec-tiveness and over-refusal. Limitations 
+
+THRD adopts a modular inference-time design that explicitly models conversational risk accumula-tion without additional training. While empirically robust against current attacks, several limitations remain. The TRA, HCA, and RE modules rely on prompt-based semantic judgments, making the framework partially dependent on the underlying evaluator model’s reasoning ability. Future attacks specifically optimized against THRD’s prompting patterns or scoring dynamics may reduce effec-tiveness. Relatedly, the current implementation models temporal dynamics through lightweight score aggregation rather than sequential learning, which may limit effectiveness against attacks dis-tributing intent across substantially longer trajecto-ries. The persistent rejection mechanism intention-ally prioritizes security-critical settings but may be overly conservative for general-purpose systems; reversible or uncertainty-aware recovery mecha-nisms could better balance security and interaction continuity. Finally, multi-module analysis over con-versation history introduces inference overhead, with HCA as the primary bottleneck. Context com-pression, incremental history updating, or module unification may help address this in future work. 
+
+Ethical Considerations 
+
+Our research is committed to enhancing the safety of LLMs by addressing vulnerabilities to multi-turn jailbreak attacks through a training-free de-fense framework. We emphasize that our work is grounded in ethical considerations, aiming to miti-gate the generation of harmful content rather than introducing new risks. All jailbreak attack methods and datasets used in our experiments are derived from publicly available sources (X-Teaming, Tem-pest, AutoDAN, HarmBench, and AdvBench), en-suring transparency and avoiding the introduction of new attack vectors. Our findings demonstrate that our proposed framework significantly reduces attack success rates across different models and at-tack strategies, thereby promoting the responsible deployment of LLMs. We acknowledge that the development of any defense mechanism may in-spire adversarial adaptations; however, our primary focus remains on safeguarding LLMs from existing and emerging multi-turn threats. We believe that our work contributes to the development of more robust and trustworthy AI systems. By sharing our methodologies and findings, we aim to support the broader research community in building safer LLM applications. 
+
+References              
+
+> Anthropic. 2025. Introducing claude 4. Accessed: De-cember 2025. Patrick Chao, Alexander Robey, Edgar Dobriban, Hamed Hassani, George J Pappas, and Eric Wong. 2025. Jailbreaking black box large language models in twenty queries. In 2025 IEEE Conference on Se-cure and Trustworthy Machine Learning (SaTML) ,pages 23–42. IEEE. Paul F Christiano, Jan Leike, Tom Brown, Miljan Mar-tic, Shane Legg, and Dario Amodei. 2017. Deep reinforcement learning from human preferences. Ad-vances in neural information processing systems , 30. Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz Kaiser, Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, and 1 others. 2021. Training verifiers to solve math word problems. arXiv preprint arXiv:2110.14168 .Peng Ding, Jun Kuang, ZongYu Wang, Xuezhi Cao, Xunliang Cai, Jiajun Chen, and Shujian Huang. 2025a. Why not act on what you know? unleashing safety potential of LLMs via self-aware guard en-hancement. In Findings of the Association for Com-putational Linguistics: ACL 2025 , pages 6279–6299, Vienna, Austria. Association for Computational Lin-guistics. Peng Ding, Wen Sun, Dailin Li, Wei Zou, Jiaming Wang, Jiajun Chen, and Shujian Huang. 2025b. SDGO: Self-discrimination-guided optimization for consis-tent safety in large language models. In Proceed-ings of the 2025 Conference on Empirical Methods in Natural Language Processing , pages 5023–5037, Suzhou, China. Association for Computational Lin-guistics. Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten, Amy Yang, Angela Fan, and 1 others. 2024. The llama 3 herd of models.
+> arXiv e-prints , pages arXiv–2407. Dan Hendrycks, Collin Burns, Steven Basart, Andy Zou, Mantas Mazeika, Dawn Song, and Jacob Steinhardt. 2020. Measuring massive multitask language under-standing. arXiv preprint arXiv:2009.03300 .Jiaming Hu, Haoyu Wang, Debarghya Mukherjee, and Ioannis Ch Paschalidis. 2025. Ccfc: Core & core-full-core dual-track defense for llm jailbreak protection.
+> arXiv preprint arXiv:2508.14128 .Weisen Jiang and Sinno Jialin Pan. 2025. Metadefense: Defending fine-tuning based jailbreak attack before and during generation. In The Thirty-ninth Annual
+
+Conference on Neural Information Processing Sys-tems .Tomasz Korbak, Kejian Shi, Angelica Chen, Rasika Vinayak Bhalerao, Christopher Buck-ley, Jason Phang, Samuel R Bowman, and Ethan Perez. 2023. Pretraining language models with human preferences. In International Conference on Machine Learning , pages 17506–17533. PMLR. Yong Lin, Hangyu Lin, Wei Xiong, Shizhe Diao, Jian-meng Liu, Jipeng Zhang, Rui Pan, Haoxiang Wang, Wenbin Hu, Hanning Zhang, Hanze Dong, Renjie Pi, Han Zhao, Nan Jiang, Heng Ji, Yuan Yao, and Tong Zhang. 2024. Mitigating the alignment tax of RLHF. In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing ,pages 580–606, Miami, Florida, USA. Association for Computational Linguistics. Xiaogeng Liu, Nan Xu, Muhao Chen, and Chaowei Xiao. 2024a. Autodan: Generating stealthy jailbreak prompts on aligned large language models. In In-ternational Conference on Representation Learning ,volume 2024, pages 56174–56194. Xiaogeng Liu, Nan Xu, Muhao Chen, and Chaowei Xiao. 2024b. AutoDAN: Generating stealthy jail-break prompts on aligned large language models. In 
+
+The Twelfth International Conference on Learning Representations .Yi Liu, Gelei Deng, Zhengzi Xu, Yuekang Li, Yaowen Zheng, Ying Zhang, Lida Zhao, Tianwei Zhang, Kai-long Wang, and Yang Liu. 2023. Jailbreaking chatgpt via prompt engineering: An empirical study. arXiv preprint arXiv:2305.13860 .Mantas Mazeika, Long Phan, Xuwang Yin, Andy Zou, Zifan Wang, Norman Mu, Elham Sakhaee, Nathaniel Li, Steven Basart, Bo Li, David Forsyth, and Dan Hendrycks. 2024. Harmbench: A standardized eval-uation framework for automated red teaming and ro-bust refusal. In Forty-first International Conference on Machine Learning .OpenAI. 2025. Introducing gpt-5. Accessed: December 2025. OpenAI, Josh Achiam, Steven Adler, Sandhini Agarwal, Lama Ahmad, Ilge Akkaya, Florencia Leoni Ale-man, Diogo Almeida, Janko Altenschmidt, Sam Alt-man, Shyamal Anadkat, Red Avila, Igor Babuschkin, Suchir Balaji, Valerie Balcom, Paul Baltescu, Haim-ing Bao, Mohammad Bavarian, Jeff Belgum, and 262 others. 2024. Gpt-4 technical report. Preprint ,arXiv:2303.08774. Long Ouyang, Jeffrey Wu, Xu Jiang, Diogo Almeida, Carroll Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, John Schulman, Jacob Hilton, Fraser Kelton, Luke Miller, Maddie Simens, Amanda Askell, Peter Welinder, Paul F Christiano, Jan Leike, and Ryan Lowe. 2022a. Training language models to follow instructions with human feedback. In Advances in Neural Information Processing Systems , volume 35, pages 27730–27744. Curran Associates, Inc. Long Ouyang, Jeffrey Wu, Xu Jiang, Diogo Almeida, Carroll Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, and 1 others. 2022b. Training language models to follow in-structions with human feedback. Advances in neural information processing systems , 35:27730–27744. Qwen, :, An Yang, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chengyuan Li, Dayiheng Liu, Fei Huang, Haoran Wei, Huan Lin, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang, Jiaxi Yang, Jingren Zhou, and 25 oth-ers. 2025. Qwen2.5 technical report. Preprint ,arXiv:2412.15115. Salman Rahman, Liwei Jiang, James Shiffer, Genglin Liu, Sheriff Issaka, Md Rizwan Parvez, Hamid Palangi, Kai-Wei Chang, Yejin Choi, and Saadia Gabriel. 2025. X-teaming: Multi-turn jailbreaks and defenses with adaptive multi-agents. In Second Con-ference on Language Modeling .Qibing Ren, Hao Li, Dongrui Liu, Zhanxu Xie, Xiaoya Lu, Yu Qiao, Lei Sha, Junchi Yan, Lizhuang Ma, and Jing Shao. 2024. Derail yourself: Multi-turn llm jailbreak attack through self-discovered clues. Paul Röttger, Hannah Kirk, Bertie Vidgen, Giuseppe Attanasio, Federico Bianchi, and Dirk Hovy. 2024. Xstest: A test suite for identifying exaggerated safety behaviours in large language models. In Proceed-ings of the 2024 Conference of the North American Chapter of the Association for Computational Lin-guistics: Human Language Technologies (Volume 1: Long Papers) , pages 5377–5400. Mark Russinovich, Ahmed Salem, and Ronen Eldan. 2025. Great, now write an article about that: The crescendo multi-turn llm jailbreak attack. In 34th USENIX Security Symposium (USENIX Security 25) ,pages 2421–2440. Xinyue Shen, Zeyuan Chen, Michael Backes, Yun Shen, and Yang Zhang. 2024. " do anything now": Charac-terizing and evaluating in-the-wild jailbreak prompts on large language models. In Proceedings of the 2024 on ACM SIGSAC Conference on Computer and Communications Security , pages 1671–1685. Jiongxiao Wang, Jiazhao Li, Yiquan Li, Xiangyu Qi, Junjie Hu, Yixuan Li, Patrick McDaniel, Muhao Chen, Bo Li, and Chaowei Xiao. 2024. Back-dooralign: Mitigating fine-tuning based jailbreak at-tack with backdoor enhanced safety alignment. In 
+
+Advances in Neural Information Processing Systems ,volume 37, pages 5210–5243. Curran Associates, Inc. An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, and 1 others. 2025. Qwen3 technical report. arXiv preprint arXiv:2505.09388 .Zonghao Ying, Deyue Zhang, Zonglei Jing, Yisong Xiao, Quanchen Zou, Aishan Liu, Siyuan Liang, Xi-angzheng Zhang, Xianglong Liu, and Dacheng Tao. 2025. Reasoning-augmented conversation for multi-turn jailbreak attacks on large language models. In 
+
+Findings of the Association for Computational Lin-guistics: EMNLP 2025 , pages 17138–17157, Suzhou, China. Association for Computational Linguistics. Jiahao Yu, Xingwei Lin, Zheng Yu, and Xinyu Xing. 2023. Gptfuzzer: Red teaming large language mod-els with auto-generated jailbreak prompts. arXiv preprint arXiv:2309.10253 .Yuexiang Zhai, Shengbang Tong, Xiao Li, Mu Cai, Qing Qu, Yong Jae Lee, and Yi Ma. 2023. Investigating the catastrophic forgetting in multimodal large language model fine-tuning. In Conference on Parsimony and Learning (Proceedings Track) .Qinjian Zhao, Jiaqi Wang, Zhiqiang Gao, Zhihao Dou, Belal Abuhaija, and Kaizhu Huang. 2025a. Safebe-havior: Simulating human-like multistage reasoning to mitigate jailbreak attacks in large language models. 
+
+arXiv preprint arXiv:2509.26345 .Weiliang Zhao, Jinjun Peng, Daniel Ben-Levi, Zhou Yu, and Junfeng Yang. 2025b. Proactive defense against llm jailbreak. arXiv preprint arXiv:2510.05052 .Zhengyue Zhao, Yingzi Ma, Somesh Jha, Marco Pavone, Patrick McDaniel, and Chaowei Xiao. 2025c. Armor: Aligning secure and safe large language models via meticulous reasoning. Preprint , arXiv:2507.11500. Andy Zhou and Ron Arel. 2025. TEMPEST: Multi-turn jailbreaking of large language models with tree search. In ICLR 2025 Workshop on Building Trust in Language Models and Applications .Andy Zou, Zifan Wang, Nicholas Carlini, Milad Nasr, J Zico Kolter, and Matt Fredrikson. 2023. Univer-sal and transferable adversarial attacks on aligned language models. arXiv preprint arXiv:2307.15043 .
