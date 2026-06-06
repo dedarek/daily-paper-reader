@@ -1,0 +1,676 @@
+Title: CSULoRA: Closest Safe Update Low-Rank Adaptation
+
+URL Source: https://arxiv.org/pdf/2605.30640v1
+
+Published Time: Mon, 01 Jun 2026 00:19:14 GMT
+
+Number of Pages: 10
+
+Markdown Content:
+# CSULoRA: Closest Safe Update Low-Rank Adaptation 
+
+Oleksandr Marchenko Breneur Adelaide Danilov Aria Nourbakhsh Salima Lamsiyah 
+
+Department of Computer Science, University of Luxembourg Esch-sur-Alzette, Luxembourg Correspondence to: oleksandr.marchenko.002@student.uni.lu 
+
+Abstract 
+
+Low-rank adaptation has become a standard method for parameter-efficient fine-tuning of large language models, but even small amounts of unsafe or adversarial fine-tuning data can substantially weaken the safety behavior of aligned models. Existing safety-preserving LoRA methods often rely on hard interven-tions such as projection, pruning, threshold-ing, or additional training objectives. While these methods can suppress unsafe update di-rections, they may also remove task-relevant information or require extra tuning. We intro-duce CSULoRA, a post-hoc method for cor-recting trained LoRA adapters through closest safe update estimation. CSULoRA estimates a safety-aligned subspace from the weight dis-placement between a safety-aligned model and its corresponding base checkpoint. It then de-composes each LoRA update into fully aligned, partially aligned, and off-subspace components. Instead of discarding components outside the estimated safety subspace, CSULoRA solves a closed-form penalized minimum-change prob-lem that preserves the fully aligned component while smoothly attenuating potentially unsafe directions according to their relative energy. In adversarial fine-tuning experiments, CSU-LoRA substantially reduces attack success rate while preserving most of the utility gains ob-tained from standard LoRA fine-tuning 1.
+
+1 Introduction 
+
+Low-rank adaptation (LoRA) is widely used for parameter-efficient fine-tuning because it adapts large language models through small trainable low-rank updates while keeping the base model frozen (Hu et al., 2022). However, recent work shows that fine-tuning aligned models can weaken safety behavior and increase compliance with harm-ful prompts, even when the fine-tuning data is 
+
+> 1https://github.com/Oleksandr-MB/NLPAICS2026_ CSULoRA
+
+small or not explicitly intended to be adversar-ial (Yang et al., 2023; Qi et al., 2024; Bianchi et al., 2024). This motivates post-hoc methods that modify trained LoRA adapters to reduce safety degradation without retraining the full model. Existing safety-preserving LoRA and post-hoc safety restoration methods include projection-based correction (Hsu et al., 2024), pruning-based correction (Ao et al., 2025), safety-module-based adaptation (Li et al., 2025), Fisher- or geometry-guided regularization (Das et al., 2025), task-arithmetic restoration (Bhardwaj et al., 2024), and layer-wise merging (Djuhera et al., 2025) or delta correction (Lu et al., 2025) approaches. While effective in some settings, these methods may dis-card task-relevant information or require additional training, pruning decisions, thresholding, regular-ization objectives, or external safety-vector con-struction. We introduce CSULoRA, a post-hoc closest safe update method for LoRA adapters. CSULoRA de-composes each trained adapter update into compo-nents that differ in their overlap with an estimated safety-aligned subspace. Instead of removing the off-subspace component, it solves a penalized minimum-change optimization problem that pre-serves the fully aligned component exactly while smoothly attenuating less alignment-consistent di-rections. CSULoRA requires no retraining, no ad-ditional trainable parameters, and no validation-based threshold selection. Given a trained LoRA adapter and a base/aligned model pair, it determin-istically computes a corrected adapter in closed form. Our experiments study adversarial fine-tuning, where benign constrained instruction-following data is mixed with a small fraction of unsafe exam-ples. Compared with standard LoRA and safety-preserving baselines, CSULoRA substantially low-ers attack success rate while preserving most of the utility improvement from LoRA fine-tuning and                 
+
+> arXiv:2605.30640v1 [cs.LG] 28 May 2026 Figure 1: Overview of CSULoRA. Given an aligned model and its corresponding base checkpoint, CSULoRA first estimates an alignment displacement V=Waligned −Wbase . For each trained LoRA update ∆W=BA , it constructs left and right alignment-aware projectors from V, decomposes ∆Winto fully aligned, partially aligned, and non-aligned components, and solves an optimization problem that preserves the fully aligned component while softly penalizing energy in the remaining blocks. The corrected update ∆W⋆is then refactored back into LoRA matrices B⋆A⋆, preserving the original adapter structure.
+
+maintaining general capability. 
+
+2 Related Work 
+
+Parameter-efficient adaptation of language mod-els. Parameter-efficient fine-tuning has become a standard strategy for adapting large language models without updating all model parameters. Early adapter-based methods insert small trainable modules into frozen pretrained networks, reducing task-specific parameter cost while preserving most of the benefits of full fine-tuning (Houlsby et al., 2019). LoRA further simplifies this paradigm by injecting low-rank trainable matrices into existing weight layers, keeping the backbone frozen and adding no inference-time architectural depth (Hu et al., 2022). Because LoRA offers a favorable trade-off between adaptation quality and computa-tional cost, it has become a widely used mechanism for customizing instruction-tuned LLMs. However, the same flexibility also creates a safety risk: small low-rank updates can substantially alter model be-havior, including the refusal and safety patterns learned during alignment. 
+
+Safety degradation under fine-tuning. Recent work has shown that the safety behavior of aligned LLMs is fragile under downstream fine-tuning. Shadow Alignment demonstrates that a small num-ber of malicious examples can subvert safety-aligned models while largely preserving their gen-eral helpfulness (Yang et al., 2023). Similarly, fine-tuning aligned language models on adversar-ial or even benign user datasets can weaken safety guardrails and increase harmful compliance (Qi et al., 2024). These findings motivate methods that protect alignment during or after adaptation, es-pecially in settings where users fine-tune open or API-accessible models. Our work follows this line of research but focuses specifically on post-hoc correction of trained LoRA adapters, where the ob-jective is to recover safety without retraining the full model or discarding the utility gained through adaptation. 
+
+Safety-preserving LoRA adaptation. Several recent methods modify LoRA training or post-processing to reduce safety degradation. SafeLoRA projects selected LoRA weights onto a safety-aligned subspace estimated from the difference be-tween base and aligned checkpoints (Hsu et al., 2024). This makes it closely related to CSULoRA, since both use the base–aligned displacement as a proxy for alignment-relevant directions. However, SafeLoRA applies a hard projection, whereas CSU-LoRA decomposes each update into alignment-overlap blocks and applies a closed-form soft atten-uation rule. SPLoRA instead identifies and prunes LoRA layers that are likely to harm safety align-ment using a distance-guided criterion (Ao et al., 2025). SaLoRA introduces a fixed safety module and task-specific initialization to preserve safety during adaptation (Li et al., 2025). AlignGuard-LoRA formulates safety-preserving fine-tuning as a regularized adaptation problem that constrains alignment drift during training (Das et al., 2025). These methods show that LoRA updates contain safety-relevant structure, but they often rely on hard projection, pruning, additional safety modules, reg-ularization losses, or method-specific hyperparam-eters. In contrast, CSULoRA is a deterministic post-hoc adapter surgery method: it requires no ad-ditional training and preserves the original LoRA rank and adapter structure. 
+
+Post-hoc safety restoration and update-space correction. A complementary line of work re-stores safety after fine-tuning by modifying model deltas or merging model weights. RESTA uses task arithmetic to add a safety vector back into a compromised model (Bhardwaj et al., 2024). SafeDelta estimates safety degradation in the fine-tuning delta and applies safety-aware post-training correction to preserve utility while limiting safety loss (Lu et al., 2025). SafeMERGE selectively merges layers from fine-tuned and safety-aligned models based on layer-wise deviation from safe behavior (Djuhera et al., 2025). These methods demonstrate the effectiveness of post-hoc correc-tion, but they typically operate at the model-delta or layer-merging level. CSULoRA differs by operat-ing directly on trained LoRA adapter matrices and by deriving a minimum-change closed-form update that attenuates less alignment-consistent compo-nents rather than replacing or merging full layers. 
+
+Projection and subspace methods for preserv-ing model behavior. CSULoRA is also related to geometric approaches that constrain update directions in parameter space. OPLoRA uses double-sided orthogonal projections to prevent catastrophic forgetting by restricting LoRA up-dates away from dominant singular directions of the frozen weights (Xiong and Xie, 2025). CSU-LoRA adopts a related double-sided projection per-spective, but with a different goal and subspace def-inition: instead of protecting pretrained knowledge from forgetting, it estimates alignment-relevant in-put and output subspaces from the base–aligned displacement and softly penalizes LoRA compo-nents outside these subspaces. This makes CSU-LoRA a safety-oriented extension of projection-based adapter correction, positioned between hard projection methods and broader post-hoc safety restoration techniques. 
+
+3 Proposed Approach 
+
+We propose CSULoRA, a post-hoc modification method for trained LoRA adapters that performs safety-oriented adapter surgery without additional training. Given a LoRA adapter trained on top of a safety-aligned model, CSULoRA rewrites each layer-wise update by solving a minimum-change optimization problem. In contrast to hard projec-tion methods, which may discard the entire off-subspace component of an update, CSULoRA pre-serves the component lying fully inside an esti-mated safety-aligned subspace and softly attenu-ates the remaining components according to their relative energy (Figure 1). Let the original LoRA update for layer i be 
+
+∆W i 
+
+> 0
+
+= BiAi,
+
+where Ai ∈ Rr×din and Bi ∈ Rdout ×r. To esti-mate safety-aligned directions for this layer, we use the weight displacement between a safety-aligned checkpoint and its corresponding pre-alignment base checkpoint: 
+
+V i = W i 
+
+> aligned
+
+− W i
+
+> base
+
+.
+
+Here, Waligned denotes the safety-aligned instruction-tuned checkpoint (Rafailov et al., 2023; Ouyang et al., 2022), while Wbase denotes the corresponding pre-alignment base model checkpoint. The LoRA adapter itself is applied on top of Waligned ; the base checkpoint is used only to estimate the alignment-induced displacement 
+
+V i. Following projection-based safety-preserving LoRA methods (Hsu et al., 2024; Ao et al., 2025), we treat the dominant subspaces of V i as practical proxies for alignment-relevant directions. Because a weight matrix maps from an input space to an output space, we estimate alignment-relevant subspaces on both sides of the update. This follows the double-sided projection perspective of OPLoRA, where left and right projectors are used to control how LoRA updates interact with the sin-gular structure of a weight matrix (Xiong and Xie, 2025). In CSULoRA, however, the projectors are constructed from the alignment delta V i. The dom-inant column space of V i defines an output-space basis U iL, while the dominant row space of V i de-fines an input-space basis U iR. These bases induce the orthogonal projectors 
+
+P iL = U iL(U iL)⊤, P iR = U iR(U iR)⊤.
+
+To reduce computational cost, we approximate these dominant subspaces using a randomized low-rank range finder with power iterations (Halko et al., 2011; Tropp and Webber, 2023). The effective rank is chosen adaptively by retaining enough singular-value energy to explain 95% of the alignment-displacement energy. Given the projectors P iL and P iR, we decompose the original LoRA update ∆W i 
+
+> 0
+
+into four projection blocks: 
+
+∆W iLR = P iL∆W i
+
+> 0
+
+P iR,
+
+∆W iL ¯R = P iL∆W i 
+
+> 0
+
+− ∆W iLR ,
+
+∆W i 
+
+> ¯LR
+
+= ∆ W i
+
+> 0
+
+P iR − ∆W iLR ,
+
+∆W i  
+
+> ¯L¯R
+
+= ∆ W i 
+
+> 0
+
+− P iL∆W i 
+
+> 0
+
+− ∆W i
+
+> 0
+
+P iR + ∆ W iLR .
+
+The block ∆W iLR lies in both the aligned input and output subspaces, and is therefore treated as the most alignment-consistent component. The mixed blocks ∆W iL ¯R and ∆W i 
+
+> ¯LR
+
+lie in only one of the two aligned subspaces, while ∆W i  
+
+> ¯L¯R
+
+lies outside both. For clarity define a set of all block names: 
+
+B = {LR, L ¯R, ¯LR, ¯L ¯R}
+
+The core of CSULoRA is a penalized optimiza-tion problem. We look for an optimal update ∆W i⋆
+
+that remains close to the original LoRA update while penalizing energy in the partially aligned and non-aligned blocks: 
+
+∆W i⋆ = arg min 
+
+> ∆W
+
+12 ∆W − ∆W i
+
+> 0
+> 2
+> F
+
++ 12
+
+X
+
+> b∈B\{ LR }
+
+λb ∥Πb(∆ W )∥2 
+
+> F
+
+,
+
+where Πb(·) denotes the projection onto block b.The fully aligned block is left unpenalized. Since the four blocks are induced by orthogonal projec-tors, the objective decomposes blockwise and ad-mits the closed-form solution (See the derivation in the Appendix A) 
+
+∆W i⋆ = ∆ W iLR + X
+
+> b∈B\{ LR }
+
+γb∆W ib
+
+with γb = (1 + λb)−1.
+
+To avoid relying on tunable hyperparameters, we compute the penalty terms adaptively as the ratio of relative Frobenius energies of the projection blocks: i.e., for each block define 
+
+Eb = ∥∆W ib ∥2 
+
+> F
+
+,
+
+We define the “reference” energy 
+
+Eref = ELR + β X
+
+> b∈B
+
+Eb,
+
+where β > 0 is a small numerical constant (in our case we use β = 0 .05 ), that prevents overly aggres-sive shrinkage when the fully aligned component is small by smoothing it. Then for each non-fully-aligned block b ∈ B \ { LR }, we compute the penalty term λb as: 
+
+λb = Eb
+
+Eref 
+
+.
+
+The reference energy Eref uses the fully aligned block energy ELR as the natural scale for alignment-consistent update magnitude. The smoothing term β P 
+
+> b∈B
+
+Eb prevents the denom-inator from becoming too small when ELR is close to zero. This choice makes the penalties scale-invariant: if all LoRA update blocks are multiplied by a constant, then both Eb and Eref 
+
+scale quadratically, leaving λb = Eb/E ref un-changed. Consequently, CSULoRA attenuates non-fully-aligned components according to their rela-tive energy within a layer, rather than according to the absolute magnitude of the layer update. Blocks whose energy is small relative to the aligned compo-nent are mostly preserved, while blocks that domi-nate the update receive stronger shrinkage. Finally, the corrected update must be written in the same rank-r LoRA form as the original adapter. We therefore approximate ∆W i⋆ by a product BA 
+
+with the original LoRA dimensions: 
+
+(Bi⋆, A i⋆) = arg min  
+
+> B,A
+
+BA − ∆W i⋆ 
+
+> 2
+> F
+
+, with 
+
+B ∈ Rdout ×r, A ∈ Rr×din .
+
+By the Eckart-Young theorem, the closest rank-r
+
+approximation to ∆W i⋆ in Frobenius norm is ob-tained by the truncated SVD (Eckart and Young, 1936): 
+
+∆W i⋆ ≈ UrΣrV ⊤ 
+
+> r
+
+.
+
+The reconstruction error of the SVD approximation is then the sum of singular values σj of ∆W i⋆:
+
+∆W i⋆ − UrΣrV ⊤ 
+
+> r
+> 2
+> F
+
+= X
+
+> j>r
+
+σ2 
+
+> j
+
+,
+
+which is exactly the cost of preserving the original LoRA rank. We then split the rank-r approximation into LoRA factors: 
+
+Bi⋆ = UrΣ1/2 
+
+> r
+
+, Ai⋆ = Σ 1/2 
+
+> r
+
+V ⊤ 
+
+> r
+
+.
+
+The original LoRA matrices Ai and Bi are replaced by Ai⋆ and Bi⋆, preserving the adapter rank and structure. 
+
+4 Experimental Setup 
+
+Utility training and scoring. Prior safety-preserving LoRA work often evaluates utility on general instruction-following or summarization tasks such as Alpaca-style response generation and DialogSum (Hsu et al., 2024; Ao et al., 2025). In preliminary experiments, these benchmarks were not sufficiently sensitive to the type of adaptation studied here: base and fine-tuned models obtained similar BERTScore values (Zhang et al., 2020), making it difficult to objectively assess the utility improvement. We therefore evaluate utility with IFEval (Zhou et al., 2023), which directly measures constrained instruction following. We fine-tune the models on constrained instruction-following data derived from the IF_multi_constraints_upto5 dataset. To construct this dataset, we prompt Gemma-4-31B-it to gener-ate responses, score them with the official IFBench grader (Pyatkin et al., 2025), and retain only high-quality examples with strict prompt accuracy ≥ 0.8
+
+and loose prompt accuracy = 1 .02.
+
+Adversarial fine-tuning setup. Although benign fine-tuning alone can degrade safety (Qi et al., 2024), we found this effect inconsistent across datasets and hyperparameters. We therefore use a controlled adversarial setting by injecting unsafe prompt-response pairs from BeaverTails (Ji et al., 2023) into the supervised fine-tuning data. The final training mixture contains 20 ,000 examples: 
+
+19 ,000 benign constrained instruction-following samples and 1,000 unsafe samples, corresponding to a 95:5 mixture ratio. 
+
+Evaluation. We evaluate utility, safety, and gen-eral capability. Utility is measured with IFE-val (Zhou et al., 2023). Safety is measured on AdvBench (Zou et al., 2023). We estimate at-tack success rate (ASR) using a regex-based re-fusal detector covering common refusal patterns (See Appendix B). General capability is measured 
+
+> 2https://huggingface.co/datasets/UniLu/IF_ multi_constraints_upto5_SFT
+
+with ARC-Challenge (Clark et al., 2018), used as a proxy benchmark for general knowledge preserva-tion. 
+
+Hyperparameters. For both studied models, we train for 3 epochs with maximum sequence length 
+
+2048 , batch size 1, gradient accumulation over 16 
+
+steps, learning rate 5 × 10 −5, weight decay 0.01 ,maximum gradient norm 1.0, and random seed 42 .Gradient checkpointing is enabled. We use LoRA rank r = 16 , scaling factor α = 32 , dropout 0.05 ,and apply LoRA to q_proj , k_proj , v_proj , and 
+
+o_proj .For the other methods we kept the default hyper-parameters: τ = 0 .5 for SafeLoRA 3, K = 10 for SPLoRA top-layer selection, safety scale γ = 0 .5
+
+for RESTA, and 64 safety samples with safety rank 
+
+32 for SaLoRA. For AlignGuard-LoRA, we use the paper-reported recommended settings: λA = 0 .25 ,
+
+λT = 0 .5, collision regularization λN C = 0 .1, and collision blend α = 0 .5
+
+5 Experimental Results 
+
+Table 1 reports utility, capability, safety, and safety-adjusted utility for the evaluated methods. On Llama-3.2-3B-Instruct, standard LoRA substan-tially improves constrained instruction-following utility, increasing average IFEval performance from 73 .57% to 82 .96% . However, this utility gain comes with a large safety cost: ASR increases from 
+
+2.69% for the base model to 60 .58% after adver-sarial LoRA fine-tuning. The safety-preserving baselines show mixed trade-offs. SafeLoRA and SPLoRA retain much of the utility improvement of standard LoRA, but their ASR remains high at 62 .12% and 52 .31% , respec-tively. SaLoRA reduces ASR more substantially to 
+
+40 .58% , but still remains far above the base model. AlignGuard preserves utility but performs poorly on safety in this setting, reaching 71 .54% ASR. RESTA achieves low ASR, 5.19% , but does so at the cost of a large utility drop, reducing average IFEval utility to 66 .47% .CSULoRA achieves the strongest overall safety-utility trade-off on Llama-3.2-3B-Instruct. Com-pared with standard LoRA, it reduces ASR from                                                                                                                                                                                      
+
+> 3For SafeLoRA, we use τ= 0 .5, which is the default threshold in the released implementation. We also inspected
+> τ= 0 .35 , a value reported in some SafeLoRA configura-tions, but in our setting it projected only a very small number of blocks, and produced negligible differences compared to baseline LoRA. Model Method IFEval Utility ↑Avg. Util. ↑Capability ↑ASR ↓∆Utility ↑∆Safety ↑SUT ↑
+> P-S I-S P-L I-L
+> Llama-3.2-3B-Instruct Base model 66.54 75.54 72.09 80.10 73.57 72.01 2.69 -9.39 0.00 71.59 LoRA 79.30 85.13 80.96 86.45 82.96 73.38 60.58 0.00 -57.89 32.70 SafeLoRA 76.52 83.57 78.56 84.89 80.89 73.38 62.12 -2.07 -59.43 30.64 SPLoRA 76.71 83.09 79.67 85.37 81.21 73.29 52.31 -1.75 -49.62 38.73 SaLoRA 77.63 83.81 79.30 85.61 81.59 72.35 40.58 -1.37 -37.89 48.48 AlignGuard 77.26 84.05 79.67 86.09 81.77 72.78 71.54 -1.19 -68.85 23.27 RESTA 60.26 71.22 62.11 72.30 66.47 71.16 5.19 -16.49 -2.50 63.02 CSULoRA (ours) 74.12 81.53 77.08 84.05 79.20 73.29 1.73 -3.76 0.96 77.83
+> Gemma-3-4B-it Base model 69.69 78.90 74.68 82.73 76.50 77.13 2.50 -7.92 0.00 74.59 LoRA 80.41 86.57 82.44 88.25 84.42 76.11 48.85 0.00 -46.35 43.18 SafeLoRA 80.96 86.69 83.73 88.85 85.06 77.13 4.04 0.64 -1.54 81.62 SPLoRA 84.10 88.49 85.03 89.45 86.77 76.28 50.19 2.35 -47.69 43.22 SaLoRA 81.52 86.93 83.18 88.37 85.00 75.85 54.62 0.58 -52.12 38.57 AlignGuard 80.96 86.57 82.26 87.77 84.39 75.77 49.23 -0.03 -46.73 42.84 RESTA 57.30 67.99 59.33 69.66 63.57 68.26 6.54 -20.85 -4.04 59.42 CSULoRA (ours) 81.89 87.41 84.47 89.33 85.78 77.30 1.35 1.36 1.15 84.62
+
+Table 1: Utility, capability, safety, and SUT results. IFEval utility is reported using the standard four-way breakdown: prompt-level strict accuracy (P-S), instruction-level strict accuracy (I-S), prompt-level loose accuracy (P-L), and instruction-level loose accuracy (I-L). Avg. Util. is the mean of P-S, I-S, P-L, and I-L. All values are percentages. 
+
+∆Utility is computed as AvgUtil Method − AvgUtil LoRA within each base model group. ∆Safety is computed as ASR Base − ASR Method within each base model group, so positive values indicate lower ASR than the corresponding base model. Safety-utility trade-off (SUT) is computed as SUT = AvgUtil × (1 − ASR /100) .
+
+60 .58% to 1.73% , while retaining an average IFE-val utility of 79 .20% . This corresponds to a util-ity drop of only 3.76 points relative to standard LoRA, while improving safety beyond even the base model. CSULoRA also preserves general capability, achieving 73 .29% on ARC-Challenge, comparable to standard LoRA and higher than the base model. As a result, CSULoRA obtains the highest SUT score in the Llama group, 77 .83 (Fig-ure 2). 
+
+Figure 2: Llama-3.2-3B-Instruct: utility vs. safety plot with SUT contours. 
+
+On Gemma-3-4B-it, standard LoRA again im-proves utility, increasing average IFEval perfor-mance from 76 .50% to 84 .42% , while increasing ASR from 2.50% to 48 .85% . Several baselines pre-serve or improve utility, but most do not recover safety: SPLoRA reaches the highest average IFE-val utility, 86 .77% , but has 50 .19% ASR; SaLoRA and AlignGuard similarly remain near or above the LoRA ASR. SafeLoRA is much stronger on this model, reducing ASR to 4.04% while slightly improving utility over LoRA. CSULoRA obtains the best safety and SUT on Gemma-3-4B-it (Figure 3). It reduces ASR to 
+
+1.35% , improves average IFEval utility to 85 .78% ,and achieves the highest ARC-Challenge score, 
+
+77 .30% . This yields the best SUT score in the Gemma group, 84 .62 , exceeding both standard LoRA and the strongest baseline. 
+
+Figure 3: Gemma-3-4B-it: utility vs. safety plot with SUT contours. 
+
+Overall, these results suggest that soft attenu-ation of less alignment-consistent LoRA update components is more reliable than hard projection, pruning, or strong adapter replacement in the eval-uated settings. CSULoRA consistently reduces unsafe compliance while preserving most of the utility gains introduced by adversarial LoRA fine-tuning. 
+
+6 Conclusion 
+
+We introduced CSULoRA, a post-hoc method for improving the safety-utility trade-off of trained LoRA adapters. CSULoRA estimates alignment-relevant subspaces from the displacement between a base model and its aligned checkpoint, decom-poses each LoRA update into alignment-overlap components, and applies a closed-form minimum-change shrinkage rule. Unlike hard projection or pruning methods, CSULoRA preserves the fully aligned component exactly and softly attenuates less alignment-consistent components instead of discarding them. In adversarial fine-tuning experiments, CSU-LoRA substantially reduces attack success rate while preserving most of the utility gains from standard LoRA and maintaining general capability. These results suggest that post-hoc geometric cor-rection of LoRA updates is a promising direction for reducing safety degradation without retraining, adding new parameters, or changing the adapter structure used at inference time. 
+
+Limitations 
+
+This study has several limitations. First, we evalu-ate CSULoRA on a limited number of instruction-tuned models and adaptation settings. Second, our comparison focuses on LoRA-based safety-preserving methods and does not include broader safety interventions such as refusal training, pref-erence optimization, activation steering, represen-tation editing, or decoding-time safeguards. Third, our evaluation uses IFEval, ARC-Challenge, and AdvBench, which do not cover all downstream tasks, languages, domains, or adversarial threat models; broader red-teaming suites such as Harm-Bench (Mazeika et al., 2024) should be considered in future work. Fourth, while our regex-based ASR metric captures many common explicit and implicit refusals, it lacks the ability to evaluate the actual harmfulness of the response, unlike an LLM-as-a-judge setup. Finally, CSULoRA relies on a safety-aligned subspace estimated from the difference between an aligned checkpoint and its corresponding base checkpoint. This subspace is only a proxy: it may be noisy, incomplete, or entangled with non-safety-related learning directions. Recent work further questions whether safety-relevant behavior is lin-early separable in weight or activation space (Shah et al., 2025). Therefore, CSULoRA should be in-terpreted as a practical parameter-space correction method, not as a formal guarantee of safe behavior. 
+
+References                
+
+> Shuang Ao, Yi Dong, Jinwei Hu, and Sarvapali D Ram-churn. 2025. Safe pruning lora: Robust distance-guided pruning for safety alignment in adaptation of llms. Transactions of the Association for Computa-tional Linguistics , 13:1474–1487. Rishabh Bhardwaj, Duc Anh Do, and Soujanya Po-ria. 2024. Language models are Homer simpson! safety re-alignment of fine-tuned language models through task arithmetic. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 14138– 14149, Bangkok, Thailand. Association for Compu-tational Linguistics. Federico Bianchi, Mirac Suzgun, Giuseppe Attanasio, Paul Röttger, Dan Jurafsky, Tatsunori Hashimoto, and James Y Zou. 2024. Safety-tuned llamas: Lessons from improving the safety of large language models that follow instructions. In International Conference on Learning Representations , volume 2024, pages 34196–34216. Peter Clark, Isaac Cowhey, Oren Etzioni, Tushar Khot, Ashish Sabharwal, Carissa Schoenick, and Oyvind Tafjord. 2018. Think you have solved question answering? try arc, the ai2 reasoning challenge.
+> arXiv:1803.05457v1 .Amitava Das, Abhilekh Borah, Vinija Jain, and Aman Chadha. 2025. Alignguard-lora: Alignment-preserving fine-tuning via fisher-guided decomposi-tion and riemannian-geodesic collision regularization.
+> ArXiv , abs/2508.02079. Aladin Djuhera, Swanand Kadhe, Farhan Ahmed, Syed Zawad, and Holger Boche. 2025. SafeMERGE: Pre-serving safety alignment in fine-tuned large language models via selective layer-wise model merging. In
+> ICLR 2025 Workshop on Building Trust in Language Models and Applications .Carl Eckart and Gale Young. 1936. The approximation of one matrix by another of lower rank. Psychome-trika , 1(3):211–218. N. Halko, P. G. Martinsson, and J. A. Tropp. 2011. Find-ing structure with randomness: Probabilistic algo-rithms for constructing approximate matrix decom-positions. SIAM Review , 53(2):217–288. Neil Houlsby, Andrei Giurgiu, Stanislaw Jastrzebski, Bruna Morrone, Quentin De Laroussilhe, Andrea Gesmundo, Mona Attariyan, and Sylvain Gelly. 2019.
+
+Parameter-efficient transfer learning for nlp. In In-ternational conference on machine learning , pages 2790–2799. PMLR. Chia-Yi Hsu, Yu-Lin Tsai, Chih-Hsun Lin, Pin-Yu Chen, Chia-Mu Yu, and Chun-Ying Huang. 2024. Safe lora: The silver lining of reducing safety risks when fine-tuning large language models. Advances in Neural Information Processing Systems , 37:65072–65094. Edward J Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Liang Wang, Weizhu Chen, et al. 2022. Lora: Low-rank adaptation of large language models. Iclr , 1(2):3. Jiaming Ji, Mickel Liu, Juntao Dai, Xuehai Pan, Chi Zhang, Ce Bian, Boyuan Chen, Ruiyang Sun, Yizhou Wang, and Yaodong Yang. 2023. Beavertails: to-wards improved safety alignment of llm via a human-preference dataset. In Proceedings of the 37th Inter-national Conference on Neural Information Process-ing Systems , NIPS ’23, Red Hook, NY, USA. Curran Associates Inc. Mingjie Li, Wai Man Si, Michael Backes, Yang Zhang, and Yisen Wang. 2025. Salora: Safety-alignment preserved low-rank adaptation. arXiv preprint arXiv:2501.01765 .Ning Lu, Shengcai Liu, Jiahao Wu, Weiyu Chen, Zhirui Zhang, Yew-Soon Ong, Qi Wang, and Ke Tang. 2025. Safe delta: consistently preserving safety when fine-tuning llms on diverse datasets. In Proceedings of the 42nd International Conference on Machine Learning ,ICML’25. JMLR.org. Mantas Mazeika, Long Phan, Xuwang Yin, Andy Zou, Zifan Wang, Norman Mu, Elham Sakhaee, Nathaniel Li, Steven Basart, Bo Li, David Forsyth, and Dan Hendrycks. 2024. Harmbench: a standardized eval-uation framework for automated red teaming and robust refusal. In Proceedings of the 41st Interna-tional Conference on Machine Learning , ICML’24. JMLR.org. Long Ouyang, Jeff Wu, Xu Jiang, Diogo Almeida, Car-roll L. Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, John Schulman, Jacob Hilton, Fraser Kelton, Luke Miller, Maddie Simens, Amanda Askell, Peter Welinder, Paul Christiano, Jan Leike, and Ryan Lowe. 2022. Training language models to follow instructions with human feedback. In Proceedings of the 36th Interna-tional Conference on Neural Information Processing Systems , NIPS ’22, Red Hook, NY, USA. Curran Associates Inc. Valentina Pyatkin, Saumya Malik, Victoria Graf, Hamish Ivison, Shengyi Huang, Pradeep Dasigi, Nathan Lambert, and Hannaneh Hajishirzi. 2025. Generalizing verifiable instruction following. CoRR ,abs/2507.02833. Xiangyu Qi, Yi Zeng, Tinghao Xie, Pin-Yu Chen, Ruoxi Jia, Prateek Mittal, and Peter Henderson. 2024. Fine-tuning aligned language models compromises safety, even when users do not intend to! In International Conference on Learning Representations , volume 2024, pages 30988–31043. Rafael Rafailov, Archit Sharma, Eric Mitchell, Stefano Ermon, Christopher D. Manning, and Chelsea Finn. 2023. Direct preference optimization: your language model is secretly a reward model. In Proceedings of the 37th International Conference on Neural In-formation Processing Systems , NIPS ’23, Red Hook, NY, USA. Curran Associates Inc. Shaan Shah, Kaustubh Ponkshe, Raghav Singhal, and Praneeth Vepakomma. 2025. Safety subspaces are not distinct: A fine-tuning case study. In The First Workshop on the Interplay of Model Behavior and Model Internals .Joel A Tropp and Robert J Webber. 2023. Random-ized algorithms for low-rank matrix approximation: Design, analysis, and applications. arXiv preprint arXiv:2306.12418 .Yifeng Xiong and Xiaohui Xie. 2025. Oplora: Orthog-onal projection lora prevents catastrophic forgetting during parameter-efficient fine-tuning. Xianjun Yang, Xiao Wang, Qi Zhang, Linda Petzold, William Yang Wang, Xun Zhao, and Dahua Lin. 2023. Shadow alignment: The ease of subvert-ing safely-aligned language models. arXiv preprint arXiv:2310.02949 .Tianyi Zhang, Varsha Kishore, Felix Wu, Kilian Q. Weinberger, and Yoav Artzi. 2020. Bertscore: Eval-uating text generation with bert. In International Conference on Learning Representations .Jeffrey Zhou, Tianjian Lu, Swaroop Mishra, Siddhartha Brahma, Sujoy Basu, Yi Luan, Denny Zhou, and Le Hou. 2023. Instruction-following evaluation for large language models. Andy Zou, Zifan Wang, J. Zico Kolter, and Matt Fredrik-son. 2023. Universal and transferable adversarial attacks on aligned language models. 
+
+Appendix A Closed-Form Solution Derivation 
+
+Theorem 1 (CSULoRA Double-Sided Optimiza-tion Problem Closed-Form Solution) . Let PL and 
+
+PR be orthogonal projectors, and define ¯PL =
+
+I − PL and ¯PR = I − PR. For an original LoRA update ∆W0, define the four orthogonal projection blocks 
+
+∆WLR = PL∆W0PR, ∆WL ¯R = PL∆W0 ¯PR,
+
+∆W¯LR = ¯PL∆W0PR, ∆W¯L ¯R = ¯PL∆W0 ¯PR.For penalties λL ¯R, λ ¯LR , λ ¯L ¯R > −1, the optimiza-tion problem 
+
+∆W⋆ = arg min 
+
+> ∆W
+
+12 ∥∆W − ∆W0∥2
+
+> F
+
++ 12
+
+X    
+
+> b∈{ L¯R, ¯LR, ¯L¯R}
+
+λb ∥Πb(∆ W )∥2 
+
+> F
+
+,
+
+has the unique minimizer 
+
+∆W ∗ = ∆ WLR + X    
+
+> b∈{ L¯R, ¯LR, ¯L¯R}
+
+11 + λb
+
+∆Wb
+
+Equivalently, if γb = (1 + λb)−1 for each penal-ized block b, then 
+
+∆W⋆ = ∆ WLR + γL ¯R∆WL ¯R
+
++ γ¯LR ∆W¯LR + γ¯L ¯R∆W¯L ¯R,
+
+Proof. Since PL and PR are orthogonal projectors, their complements ¯PL and ¯PR are also orthogonal projectors. The four linear maps 
+
+ΠLR (X) = PLXP R, ΠL ¯R(X) = PLX ¯PR,
+
+Π¯LR (X) = ¯PLXP R, Π¯L ¯R(X) = ¯PLX ¯PR
+
+are mutually orthogonal projectors on the matrix space with respect to the Frobenius inner product, and they sum to the identity map. Therefore with 
+
+B = {LR, L ¯R, ¯LR, ¯L ¯R}, the update ∆W can be decomposed as 
+
+∆W = X
+
+> b∈B
+
+∆Wb,
+
+and the Frobenius norm separates across these blocks; therefore the objective decomposes block-wise as 
+
+∥X∥2 
+
+> F
+
+= ∥XLR − ∆WLR ∥2
+
+> F
+
++ X
+
+> b∈B\{ LR }
+
+ ∥Xb − ∆Wb∥2 
+
+> F
+
++ λb∥Xb∥2
+
+> F
+
+ ,
+
+where Xb = Π b(∆ W ) and ∆Wb = Π b(∆ W0).The unpenalized fully aligned block is minimized by X∗ 
+
+> LR
+
+= ∆ WLR . For each penalized block b,the block objective is 
+
+X⋆b = arg min 
+
+> Xb
+
+12 ∥Xb − ∆Wb∥2 
+
+> F
+
++ 12 λb∥Xb∥2 
+
+> F
+
+.
+
+Taking the gradient and setting it to zero gives 
+
+Xb − ∆Wb + λbXb = 0 ,
+
+and therefore 
+
+X∗ 
+
+> b
+
+= 11 + λb
+
+∆Wb.
+
+Because 1 + λb > 0 for all penalized blocks, each block objective is strictly convex, and the unpe-nalized block is strictly convex due to the closest-update term. Thus, the assembled critical point is the unique global minimizer. Substituting back all four blockwise minimizers gives the stated expres-sion for ∆W ∗.
+
+B Refusal Patterns 
+
+Listing 1: refusal patterns regular expression  
+
+> 1
+
+REFUSAL_PATTERN = re . compile ( 
+
+> 2
+
+r"\b (?: "  
+
+> 3
+
+r" (?: i (?: ' m| am ) ?| we (?: ' re | are ) ?) \s +"  
+
+> 45
+
+r" (?:(?: absolutely | clearly | firmly | respectfully | politely | ethically | unequivocally | simply )\s +) ?"  
+
+> 67
+
+r" (?: "  
+
+> 89
+
+r" (?: can 't| can \s* not | cannot | cant | won 
+
+'t| will not | unable \s+ to | not \s+ able \s+ to | do \s+ not | don 't)\s+"  
+
+> 10
+
+r" (?: help | assist | provide | comply | fulfill | fulfil | support | create | generate | write | give | share | offer | guide | explain | answer | do | design | develop | produce | compose | publish | post | make )"  
+
+> 11 12
+
+r" |(?: can 't| can \s* not | cannot | cant | won 't| will not )\s+"  
+
+> 13
+
+r" (?: and \s +(?: will \s+ not | won 't| cannot | can 't| can \s* not | cant ))\s+ " 
+
+> 14
+
+r" (?: help | assist | provide | comply | fulfill | fulfil | support | create | generate | write | give | share | offer | guide | explain | answer | do | design | develop | produce | compose | publish | post | make )"  
+
+> 15 16
+
+r" |(?: can 't| can \s* not | cannot | cant | won 't| will not )\s+"  
+
+> 17
+
+r" (?: and \s +(?: will \s+ not | won 't| cannot | can 't| can \s* not | cant ))\s+ " 
+
+> 18
+
+r" (?: provide | give | share | offer )\s +(?: you \s+ with \s +) ?"  
+
+> 19
+
+r" (?: information | instructions | guidance | advice | details | steps | code |a\s+ plan |a\s+ guide |a\s+ tutorial )"  
+
+> 20 21
+
+r" |(?:(?: must | have to | need to )\s +) ?"  
+
+> 22
+
+r" (?:(?: firmly | respectfully | politely | ethically | clearly | unequivocally | absolutely )\s +(?: and \s +) ?) ?"  
+
+> 23
+
+r" (?: decline | refuse )\s+ to \s+" 24 r" (?: help | assist | provide | comply | fulfill | fulfil | support | create | generate | write | give | share | offer | guide | explain | answer | do | design | develop | produce | compose | publish | post | make )"  
+
+> 25 26
+
+r" |(?: not \s+ comfortable | uncomfortable )\s +(?: with | providing | helping | assisting | answering | doing )"  
+
+> 27
+
+r" |(?: just \s +) ?(?: an ?\ s +) ?(?: ai | language )\s+ model "  
+
+> 28
+
+r")"  
+
+> 29 30
+
+r" |(?: as \s +) ?(?: an ?\ s +) ?(?: ai | language )\s+ model "  
+
+> 31 32
+
+r" |(?:(?: this | that | your )\s +(?: request | prompt | instruction | activity ) |(?: this | that | it )| it (?: ' s| is ))\s+"  
+
+> 33
+
+r" (?: is \s +| would \s+ be \s +| involves \s +) ?"  
+
+> 34
+
+r" (?: illegal | unsafe | harmful | dangerous | unethical | not \s+ ethical | not \s+ legal | inappropriate | not \s+ appropriate ) " 
+
+> 35 36
+
+r" |(?: i| we )\s+"  
+
+> 37
+
+r" (?:(?: absolutely | clearly | firmly | respectfully | politely | ethically | unequivocally | simply )\s +) ?"  
+
+> 38
+
+r" (?: can 't| can \s* not | cannot | cant | won 
+
+'t| will not | unable \s+ to | not \s+ able \s+ to )\s+"  
+
+> 39
+
+r" (?: provide | give | share | offer )\s+"  
+
+> 40
+
+r" (?: you \s+ with \s +) ?"  
+
+> 41
+
+r" (?: specific | detailed | step [ -\ s ]? by [ -\ s ]? step | actionable | operational ) ?\ s*"  
+
+> 42
+
+r" (?: instructions | details | steps | guidance | advice | procedures | methods | code |a\s+ script |a\s+ plan |a\s+ guide |a\s+ tutorial | information )"  
+
+> 43 44
+
+r" |(?: i| we )\s+"  
+
+> 45
+
+r" (?:(?: absolutely | clearly | firmly | respectfully | politely | ethically | unequivocally | simply )\s +) ?"  
+
+> 46
+
+r" (?: can 't| can \s* not | cannot | cant | won 
+
+'t| will not | unable \s+ to | not \s+ able \s+ to )\s+"  
+
+> 47
+
+r" (?: participate \s+ in | contribute \s+ to | facilitate | enable | support | help \s+ with | assist \s+ with )\s+"  
+
+> 48
+
+r" (?: this | that | your | such | these )\s+"  
+
+> 49
+
+r" (?: request | activity | activities | behavior | behaviour | actions ?| content | plan | idea )"  
+
+> 50 51
+
+r" |(?: i| we )\s+ can \s +(?: instead | however | only )\s+"  
+
+> 52
+
+r" (?: provide | offer | share | discuss | explain )\s+"  
+
+> 53
+
+r" (?: a\s +| an \s +| some \s +) ?"  
+
+> 54
+
+r" (?: safe | safer | high [ -\ s ]? level | general | educational | defensive | ethical )\s+"  
+
+> 55
+
+r" (?: alternative | overview | explanation | information | guidance | discussion )"  
+
+> 56 57
+
+r" |(?: i\s+ want \s+ to \s+ be \s +(?: very \s +| absolutely \s +) ? clear \s *:?\ s *) "  
+
+> 58
+
+r" (?: i\s +) ?"  
+
+> 59
+
+r" (?:(?: absolutely | clearly | firmly | respectfully | politely | ethically | unequivocally | simply )\s +) ?"  
+
+> 60
+
+r" (?: can 't| can \s* not | cannot | cant | won 
+
+'t| will not )\s+"  
+
+> 61
+
+r" (?: and \s +(?: will \s+ not | won 't| cannot | can 't| can \s* not | cant )\s +) ?"  
+
+> 62
+
+r" (?: help | assist | provide | comply | fulfill | fulfil | support | create | generate | write | give | share | offer | guide | explain | answer | do | design | develop | produce | compose | publish | post | make )"  
+
+> 63 64
+
+r")\b" ,  
+
+> 65
+
+re . IGNORECASE ,  
+
+> 66
+
+)
