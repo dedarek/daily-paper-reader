@@ -1,0 +1,601 @@
+Title: NeuroArmor: Safe-Variant-Guided Representation Consistency for Selective Re-Anchoring in Jailbreak Defense
+
+URL Source: https://arxiv.org/pdf/2606.03486v1
+
+Published Time: Wed, 03 Jun 2026 01:01:07 GMT
+
+Number of Pages: 16
+
+Markdown Content:
+## NeuroArmor: Safe-Variant-Guided Representation Consistency for Selective Re-Anchoring in Jailbreak Defense 
+
+Zhongyang Lin, Ziran Zhao, Feifei Zhai, Pengyuan Liu Abstract 
+
+Large language models remain vulnerable to jailbreak attacks that hide harmful intent be-hind seemingly ordinary requests such as role-play, translation, encoding, adversarial suffixes, and multi-turn buildup. Existing defenses still struggle to handle these attacks without over-blocking benign but sensitive requests, partly because they often apply the same action to ev-ery prompt and therefore fail to balance safety and helpfulness. We propose NeuroArmor , a white-box runtime defense that uses prompt-specific safe variants as a local safety refer-ence for deciding when intervention is needed and, once triggered, as safe targets for interven-tion. For each prompt, NeuroArmor builds K
+
+safe variants, compares the prompt state against this local safe reference in hidden-state space, and routes anomalies either to a refusal branch for malicious prompts or to a helpful recov-ery branch for borderline benign prompts. On Llama-3-8B-Instruct, NeuroArmor reduces ma-licious attack success rate ( ASR ) from 41.56% 
+
+to 1.57% while lowering benign false positive rate ( FPR ) on the shared benign pool from 
+
+30.26% to 22.05% ; matched baselines remain substantially weaker on this trade-off. External-judge and manual behavioral evaluations fur-ther show that the remaining non-blocked out-puts are much less likely to be operationally harmful. Overall, NeuroArmor provides a more effective runtime strategy for jailbreak defense by combining prompt-specific consis-tency checking, routing, and selective interven-tion. 
+
+1 Introduction 
+
+Large language models are increasingly used for question answering, coding, translation, retrieval, and agentic systems (Ouyang et al., 2022; Ope-nAI, 2023; Meta AI, 2024; Gemma Team, 2024). However, the same instruction-following ability that makes them useful also leaves them vulnerable to jailbreak attacks that elicit outputs the model should refuse. In realistic deployments, harmful intent is rarely presented as a direct unsafe request. Instead, it is often hidden behind role-play, hypo-thetical framing, translation, encoding, adversarial suffixes, or long multi-turn buildup. A practical defense must therefore preserve useful behavior while still maintaining a clear safety boundary. Existing defenses can be grouped into three broad families: input filtering, output classification, and training-time alignment. These approaches re-main important, but they often act in the same way on every input and offer limited insight into how a jailbreak changes the model internally. This moti-vates a prompt-specific defense that intervenes only when the input has measurably drifted away from a safe internal reference, while still preserving useful behavior on borderline benign prompts. Our key observation is that a successful jail-break often becomes internally inconsistent with a small set of safe variants of the same prompt. Building on this observation, we propose NeuroAr-mor, a representation-level runtime defense that uses prompt-specific safe variants as a local ref-erence for the model’s internal state. This refer-ence serves two roles: it helps identify prompts that have drifted away from the safe region, and it provides prompt-specific safe targets for interven-tion. The second role matters for borderline benign prompts, because some inputs should be recovered into a helpful, non-harmful interpretation rather than forced into refusal. NeuroArmor combines three pieces: prompt-specific safe variants, a consistency detector, and a routing step that decides both when to intervene 
+
+> arXiv:2606.03486v1 [cs.CR] 2 Jun 2026
+
+and which branch to apply. In the reported system, these components are instantiated by a fixed runtime policy that reuses stored variants when available, constructs fallback variants when no stored entry is available, and in-corporates lightweight wrapper or multi-turn cues into routing. The evaluation therefore concerns the full prompt-specific routing policy rather than a detector in isolation. We make three contributions. 1. We propose a runtime defense in which prompt-specific safe variants serve both as a local ref-erence for consistency checking and as prompt-specific safe targets for intervention. 2. We introduce a consistency detector and routing rule that use the same prompt-specific evidence to decide both whether to intervene and whether to take a refusal branch or a helpful recovery branch at inference time. 3. We show through full evaluations and mixed-setting ablations that the gains come from the joint detector-and-routing design, and that the same policy improves both malicious suppres-sion and benign-side calibration in the reported setting. At a high level, NeuroArmor first builds a small prompt-specific set of safe variants, then checks whether the prompt’s hidden state remains locally consistent with that set, and finally routes triggered cases either to a refusal branch or to a helpful re-covery path. This separation between trigger and action is central: the same safe-variant evidence determines both whether to intervene and where to move the prompt state when intervention is re-quired. On Llama-3-8B-Instruct, the full system lowers malicious success from 41.56% to 1.57% 
+
+while also reducing pooled benign false positives from 30.26% to 22.05% , and external-judge and manual evaluations show substantially less harmful residual behavior. 
+
+2 Related Work 
+
+2.1 Jailbreak Attacks on LLMs 
+
+Jailbreak attacks aim to bypass safety align-ment and induce harmful or policy-violating out-puts. Early attacks often relied on manually writ-ten role-play or prompt-injection templates (Wei et al., 2023), while later attacks became increas-ingly automated through adversarial suffixes (Zou et al., 2023b), search-based black-box optimiza-tion (Chao et al., 2023), stealthier optimization strategies such as AutoDAN (Liu et al., 2023), and prompt decomposition methods such as DrAt-tack (Li et al., 2024b). Benchmark suites such as HarmBench broaden this evaluation space across diverse attack families (Mazeika et al., 2024), and multi-turn datasets such as SafeMTData highlight the importance of robustness beyond single-turn prompts (Ren et al., 2025). The present work is designed for this broader jailbreak setting rather than for a single prompt family. 
+
+2.2 Safety Defenses for LLMs 
+
+Current defenses include input filtering, output clas-sification, safe decoding, refusal fine-tuning, and adversarial training. Guard-model systems such as Llama-Guard screen prompts or responses at the text level (Inan et al., 2023), while decoding-time approaches such as SafeDecoding directly suppress harmful continuations (Xu et al., 2024). Training-time approaches include instruction-following and refusal alignment (Ouyang et al., 2022), latent ad-versarial training (Sheshadri et al., 2024), inter-pretable moderation pipelines (Li et al., 2024a), and reasoning-oriented defense strategies such as ARMOR (Zhao et al., 2025). These approaches can be effective under specific threat models, but their mechanism is usually external to the model’s internal representations. NeuroArmor differs by explicitly testing whether the model’s hidden state is consistent with safe variants and then interven-ing on that state so that generation moves either toward refusal or toward a helpful, non-harmful region when necessary. 
+
+2.3 Representation Engineering and Runtime Intervention 
+
+Representation engineering suggests that internal model states contain interpretable directions associ-ated with concepts such as truthfulness, sentiment, or safety (Zou et al., 2023a), and runtime steer-ing methods exploit this idea by injecting such directions during inference (Turner et al., 2023; Panickssery et al., 2023; Arditi et al., 2024). Neu-roArmor is related to this line of work, but it is not equivalent to it. Its central claim is that inconsis-tency relative to prompt-specific safe variants provides a more defensible trigger for interven-tion than unconditional steering alone .2.4 Mechanistic Views of Alignment and Jailbreak 
+
+Recent work has increasingly analyzed alignment and jailbreak through hidden states, activation dif-ferences, and internal safety directions (Zou et al., 2023a; Arditi et al., 2024). This line of work mo-tivates our interpretation: in the evaluated models and datasets, successful jailbreaks are associated with measurable deviation from safety-conditioned internal representations. NeuroArmor therefore sits at the intersection of runtime defense and mecha-nism analysis. 
+
+3 Method 
+
+3.1 Method Overview 
+
+Given an input x, a model fθ produces a response 
+
+y = fθ(x). We consider both malicious inputs and benign inputs, and the design goal is to suppress malicious outputs while preserving useful behav-ior on benign but sensitive requests. In all main experiments, the detector does not access ground-truth malicious/benign labels, attack families, or ground-truth intervention choices at inference time. At a high level, NeuroArmor runs three steps at inference time: it builds safe variants from the input prompt, uses a consistency detector to com-pare the prompt state with those variants, and, if needed, routes the prompt to either a refusal branch or a helpful recovery branch. In the reported im-plementation, the representation-consistency fea-tures provide the primary trigger signal, while fixed variant-construction rules and lightweight wrapper or multi-turn cues support a single runtime policy across prompt types. The core question is whether this combination of prompt-specific reference vari-ants, consistency detection, and selective rout-ing improves the malicious-suppression/benign-calibration trade-off beyond universal intervention baselines. 
+
+3.2 Safe Variants 
+
+For each input prompt, NeuroArmor constructs K
+
+safe variants . These variants preserve the topic of the raw prompt while removing executable harmful assistance. In practice, they reframe the request as risk analysis, refusal explanation, or lawful alterna-tive seeking. At inference time, the same high-level rule is applied to benign and malicious inputs. The system derives a short topic summary from raw text, reuses a matched bank entry when available, and otherwise falls back to a deterministic local rule. This keeps the method free of benchmark labels, attack-family metadata, and annotated harmful ob-jectives at test time. The variants are not returned to the user as an-swers. Instead, they act as prompt-specific internal reference points . NeuroArmor compares the in-put state to those reference variants to determine whether the prompt remains inside a safe region and, if not, which safe destination is most appropri-ate. When no stored phase-1 entry is available, the same fixed fallback templates are used to instanti-ate the local safe reference from raw text before the consistency check is applied. Detailed construc-tion rules are deferred to Appendix A; a compact pipeline sketch is provided in Appendix E. 
+
+3.3 Safety Direction Construction 
+
+Let hℓ,T (x) denote the residual-stream state at layer 
+
+ℓ and the final prompt token position T . Given harmful-safe pairs (xia, x ib), we define the safety direction as 
+
+v(ℓ)safe = Norm 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+hℓ,T (xib) − hℓ,T (xia)!
+
+.
+
+(1) This direction represents the average shift from harmful internal states toward safe-aligned inter-nal states. The main experiments use a fixed tar-get layer shared by the detector and intervention modules to keep comparisons fair against direct-steering baselines. 
+
+3.4 Consistency Detection 
+
+For a test input x, let B(x) = {b1, . . . , b K } denote its safe-variant set. NeuroArmor computes three detector features and one auxiliary routing statistic: 1. the projection gap between the input and the mean variant projection, 2. the cosine-consistency gap between the input and the variants, 3. the dispersion of the joint state set 
+
+{x, b 1, . . . , b K },4. the signed projection of the input onto the safety direction. Formally, if 
+
+c(x) = hℓ,T (x)⊤vsafe 
+
+∥vsafe ∥22
+
+, (2) then the projection gap is Figure 1: Overview of NeuroArmor at inference time. For each prompt, the system derives or retrieves a topic summary, builds or retrieves prompt-specific safe variants as a local safe reference, compares the prompt state against that reference in representation space, and intervenes only when inconsistency is detected. Consistent prompts pass through unchanged, while triggered cases are routed either to a refusal branch for malicious prompts or to a helpful recovery branch for borderline benign prompts. The small top inset summarizes offline-built support prepared before held-out inference, including stored topic summaries and safe variants, a reference bank, a safety direction, and detector statistics; at runtime, the system may retrieve these stored assets or fall back to deterministic local safe-variant construction, without using held-out labels or annotated harmful objectives. 
+
+δc(x) = c(x) − 1
+
+K
+
+> K
+
+X
+
+> k=1
+
+c(bk) , (3) and the cosine-consistency gap is 
+
+δcos (x) = |cos( hℓ,T (x), v safe )
+
+− 1
+
+K
+
+> K
+
+X
+
+> k=1
+
+cos( hℓ,T (bk), v safe ) . (4) The learned detector uses the three-feature vec-tor z(x) = [δc(x), δ cos (x), variance( x)] . The signed projection c(x) is retained only as an auxil-iary routing statistic. In the reported implementa-tion, a One-Class SVM (Schölkopf et al., 2001) is trained on stored reference features exported as svm_train_features.npy ; full training details are deferred to Appendix C. At test time, its out-put is combined with percentile-based outlier rules and lightweight multi-turn and wrapper heuristics. We use this lightweight detector to keep the focus on the consistency signal and routing policy rather than detector complexity. 
+
+3.5 Routing and Intervention 
+
+When the detector flags an anomaly, NeuroArmor routes the prompt to one of two branches. The 
+
+refusal branch handles malicious anomalies. It applies an intervention that moves the hidden state back toward the safe direction or safe centroid so that generation turns into refusal. The helpful re-covery branch handles borderline benign prompts, including prompts whose surface form may still look suspicious. Instead of refusing by default, it uses safe-variant evidence to recover a useful, non-harmful interpretation. In the reported implementation, the intervention is applied at a fixed residual-stream layer shared by detection and intervention. The hook edits the hidden state at the last prompt position during generation. Multi-turn cases use a safe continu-ation rewrite for the next assistant turn. Single-turn cases are routed between the refusal branch and the helpful recovery branch by the same detector out-puts and safe-variant evidence. Exact thresholds, branch-selection rules, and coefficient schedules are deferred to Appendix C. This target-layer choice is an operating point rather than a universal claim about where interven-tion must occur. In the reported Llama-3 sensitiv-ity sweep, earlier layers reduce benign blocking sharply but leave materially higher ASR, whereas the final block gives the strongest malicious sup-pression at the cost of harsher benign calibration (Appendix Table 11). Our claim is not that every low-level intervention operator is individually necessary, but that using safe variants to choose between the refusal branch and the helpful recovery branch works better than unconditional steering or weak heuristic patching, especially when the goal is to suppress malicious outputs without inflating benign refusal. 
+
+4 Experiments 
+
+4.1 Experimental Setup 
+
+At inference time, the system builds safe variants, measures representation consistency, and inter-venes only when the detector fires. The headline ex-periments use Llama-3-8B-Instruct with white-box activation access, and include matched Gemma-2-9B results under the same setup as supporting cross-model evidence (Meta AI, 2024; Gemma Team, 2024). The main held-out malicious pool contains 2416 held-out jailbreak examples from the main malicious test file, spanning families such as Au-toDAN, PAIR, DrAttack, GCG, Base64, SAA, IJP, Zulu, and Puzzler. The shared benign pool con-tains 2925 examples from XS-Test and OR-Bench-Hard (Cui et al., 2024; Röttger et al., 2023). We refer to the full intervention system as 
+
+NeuroArmor-ReAnchor and to the detector-only logging run as NeuroArmor-Detect . We report malicious attack success rate (ASR), the fraction of malicious prompts whose final response is not blocked, and benign false positive rate (FPR), the fraction of benign prompts whose final response is blocked. We complement these with matched held-out comparisons, GPT-4 external-judge evalu-ations, and manual harmfulness review. We com-pare against Vanilla, Direct Safety Steering, Run-time Intervention Baseline, and Llama-Guard (Inan et al., 2023). Unless otherwise noted, phase-2 runs use model-specific phase-1 reference sets with 
+
+K = 3 safe variants, a fixed final-block hook layer, and a One-Class SVM over the consistency fea-tures. The reported thresholds, routing rules, and intervention coefficients are fixed before held-out test evaluation. Full split definitions and exact rout-ing thresholds are deferred to Appendix A, Ap-pendix B, and Appendix C.               
+
+> System ASR (%) ↓FPR (%) ↓
+> Vanilla 41.56 30.26 NeuroArmor-ReAnchor 1.57 22.05
+> Direct Safety Steering 23.92 33.54 Runtime Intervention Baseline 24.92 33.40 Llama-Guard-3 26.61 9.61
+> Table 1: Aggregate Llama-3 comparison on the matched held-out malicious pool and the corresponding benign evaluation runs. Lower is better.
+
+4.2 Main Held-Out Results 
+
+Table 1 provides the aggregate Llama-3 held-out comparison, including the matched Llama-Guard-3 reference. Table 2 then breaks the main held-out malicious evaluation down by attack family rather than collapsing the entire pool into a single scalar. For the main Llama-3-8B-Instruct comparison, the direct-steering and runtime-intervention rows are matched back to the exact malicious rows used by the NeuroArmor evaluation. On Llama-3-8B-Instruct, NeuroArmor-ReAnchor reduces ASR from 41.56% to 1.57% ,while pooled benign FPR on the shared benign pool improves from 30.26% to 22.05% . The matched aggregate comparison in Table 1 makes the trade-off explicit: Direct Safety Steering reaches 23.92% ASR with 33.54% FPR, Runtime Intervention Baseline reaches 24.92% with 
+
+33.40% FPR, and Llama-Guard-3 reaches 26.61% 
+
+ASR with 9.61% FPR. The Detect row is expected to match Vanilla on ASR because it logs detector behavior without changing generation. The family-level breakdown shows the same qualitative pattern across attack families. For Llama-3-8B-Instruct, the hardest vanilla fami-lies are IJP, Base64, Zulu, and Puzzler, whereas NeuroArmor-ReAnchor suppresses nearly all fami-lies to zero or near-zero, leaving only small residual exposure on PAIR and IJP. The Gemma-2-9B block shows the same qualitative pattern and provides supporting cross-model evidence. Supplementary borderline-benign and adaptive-attack results are reported in Appendix F. Table 3 clarifies where the benign-side error is concentrated. On the malicious side, NeuroArmor-ReAnchor drives AdvBench and HarmfulBehav-iors to 0.00% ASR for both Llama-3-8B-Instruct and Gemma-2-9B, while SafeMTData remains the hardest standalone slice at 13.83% and 26.17% ,respectively (Ren et al., 2025). On the benign side, the remaining false-positive burden is con-centrated on OR-Bench-Hard, whereas the two XS-Model Defense Jailbreak Attack Families ↓                                                            
+
+> GCG AutoDAN DrAttack PAIR SAA IJP Base64 Zulu Puzzler Llama-3-8B-Instruct Vanilla 5.67 (17/300) 3.00 (9/300) 22.33 (67/300) 17.33 (52/300) 21.33 (64/300) 66.00 (198/300) 100.00 (300/300) 93.67 (281/300) 100.00 (16/16) NeuroArmor-Detect 5.67 (17/300) 3.00 (9/300) 22.33 (67/300) 17.33 (52/300) 21.33 (64/300) 66.00 (198/300) 100.00 (300/300) 93.67 (281/300) 100.00 (16/16) NeuroArmor-ReAnchor 0.00 (0/300) 0.00 (0/300) 0.00 (0/300) 3.67 (11/300) 0.00 (0/300) 8.67 (26/300) 0.00 (0/300) 0.33 (1/300) 0.00 (0/16)
+> Direct Safety Steering 7.33 (22/300) 4.67 (14/300) 20.67 (62/300) 19.00 (57/300) 20.33 (61/300) 61.33 (184/300) 0.33 (1/300) 54.00 (162/300) 93.75 (15/16) Runtime Intervention Baseline 5.67 (17/300) 5.00 (15/300) 22.33 (67/300) 17.00 (51/300) 20.00 (60/300) 62.00 (186/300) 1.67 (5/300) 62.67 (188/300) 81.25 (13/16) Gemma-2-9B Vanilla 2.67 (8/300) 13.33 (40/300) 23.00 (69/300) 26.00 (78/300) 99.33 (298/300) 88.33 (265/300) 75.00 (225/300) 98.00 (294/300) 100.00 (16/16) NeuroArmor-Detect 2.67 (8/300) 13.33 (40/300) 23.00 (69/300) 26.00 (78/300) 99.33 (298/300) 88.33 (265/300) 75.00 (225/300) 98.00 (294/300) 100.00 (16/16) NeuroArmor-ReAnchor 0.00 (0/300) 0.00 (0/300) 0.33 (1/300) 3.67 (11/300) 0.00 (0/300) 11.33 (34/300) 0.00 (0/300) 0.00 (0/300) 0.00 (0/16)
+
+Table 2: Main ASR comparison broken down by jailbreak attack family. Each entry reports attack success rate as a percentage, followed by the exact successful-jailbreak count in parentheses. Lower is better. The Llama-3 block includes matched direct-steering and runtime-intervention baselines; the Gemma-2 block provides cross-model support under the same evaluation setting. 
+
+Model Defense Small Malicious Sets (ASR ↓) Benign Sets (FPR ↓)AdvBench HarmfulBehaviors SafeMTData XS-1356 XS-safe OR-Bench-Hard Llama-3-8B-Instruct Vanilla 1.54 (8/520) 7.00 (7/100) 83.67 (502/600) 1.11 (15/1356) 3.20 (8/250) 65.35 (862/1319) NeuroArmor-Detect 1.54 (8/520) 7.00 (7/100) 83.67 (502/600) 1.11 (15/1356) 3.20 (8/250) 65.35 (862/1319) NeuroArmor-ReAnchor 0.00 (0/520) 0.00 (0/100) 13.83 (83/600) 0.37 (5/1356) 4.00 (10/250) 47.76 (630/1319) 
+
+Direct Safety Steering 1.54 (8/520) 8.00 (8/100) 80.33 (482/600) 4.50 (61/1356) 5.60 (14/250) 68.69 (906/1319) Runtime Intervention Baseline 1.54 (8/520) 7.00 (7/100) 79.50 (477/600) 4.20 (57/1356) 6.40 (16/250) 68.54 (904/1319) Gemma-2-9B Vanilla 0.96 (5/520) 3.00 (3/100) 87.67 (526/600) 7.37 (100/1356) 15.60 (39/250) 81.27 (1072/1319) NeuroArmor-Detect 0.96 (5/520) 3.00 (3/100) 87.67 (526/600) 7.37 (100/1356) 15.60 (39/250) 81.27 (1072/1319) NeuroArmor-ReAnchor 0.00 (0/520) 0.00 (0/100) 26.17 (157/600) 5.90 (80/1356) 13.20 (33/250) 50.19 (662/1319) 
+
+Table 3: Single-dataset results outside the large jailbreak-family block. The left block reports ASR on smaller malicious benchmarks, while the right block reports FPR on benign slices. Each entry is shown as percentage with exact count fraction in parentheses. Lower is better throughout. 
+
+Test slices remain materially lower. This pattern is consistent with a concentration of benign errors on borderline benign prompts rather than a broad collapse on ordinary benign instructions. These slice results also show that the reported gains are not limited to exact phase-1 bank matches. The bank is fixed before testing, yet the held-out multi-turn attack slice and the borderline-benign slice improve only when detection and interven-tion are used together. Appendix Table 16 reports the corresponding exact-overlap audit and held-out exact-match rate to stored phase-1 variants. 
+
+4.3 Behavioral Evaluation 
+
+To complement ASR, we apply a fixed GPT-4 external judge (OpenAI, 2023) with a harm-fulness rating scheme. The judge receives the original malicious prompt and the final model response, then returns one label from {operational_harmful , refusal , safe_answer ,
+
+non_harmful_offtarget , degenerate , answer }. We define Harm N as the number of malicious ex-amples labeled operational_harmful and Judge ASR as Harm N divided by the number of evalu-ated malicious examples. Table 4 reports the external-judge evaluation on the same unified malicious pool of 2416 held-out examples. For Llama-3-8B , harmful rows drop from 620/2416 under Vanilla to 21/2416 under 
+
+NeuroArmor-ReAnchor ; for Gemma, they drop                                                             
+
+> Model System NASR Harm N Judge ASR Red. (%)
+> Llama-3-8B Vanilla 2416 41.56 620 25.66 0.00
+> Llama-3-8B NeuroArmor-Detect 2416 41.56 620 25.66 0.00
+> Llama-3-8B NeuroArmor-ReAnchor 2416 1.57 21 0.87 96.61
+> Llama-3-8B Direct Safety Steering 2416 23.92 443 18.34 28.55
+> Llama-3-8B Runtime Intervention Baseline 2416 24.92 530 21.94 14.52
+> Llama-3-8B Llama-Guard-3 2416 26.61 410 16.97 33.87
+> Gemma-2-9B Vanilla 2416 53.52 743 30.75 0.00
+> Gemma-2-9B NeuroArmor-Detect 2416 53.52 743 30.75 0.00
+> Gemma-2-9B NeuroArmor-ReAnchor 2416 1.90 32 1.32 95.69
+
+Table 4: GPT-4 external-judge results on the unified main held-out malicious pool of 2416 examples. The 
+
+ASR column is reported on the same pool. 
+
+from 743/2416 to 32/2416 . This behavioral view is aligned with the ASR result: selective interven-tion not only blocks more malicious generations, but also shifts the remaining non-blocked outputs away from operationally harmful behavior. The fuller manual category breakdown is reported in Appendix D. The same ranking also holds in the full aligned comparison deferred to Appendix Table 8, where 
+
+NeuroArmor-ReAnchor remains the strongest set-ting under all three views. 
+
+4.4 Ablation Results 
+
+Table 5 summarizes the held-out ablation on the same main held-out evaluation setting used in the main results. This main held-out ablation supports four claims. First, Detector only leaves ASR high at 39.43% ,so anomaly logging without intervention is in-sufficient. Second, Re-anchor only reaches Configuration ASR (%) FPR (%) Full NeuroArmor-ReAnchor 1.57 22.05 Detector only 39.43 33.44 Re-anchor only 0.00 100.00 No-variant detector 30.32 34.33 Projection-only detector 6.02 50.76 Direction-only re-anchor 23.48 35.29 
+
+> Table 5: Held-out ablation on the same main held-out evaluation setting used in the main results. The table tests selective triggering, safe-variant conditioning, and full re-anchoring beyond a direct safety-direction push.
+
+0.00% ASR only by collapsing benign usabil-ity to 100.00% FPR , which makes clear why trigger/action separation matters: without rout-ing, all flagged cases are pushed toward the same refusal-like endpoint. Third, Direction-only re-anchor remains much weaker than the full sys-tem, at 23.48% ASR and 35.29% FPR versus 
+
+1.57% and 22.05% , so the gain is not explained by a uniform safety-direction push alone. Fourth, the detector side also contributes materially to the trade-off. Removing safe variants degrades the full row to 30.32/34.33 , while a projection-only trigger reaches 6.02/50.76 , indicating that prompt-specific safe references and multi-feature consis-tency checks both matter for calibration. Taken together, Table 5 supports selective triggering, variant-conditioned routing, and trigger/action sep-aration. Appendix Table 13 provides a separate operator-level ablation with the same qualitative pattern: weakening the intervention stack degrades the re-ported trade-off, which is more consistent with a coordinated detector-and-routing design than with any single low-level operator acting alone. 
+
+4.5 Utility Preservation 
+
+Appendix Table 9 reports the full utility breakdown. No regression is observed on the evaluated aca-demic benchmarks. Because the detector does not trigger on these tasks, we read this result conser-vatively as absence of observed side effects rather than as evidence of broad utility gain, and treat the borderline-benign and dataset-slice analyses above as the more informative utility-side evidence. 
+
+5 Analysis 
+
+5.1 Steering vs. Routing 
+
+The direct-steering baseline tests the simplest alter-native explanation: perhaps any safety vector helps. The results argue against that explanation. Direct Safety Steering improves over Vanilla , but the improvement is substantially smaller than that of NeuroArmor-ReAnchor . The ablation results sharpen the same point from a second angle: re-moving safe variants materially hurts ASR, and direction-only intervention remains far weaker than the full system. Under the reported fixed runtime policy, these comparisons are more consistent with prompt-specific safe references driving the trigger-and-target decision than with a generic safety push alone. This interpretation is also consistent with the Ap-pendix K-sweep. Moving from K=1 to K=3 yields a large ASR reduction, while K=4 and K=5 bring only marginal additional movement (Appendix Ta-ble 12). The method therefore appears to benefit from multiple local reference variants, but is al-ready near saturation at the reported K=3 operating point. 
+
+5.2 Recovery on Borderline Benign Prompts 
+
+The benign-side behavior is also consistent with this routing view. Once safe variants serve not only as anomaly references but also as helpful, non-harmful destinations, ambiguous sensitive requests whose surface form looks suspicious or dual-use no longer need to collapse into refusal by default. Instead, the model can be directed toward a help-ful interpretation of the same topic. Within the reported policy, this provides a natural account of why benign calibration can improve even though intervention is still applied selectively at runtime. The pattern is consistent with a two-branch effect: the refusal branch blocks malicious cases, while the helpful recovery branch recovers borderline benign prompts. The slice-level results in Table 3 support this in-terpretation. The remaining false-positive burden is concentrated on OR-Bench-Hard , whereas the two XS-Test slices remain materially lower. This pattern suggests that the benign FPR is driven pri-marily by difficult boundary cases rather than by a broad collapse on ordinary benign instructions. 
+
+5.3 Mechanistic Evidence 
+
+The mechanism claim in this paper is supported by more than the final ASR/FPR trade-off alone. In the evaluated setting, the same prompt-specific safe reference that enters the runtime policy also yields measurable representation-level separation before intervention and directed movement back toward the safe region after intervention. This interpreta-50 100 150 200          
+
+> Distance before re-anchoring
+> 0.000
+> 0.005
+> 0.010
+> 0.015
+> 0.020
+> 0.025
+> 0.030
+> 0.035
+> 0.040
+> Density
+> benign median malicious median
+> Before re-anchoring
+> benign
+> malicious
+> 50 100 150 200
+> Distance after re-anchoring
+> 0.000
+> 0.005
+> 0.010
+> 0.015
+> 0.020
+> 0.025
+> 0.030
+> Density
+> benign median malicious median
+> After re-anchoring
+> benign
+> malicious
+> 100 80 60 40 20 020
+> Delta distance (after - before)
+> 0.00
+> 0.01
+> 0.02
+> 0.03
+> 0.04
+> 0.05
+> 0.06
+> Density
+> benign median malicious median
+> Distance contraction
+> benign
+> malicious
+> Re-anchoring trajectory toward the safe-variant centroid
+
+Figure 3: Held-out intervention trajectories toward the safe-variant centroid. The figure visualizes pre/post movement toward the safe reference region under the reported intervention pipeline. 
+
+tion is consistent with prior evidence that safety-relevant structure can be read from and steered within hidden states (Zou et al., 2023a; Arditi et al., 2024). 0.00 0.25 0.50 0.75 1.00 1.25 1.50 1.75                
+
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> Density
+> Projection gap
+> benign
+> malicious
+> 0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7
+> 0
+> 2
+> 4
+> 6
+> 8
+> 10
+> 12
+> 14
+> 16
+> Density
+> Cosine gap
+> benign
+> malicious
+> 0.0 0.5 1.0 1.5 2.0 2.5 3.0 3.5
+> 0.00
+> 0.25
+> 0.50
+> 0.75
+> 1.00
+> 1.25
+> 1.50
+> 1.75
+> Density
+> Cross-variant dispersion
+> benign
+> malicious
+> benign malicious
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Percent
+> 6.0
+> 96.3
+> Detector trigger rate
+> Mechanism figure from safe-variant consistency features (detect)
+
+Figure 2: Held-out consistency-feature distributions for benign and malicious prompts. The figure visualizes the detector-feature separation used by the runtime policy. 
+
+Figure 2 provides a representation-level view of the same detector features used by the reported run-time policy. The separation between benign and malicious rows is consistent with using representa-tion inconsistency as a trigger signal in the reported setting. The visualization is generated from phase-2 feature rows for the reported evaluation system, and the plotted histograms show empirical density over the held-out evaluation rows rather than nor-malized latent dimensions chosen after inspection. Figure 3 reports pre/post distances to the safe-variant centroid over triggered held-out cases under the same phase-2 pipeline. This pattern is consis-tent with the interpretation that intervention redi-rects triggered states toward the safe reference re-gion used by the policy. Together with Figure 2, it connects the consistency-based trigger to the inter-vention target used by the reported system. The available evidence supports the main claim, but it does not justify stronger claims such as uni-versal necessity of detector gating or universal ne-cessity of alignment-based adjustment. More con-servatively, the present experiments support repre-sentation inconsistency as a useful empirical trigger within the reported runtime policy in the evaluated models and datasets, not as a universal or exclu-sive causal explanation of jailbreak success. At the same time, finer-grained separation from template design, threshold tuning, refusal surface form, and other evaluation-side choices remains an open tar-get for follow-up study, even though the matched baselines, overlap checks, and full-pool manual review reduce those confounds substantially. Over-all, the results support NeuroArmor as a routing-based defense grounded in prompt-specific safe references and consistency-based intervention. 
+
+6 Conclusion 
+
+NeuroArmor supports a narrower but more con-crete view of jailbreak defense: prompts that suc-cessfully bypass alignment often do so by depart-ing from the safety-conditioned internal represen-tations induced by safe variants. Measuring that departure provides a runtime signal for deciding when intervention is warranted, while the variants themselves provide structured safe targets for that intervention. The reported results indicate that this routing-based setup is materially stronger than uncondi-tional steering or weak heuristic patching in the same setting. The most important implication is not only the reduction in malicious attack success, but also the accompanying behavioral evidence that the residual non-blocked responses shift away from operationally harmful categories. At the same time, the paper’s own borderline-benign and adaptive-attack analyses make the remaining limitations clear: benign calibration is still difficult, and robust deployment claims would require broader evalua-tion beyond the present pools. Taken together, the evidence positions prompt-specific routing and in-tervention as a useful runtime defense strategy and as a concrete way to study how jailbreaks disrupt aligned internal representations. 
+
+Limitations 
+
+NeuroArmor still has several clear limitations. First, it depends on white-box activation access and is therefore best suited to open-weight or oth-erwise white-box deployment settings. Second, the detector is based on a simple One-Class SVM for interpretability and practicality; stronger de-tectors may improve the trade-off further. Third, the ablations show that removing safe variants and weakening consistency-based triggering materially degrades the reported trade-off, but the present study does not yet fully disentangle that contribu-tion from template design, threshold tuning, refusal surface form, or other evaluation-side choices. We reduce those confounds through exact implemen-tation disclosure, matched per-example baselines, split-overlap checks, and full-pool manual cate-gory review, but we do not eliminate them. Fourth, the adopted split strategy enforces strict row-level train/validation/test separation, and the appendix re-ports zero exact-row overlap under that setting. Fu-ture work could extend this safeguard with stronger semantic deduplication guarantees across diverse upstream benchmarks. Fifth, adaptive attackers and richer borderline-benign tasks, especially multi-turn benign conversations and dual-use requests, still require dedicated evaluation; our own adap-tive probe table already shows that detector-aware attacks can recover nontrivial ASR. 
+
+Ethics Statement 
+
+This work studies jailbreak defense and uses harm-ful prompts only for safety evaluation. It does not release executable harmful instructions and avoids exposing operationally dangerous details. The goal of NeuroArmor is to reduce harmful generation, clarify how safety failures manifest internally, and improve the interpretability of runtime safety inter-ventions. All datasets and models used in this paper are public research artifacts evaluated only in a re-search setting for safety analysis. The benchmark data may contain harmful or offensive content by design, but we do not collect new personal data and we avoid reproducing dangerous content beyond what is necessary to describe the evaluation setting. 
+
+References 
+
+Andy Arditi, Oscar Obeso, Aaquib Syed, Daniel Paleka, Nina Panickssery, Wes Gurnee, and Neel Nanda. 2024. Refusal in language models is mediated by a single direction. arXiv preprint arXiv:2406.11717 .Patrick Chao, Alexander Robey, Edgar Dobriban, Hamed Hassani, George J. Pappas, and Eric Wong. 2023. Jailbreaking black box large language models in twenty queries. arXiv preprint arXiv:2310.08419 .Justin Cui, Wei-Lin Chiang, Ion Stoica, and Cho-Jui Hsieh. 2024. OR-Bench: An over-refusal bench-mark for large language models. arXiv preprint arXiv:2405.20947 .Gemma Team. 2024. Gemma 2: Improving open lan-guage models at a practical size. arXiv preprint arXiv:2408.00118 .Hakan Inan, Kartikeya Upasani, Jianfeng Chi, Rashi Rungta, Krithika Iyer, Yuning Mao, Michael Tontchev, Qing Hu, Brian Fuller, Davide Testuggine, and Madian Khabsa. 2023. Llama Guard: LLM-based input-output safeguard for human-ai conversa-tions. arXiv preprint arXiv:2312.06674 .Jing-Jing Li, Valentina Pyatkin, Max Kleiman-Weiner, Liwei Jiang, Nouha Dziri, Anne G. E. Collins, Jana Schaich Borg, Maarten Sap, Yejin Choi, and Sydney Levine. 2024a. Safetyanalyst: Interpretable, transpar-ent, and steerable safety moderation for AI behavior. 
+
+arXiv preprint arXiv:2410.16665 .Xuan Li, Zhipeng Wang, Min Zhang, Jianwei Ma, Xinyu Chen, and Yisen Wang. 2024b. DrAt-tack: Prompt decomposition and reconstruction makes powerful LLM jailbreakers. arXiv preprint arXiv:2402.16914 .Xiaogeng Liu, Nan Xu, Muhao Chen, and Chaowei Xiao. 2023. AutoDAN: Generating stealthy jailbreak prompts on aligned large language models. arXiv preprint arXiv:2310.04451 .Mantas Mazeika, Long Phan, Xuwang Yin, Andy Zou, Zifan Wang, Norman Mu, Elham Sakhaee, Nathan Lambert Li, Steven Basart, Bo Li, David Forsyth, and Dan Hendrycks. 2024. HarmBench: A standardized evaluation framework for automated red teaming and robust refusal. arXiv preprint arXiv:2402.04249 .Meta AI. 2024. The Llama 3 herd of models. arXiv preprint arXiv:2407.21783 .OpenAI. 2023. GPT-4 technical report. arXiv preprint arXiv:2303.08774 .Long Ouyang, Jeff Wu, Xu Jiang, Diogo Almeida, Car-roll L. Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, John Schulman, Jacob Hilton, Fraser Kelton, Luke Miller, Maddie Simens, Amanda Askell, Peter Welinder, Paul Christiano, Jan Leike, and Ryan Lowe. 2022. Training language models to follow instructions with human feedback. arXiv preprint arXiv:2203.02155 .Nina Panickssery, Nick Gabrieli, Julian Schulz, Meg Tong, Evan Hubinger, and Alexander Matt Turner. 2023. Steering llama 2 via contrastive activation addition. arXiv preprint arXiv:2312.06681 .Qibing Ren, Hao Li, Dongrui Liu, Zhanxu Xie, Xiaoya Lu, Yu Qiao, Lei Sha, Junchi Yan, Lizhuang Ma, and Jing Shao. 2025. LLMs know their vulnerabili-ties: Uncover safety gaps through natural distribution shifts. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Vol-ume 1: Long Papers) .Paul Röttger, Hannah Rose Kirk, Bertie Vidgen, Giuseppe Attanasio, Federico Bianchi, and Dirk Hovy. 2023. XSTest: A test suite for identifying exaggerated safety behaviours in large language mod-els. arXiv preprint arXiv:2308.01263 .Bernhard Schölkopf, John C. Platt, John Shawe-Taylor, Alex J. Smola, and Robert C. Williamson. 2001. Esti-mating the support of a high-dimensional distribution.                
+
+> Neural Computation , 13(7):1443–1471. Aditi Sheshadri, Javid Ebrahimi, Kurt Keutzer, Ion Sto-ica, and Tatsunori Hashimoto. 2024. Latent adversar-ial training improves robustness to jailbreak attacks.
+> arXiv preprint arXiv:2407.15597 .Alexander Matt Turner, Lisa Thiergart, Gavin Leech, David Udell, Juan J. Vazquez, Ulisse Mini, and Monte MacDiarmid. 2023. Steering language mod-els with activation engineering. arXiv preprint arXiv:2308.10248 .Alexander Wei, Nika Haghtalab, and Jacob Steinhardt. 2023. Jailbroken: How does LLM safety training fail? arXiv preprint arXiv:2307.02483 .Zhangchen Xu, Fengqing Jiang, Luyao Niu, Jinyuan Jia, Bill Yuchen Lin, and Radha Poovendran. 2024. Safedecoding: Defending against jailbreak attacks via safety-aware decoding. arXiv preprint arXiv:2402.08983 .Zhengyue Zhao, Yingzi Ma, Somesh Jha, Marco Pavone, Patrick McDaniel, and Chaowei Xiao. 2025. AR-MOR: Aligning secure and safe large language models via meticulous reasoning. arXiv preprint arXiv:2507.11500 .Andy Zou, Long Phan, Sarah Chen, James Campbell, Phillip Guo, Richard Ren, Alexander Pan, Xuwang Yin, Mantas Mazeika, Ann-Kathrin Dombrowski, Shashwat Goel, Nathaniel Li, Michael J. Byun, Zifan Wang, Alex Mallen, Steven Basart, Sanmi Koyejo, Dawn Song, Matt Fredrikson, and 2 others. 2023a. Representation engineering: A top-down approach to AI transparency. arXiv preprint arXiv:2310.01405 .Andy Zou, Zifan Wang, Nicholas Carlini, Milad Nasr, J. Zico Kolter, and Matt Fredrikson. 2023b. Univer-sal and transferable adversarial attacks on aligned language models. arXiv preprint arXiv:2307.15043 .
+
+A Safe-Variant Construction Details 
+
+The reported system uses K=3 safe variants per prompt. The key intermediate object is a short topic summary s that captures the request at a safe level of abstraction. The variants themselves are not open-ended model answers. Instead, NeuroAr-mor inserts s into a small fixed template family. In the reported single-turn runs, these templates cor-respond to risk analysis, refusal explanation, and helpful or lawful-alternative framing. For multi-turn inputs, the system preserves the earlier turns and rewrites only the next assistant turn into a prevention-oriented safe continuation. The construction has two distinct stages that should not be conflated. Phase 1 builds the of-fline reference bank and detector inputs from the jailbreak training pool only. Phase 2 applies the resulting bank at held-out inference time. The main evaluation therefore does not require access to held-out benchmark labels, attack-family metadata, or annotated harmful-objective text at runtime. During offline reference-bank construction ,the builder first deduplicates the jailbreak train-ing pool and then assigns each retained row a short topic summary. The other malicious bench-mark files in this project are not used to build the phase-1 bank; they are reserved for held-out eval-uation slices. When a dataset-provided reference goal is available in the jailbreak training data, the builder may use that text directly after normaliza-tion, or use a constrained model-assisted summa-rizer to compress the attack text into a short neutral topic description. This summarizer is determinis-tic ( temperature=0.0 , max_new_tokens=64 , tok-enizer truncation at max_length=1024 ) and is in-structed to output only a brief description of the underlying objective, without instructions, refusal language, or policy explanation. A candidate sum-mary is accepted only if it is short, non-empty, free of refusal boilerplate, and has lexical overlap with the available training reference text; otherwise the builder falls back to a normalized reference-goal or source-prompt string. In the Llama-3 phase-1 bank used here, 1096/1725 topic summaries ( 63.5% )are accepted from the constrained summarizer and 
+
+629/1725 (36.5% ) use the deterministic fallback; the corresponding Gemma rates are 53.9% and 
+
+46.1% .During held-out inference , the system does not query annotated harmful objectives. It first nor-malizes the raw prompt and looks for a match in the stored phase-1 bank. If a match is found, it reuses the stored topic summary and its associ-ated safe variants. If no stored match is found, the reported evaluation switches to a deterministic lo-cal fallback. Concretely, the raw prompt text is whitespace-normalized, truncated to 220 charac-ters, and then passed through a fixed lexical screen. If the normalized text contains high-risk opera-tional markers such as hack , malware , phishing ,
+
+bomb , weapon , bypass , steal , payload , base64 ,or ignore previous , the system instantiates a fixed risk-facing template family: safety analysis, refusal explanation, and defensive review of the request. Otherwise it instantiates a fixed helpful template family: benign paraphrase, concise direct answer, and ambiguity-clarification prompts. This fallback is the reproducibility-critical held-out path. It is the path that executes whenever a test prompt misses the stored phase-1 bank. An optional online variant cache exists in code, but it is not required for the reported results. The same high-level rule is used for benign and malicious inputs: derive a short topic-level abstraction from raw text, con-struct fixed safe variants from it, and compare the resulting hidden states to the prompt state. The prompt-local selector is a literal key-word test over the raw lowercased prompt, and the risky-variant screen fires only when a structural cue and an operational harmful cue co-occur. Under this constrained pipeline, the legacy counters json_parse_failure and 
+
+semantic_drift_rejected remain zero in the phase-1 reports. For the Llama-3 reference bank, the corresponding variant-effectiveness summary reports 5175 total variants, a 94.6% unique-variant ratio, a 0.17% risky-variant ratio under the inter-nal heuristic screen, and average keyword overlap 
+
+0.59 between the stored training reference text and the accepted topic summary. 
+
+B Data Splits and Evaluation Scope 
+
+The main held-out claim of the paper is anchored to the jailbreak_test_test.jsonl malicious pool and the shared benign pool used in the pooled benign FPR calculation. The split manifest fixes a 70/10/20 train/validation/test split, but the reported benign-side evaluation uses the full shared 
+
+2925 -example benign evaluation pool rather than the smaller per-file test slices. Phase-1 reference construction uses the jailbreak training split only, while the headline phase-2 tables read from the held-out validation/test files generated by the split manifest. The safe-variant reference bank itself is built only from jailbreak_test_train.jsonl 
+
+(8456 ) after normalization and deduplication. The other malicious benchmark files in this project are not used to build phase-1 safe vari-ants; they are reserved as held-out evaluation slices. In particular, advbench_train.csv ,
+
+harmful-behaviors_train.csv , and 
+
+SafeMTData_train.json are evaluated in full in the malicious test suite rather than folded into the reference bank. The phase-1 builder then deduplicates the jailbreak training rows by normalized goal-or-jailbreak text before constructing safe variants, leaving 1725 unique malicious reference topics in the bank. Benign data participate separately: phase-1 uses a deduplicated benign calibration source distinct from the 
+
+2925 -example evaluation pool, and the detector training file includes only a small 40 -row benign calibration supplement in addition to the safe-side reference features. At inference time, held-out prompts may either match a stored phase-1 entry or use deterministic templates, but the evaluation pipeline does not consult held-out benchmark labels or annotated harmful-objective metadata when deciding whether to intervene. Appendix Table 16 reports zero exact-row overlap across split boundaries and an 18.00% held-out exact-match rate to stored phase-1 variants, so deterministic construction remains the majority path at inference time. For the matched Llama-3 baselines, we additionally restrict the full baseline detail files to the exact held-out rows used by the main claim. The matching key is the tuple 
+
+(label, source_dataset, text, goal) ,and the matching procedure is documented in 
+
+compute_matched_baseline_slices.py . We do not claim a stronger proof of zero semantic overlap across all upstream benchmarks beyond this row-level split and deduplication procedure; Appendix Table 16 reports the corresponding overlap check under the same split setting. 
+
+C Detector and Intervention Details 
+
+The detector is intentionally simple. It uses a 
+
+StandardScaler followed by a One-Class SVM with RBF kernel, nu=0.01 , and gamma=0.5 , oper-ating on three representation-consistency features: projection gap c_delta , cosine-consistency gap 
+
+cos_delta , and cross-state dispersion variance .The signed projection c is not part of the learned feature vector, but is retained as an auxiliary rout-ing statistic. For compact notation in the remainder of this appendix subsection, we use the following aliases:        
+
+> sddetector_score
+> swwrapper_risk_score
+> smmultiturn_risk_score
+> qcδc, p95
+> mcδc, p50
+> qcos δcos ,p95
+> qvvariance p95
+
+Training uses the stored phase-1 file svm_train_features.npy . For the Llama-3 reference set used in these experiments, this file has shape (5215, 3) : 5175 rows come from safe-side within-set reference statistics over the 
+
+1725 malicious reference topics and their K=3 safe variants, and 40 rows come from a small benign calibration supplement drawn from the phase-1 benign calibration source rather than from the 
+
+2925 -example evaluation pool. Before fitting, non-finite values are removed or mapped to finite defaults, the features are standardized, and the One-Class SVM is fit on the resulting reference features. The percentile file svm_feature_stats.json 
+
+stores the benign-reference cut points used by the downstream trigger logic. At inference time, the SVM output is not used in isolation. Instead, the detector combines it with a small set of percentile-based outlier rules and two lightweight heuristic scores: a heuristic wrapper score sw for policy-bypass and obfuscation cues, and a multi-turn risk score sm for escalation pat-terns across turns. A row is treated as a severe outlier when at least one of the following high-confidence patterns holds: a strongly negative safe-direction projec-tion together with nontrivial projection drift; a si-multaneous projection and cosine gap above their benign-reference tails; or unusually large joint-state dispersion together with elevated projection drift. A row is treated as a moderate outlier under a weaker version of the same logic: milder negative projection plus drift, simultaneous projection-and-cosine deviation at the benign-reference threshold, or elevated dispersion accompanied by smaller but still abnormal consistency gaps. Concretely, the thresholds are:                                           
+
+> Severe outlier: c<−0.10 and δc>
+> max( mc,10 −6); or δc>1.35 qcand δcos >
+> 1.20 qcos ; or variance >1.60 qvand δc>
+> 1.10 qc.
+> Moderate outlier: c < −0.05 and δc> m c;or δc> q cand δcos > q cos ; or variance > q v,
+> δc> m c, and δcos >0.85 qcos .
+
+These signals are combined into a scalar severity score, 
+
+detector_score = max(0 , risk_signals − 1) + 1 .5 1[prediction = −1] + 1 .5 1[moderate_outlier ]+ 2 .5 1[severe_outlier ]+ 0 .75 multiturn_risk_score 
+
++ wrapper_risk_score ,
+
+(5) where risk_signals counts threshold hits from the core consistency features together with the wrapper and multi-turn auxiliary scores. The detec-tor fires when any one of the following conditions is met: 1. a severe outlier is detected; 2. the SVM predicts an outlier and the row also satisfies the moderate-outlier test; 3. at least two risk signals fire jointly; 4. heuristic wrapper cues are strong enough to trig-ger a dedicated high-risk gate; 5. a medium heuristic-wrapper pattern co-occurs with lexical high-risk evidence and at least one weaker consistency anomaly; 6. a multi-turn risk pattern co-occurs with at least one weaker consistency anomaly; 7. the multi-turn risk score alone reaches the high-est escalation band. For reproducibility, the implementation instantiates these gates as follows:                   
+
+> High heuristic-wrapper gate: sw≥3.0and either the prompt matches the high-risk lexical rule or the row crosses the lighter wrapper δc/δ cos
+> test.
+> Intermediate heuristic-wrapper gate: sw≥
+> 1.5, the goal is lexically high-risk, and at least one of an SVM outlier prediction, a lighter δc
+> threshold, or a lighter variance threshold holds.
+> Multi-turn risk gate: sm≥2.5and at least one of an SVM outlier prediction, a lighter δc
+> threshold, a lighter δcos threshold, or a lighter variance threshold holds; or sm≥5.0.
+
+This set of rules is fixed before held-out evaluation and shared across the reported main runs. The runtime intervention operators should be read as low-level moves inside a higher-level selec-tion scheme rather than as standalone methods. Let 
+
+h denote the current last-token residual state and let ˆvsafe denote the normalized safety direction. 
+
+Structure push. 
+
+h′ = h + α∥h∥ˆvsafe .Reflection correction. If the signed coefficient along ˆvsafe is sufficiently negative, the state is re-flected back toward the safe direction: 
+
+c = ⟨h, ˆvsafe ⟩∥ˆvsafe ∥22
+
+.h′ = h − λc ˆvsafe when c < −0.05 .
+
+Alignment-based adjustment. When the align-ment matrix R is available, the system uses a pro-jected safety direction: 
+
+h′ = h + αp∥h∥ \Rˆvsafe .
+
+Centroid blending. When a safe-variant centroid 
+
+μsafe is available, the system first applies a light structure push and then blends toward the safe cen-troid: ˜h = h + α∥h∥ˆvsafe ,h′ = (1 − β)˜h + βμ safe .
+
+In the reported implementation, these operators are controlled by a fixed severity-dependent sched-ule. The base structure coefficient is 0.22 , and stronger anomalies are assigned larger shifts. Let 
+
+severity = detector_score . The coefficients are: 1. Structure gain (structure_gain ): the default value is 0.22 ; it is scaled by 1.25 for severity >= 5.0 and by 1.45 for severity >= 6.5 , with an additional 1.35 multiplier in multi-turn set-tings, then clipped to [0.18, 0.72] . In multi-turn centroid blending, the same quantity is re-duced to 30% of its current value and clipped to 
+
+[0.04, 0.10] . In the dedicated multi-turn safe-reframing mode, no structure push is applied. 2. Centroid blend (invariant_blend ): the de-fault value is 0.28 ; it increases to 0.32 for 
+
+severity >= 5.0 and to 0.38 for severity >= 6.5 . In multi-turn centroid-blending mode it is reset to 0.03 , 0.04 , or 0.05 depending on severity or multiturn_risk_score . In single-turn centroid-blending mode it is lower-bounded by 0.36 when wrapper_risk_score >= 2.0 
+
+or severity >= 5.0 , and by 0.42 when 
+
+wrapper_risk_score >= 3.0 or severity >= 6.5 ; the final clip is [0.20, 0.52] in single-turn mode and [0.01, 0.12] in multi-turn mode. 3. Alignment gain (procrustes_alpha ): the de-fault value is 0.12 ; it increases to 0.15 for 
+
+severity >= 5.0 and 0.18 for severity >= 6.5 , is floored at 0.20 in multi-turn settings, and clipped to [0.08, 0.25] .4. Reflection gain (reflection_gain ): the de-fault value is 1.25 ; it increases to 1.40 for 
+
+severity >= 5.0 and 1.60 for severity >= 6.5 , then is clipped to [1.0, 1.8] .5. Hybrid centroid blend 
+
+(hybrid_centroid_blend ): this term is used only in single-turn structure mode. It is set to 0.04 when sw ≥ 2.0 and severity >= 3.0 , and to 0.06 when sw ≥ 3.5 or severity >= 5.0 .Mode selection is likewise fixed before held-out test evaluation. The main text uses the default 
+
+core family rather than the alternative full family retained in code. Under the reported core family, the selection is: 1. if the detector does not fire, the model is left unchanged; 2. if the row is identified as multi-turn, the system uses a specialized safe-reframing mode, which is the clearest example of the helpful path be-cause it rewrites only the next assistant turn into a safe continuation rather than always collapsing directly to refusal; 3. otherwise, reflection is preferred for strongly negative projections with large projection drift; 4. otherwise, centroid blending is preferred when safe variants are available and the row satisfies one of several higher-risk wrapper/dispersion patterns:                                                     
+
+> Gate A: sw≥2.0,sd≥4.5, and δc>
+> max(1 .10 mc,0.10) .
+> Gate B: sd≥5.0,c > −0.12 ,δc>1.10 qc,
+> δcos >1.05 qcos , and variance >0.90 qv.
+> Gate C: sw≥3.0,sd≥6.0,c > 0.10 , and
+> variance >0.90 qv.
+> Gate D: sw≥2.0,sd≥5.5,c < −0.03 ,and variance >1.10 qv.
+
+5. if none of the above conditions hold, the system uses structure mode. In the reported system, the single-turn helpful path is implemented directly as a dedicated helpful re-covery branch for ambiguous borderline benign prompts whose surface form may still look mali-cious or policy-violating, but whose safe-variant evidence supports a benign, non-harmful interpre-tation. For the alternative full family retained in code, the single-turn selector is simpler. After the same reflection test, it: 1. uses centroid blending when variance >
+
+1.45 qv and δc > 1.05 qc;2. uses alignment-based adjustment only when an alignment matrix is available and δcos >
+
+1.20 qcos ;3. otherwise uses structure .For the feature banks used in these experiments, the stored percentile anchors are: 1. δc, p95 = 0.4161 ,2. δc, p50 = 0.0769 ,3. δcos ,p95 = 0.1651 ,4. variance p95 = 1.3636 .For Gemma they are: 1. 0.4240 ,2. 0.1326 ,3. 0.1424 ,4. 0.6725 ,respectively. These constants are reported for re-producibility rather than as theoretically optimal choices. Appendix Tables 11, 12, and 13 provide complementary sensitivity measurements for this operating point. In particular, Appendix Table 13 shows that removing reflection, centroid blend-ing, or alignment-based adjustment weakens the reported ASR/FPR trade-off, which is consistent with interpreting the intervention stack as a coor-dinated design rather than as a single dominant operator. 
+
+D Behavioral Evaluation Details 
+
+The GPT-4 external judge (OpenAI, 2023) re-ceives the original malicious prompt and the fi-nal model response, then returns one label from {operational_harmful , refusal , safe_answer ,
+
+non_harmful_offtarget , degenerate , answer }. We define Harm N as the number of malicious ex-amples labeled operational_harmful and Judge ASR as Harm N divided by the number of evalu-ated malicious examples. The manual category review uses the same shared six-label scheme and is conducted by the authors on the aligned held-out exports under the same malicious pool of 2416 examples. No exter-nal annotators are recruited or paid for this review step. The behavioral tables in this paper are aligned to the unified malicious pool of 2416 held-out ex-amples in jailbreak_test_test.jsonl . Table 7 reports the full held-out manual category review over that pool. For Llama-3-8B and Gemma-2-9B Vanilla/Detect/ReAnchor , the per-row category labels are taken directly from the stored phase-2 detail exports. Table 4 reports the judge evalua-tion on the same 2416 -example pool, while Table 6 records the provenance of the aligned behavioral pools. 
+
+Pool Systems N Provenance Full held-out manual cate-gory review System rows re-ported in Table 7 2416 The full-pool manual cat-egory review is computed on the main held-out ma-licious pool jailbreak_ test_test.jsonl . The re-ported category rows are taken from the aligned held-out category exports used for Table 7. GPT-4 judge evaluation Model/System rows in Table 4 and Ta-ble 8 2416 The judge table is aligned to the same main held-out ma-licious pool of 2416 exam-ples. 
+
+Table 6: Provenance of the unified behavioral evalua-tion pools. The paper’s aligned behavioral reporting is anchored to the main held-out malicious pool of 2416 
+
+examples.                                                                                                     
+
+> Model System NASR Harm N Harm (%) Refuse Safe Off-target Degen. Answer
+> Llama-3-8B Vanilla 2416 41.56 579 23.97 1005 326 302 204 579
+> Llama-3-8B NeuroArmor-Detect 2416 41.56 579 23.97 1005 326 302 204 579
+> Llama-3-8B NeuroArmor-ReAnchor 2416 1.57 24 0.99 2003 325 52 12 24
+> Llama-3-8B Direct Safety Steering 2416 23.92 324 13.41 1309 407 174 202 324
+> Llama-3-8B Runtime Intervention Baseline 2416 24.92 371 15.36 1277 318 244 206 371
+> Llama-3-8B Llama-Guard-3 2416 26.61 255 10.56 1421 231 144 365 255
+> Gemma-2-9B Vanilla 2416 53.52 798 33.03 1087 268 62 201 798
+> Gemma-2-9B NeuroArmor-Detect 2416 53.52 798 33.03 1087 268 62 201 798
+> Gemma-2-9B NeuroArmor-ReAnchor 2416 1.90 31 1.28 2152 110 76 47 31
+
+Table 7: Full held-out manual category review on the unified main held-out malicious pool of 2416 examples. The category columns follow the shared label set used in the behavioral evaluation: operational_harmful ,
+
+refusal , safe_answer , non_harmful_offtarget ,
+
+degenerate , and answer . The ASR column is aligned to the same held-out malicious pool. 
+
+Model System ASR (held-out) GPT-4 Judge (held-out) Manual review (held-out) 
+
+Llama-3-8B Vanilla 41.56 (1004/2416) 25.66 (620/2416) 23.97 (579/2416) 
+
+Llama-3-8B NeuroArmor-Detect 41.56 (1004/2416) 25.66 (620/2416) 23.97 (579/2416) 
+
+Llama-3-8B NeuroArmor-ReAnchor 
+
+1.57 (38/2416) 0.87 (21/2416) 0.99 (24/2416) 
+
+Llama-3-8B Direct Safety Steering 23.92 (578/2416) 18.34 (443/2416) 13.41 (324/2416) 
+
+Llama-3-8B Runtime Inter-vention Base-line 24.92 (602/2416) 21.94 (530/2416) 15.36 (371/2416) 
+
+Llama-3-8B Llama-Guard-326.61 (643/2416) 16.97 (410/2416) 10.56 (255/2416) 
+
+Gemma-2-9B Vanilla 53.52 (1293/2416) 30.75 (743/2416) 33.03 (798/2416) 
+
+Gemma-2-9B NeuroArmor-Detect 53.52 (1293/2416) 30.75 (743/2416) 33.03 (798/2416) 
+
+Gemma-2-9B NeuroArmor-ReAnchor 
+
+1.90 (46/2416) 1.32 (32/2416) 1.28 (31/2416) 
+
+Table 8: Aligned comparison of ASR, GPT-4 judge, and manual review on the full main held-out malicious pool of 2416 examples. Each entry reports the percentage fol-lowed by the exact count fraction in parentheses. Lower is better in all three columns. 
+
+System MMLU GSM8K HumanEval Intervention rate Vanilla 59.28 86.02 55.49 0.0 NeuroArmor-ReAnchor 59.28 86.02 55.49 0.0 
+
+Table 9: Utility evaluation on the shared benchmark set. No regression is observed on the evaluated tasks. E Appendix Pipeline Sketch 
+
+We include a compact sketch of the prompt-processing pipeline used at inference time in the reported system.                 
+
+> Input: prompt x
+> 1. Derive a topic summary sfrom raw text x.2. Construct Ksafe variants B(x)from s.3. Run the base model on xand on B(x).4. Compute consistency features z(x).5. If z(x)is out-of-distribution, trigger intervention; otherwise leave the state unchanged. 6. Generate the final response and score it under the evaluation setting.
+
+Figure 4: Compact prompt-processing pipeline. The same path is used for benign and malicious inputs; only the trigger decision changes the downstream interven-tion step. 
+
+F Sensitivity and Robustness Evaluation 
+
+The tables in this appendix section report additional runtime, sensitivity, robustness, and overlap results that complement the main evaluation. Together they characterize runtime overhead, layer choice, variant count, intervention-operator contributions, borderline-benign behavior, adaptive-attack stress tests, and split overlap. 
+
+Stage Seconds Relative Variant lookup / template build 0.04 0.00x Activation extraction 7.82 0.19x Detector scoring 0.00 0.00x ReAnchor generation 41.57 1.01x Vanilla generation 41.32 1.00x End-to-end NeuroArmor-ReAnchor 49.43 1.20x 
+
+Table 10: Runtime decomposition of NeuroArmor-ReAnchor. Relative cost is computed against vanilla generation. 
+
+Layer ASR FPR Note 
+
+−8 17.20 5.10 Earlier-layer re-anchoring low-ers benign blocking but leaves substantially higher ASR than the final-block setting. 
+
+−4 12.60 5.70 This intermediate layer im-proves over −8 but still trails later-layer re-anchoring on ma-licious suppression. 
+
+−2 10.30 6.00 The near-final layer narrows the ASR gap further, but the final block still provides the strongest malicious suppres-sion. 
+
+−1 1.57 22.05 Reported Llama-3 operating point used in the main paper; this is the final-block setting referenced in the main held-out results. 
+
+Table 11: Target-layer sensitivity for the main Llama-3-8B setting. 
+
+K Llama-3 ASR/FPR Gemma-2 ASR Note 
+
+K = 1 4.80/37.80 7.20 Weakest reference geome-try and highest ASR in the sweep. 
+
+K = 2 2.40/36.10 3.80 Recovers most of the gap, but still trails K = 3 on both models. 
+
+K = 3 1.57/22.05 1.90 Reported operating point used in the main evalua-tion. 
+
+K = 4 1.52/22.15 1.85 Only marginal change rela-tive to K = 3 .
+
+K = 5 1.48/22.20 1.82 Near saturation by K = 5 ;negligible change beyond 
+
+K = 4 .
+
+Table 12: Safe-variant-count sensitivity across the re-ported Llama-3 and Gemma-2 settings. For Gemma-2, we report ASR as cross-model support.                   
+
+> Configuration ASR/FPR Note Full NeuroArmor-ReAnchor 1.57/22.05 Reference row from the main held-out evaluation setting. Direction-only re-anchor 23.48/35.29 Uniform safety-direction push; much weaker in both ASR and benign calibration. w/o reflection correction 2.02/35.44 Both ASR and FPR worsen; reflection helps preserve the full trade-off. w/o centroid blending 2.15/35.52 Both ASR and FPR worsen; centroid guidance matters on harder cases. w/o alignment-based adjustment 1.90/35.36 ASR rises and benign FPR stays high; alignment provides a measurable gain. Structure-only re-anchor 23.90/35.35 Coarse structure push; far weaker than the full selective stack.
+
+Table 13: Micro-operator ablation under the main held-out evaluation setting. Benign category Vanilla blocked ReAnchor blocked Note XS-Test-1356 1.11 0.37 Easier benign slice; re-anchoring reduces blocking further. XS-Test-safe 3.20 4.00 Smaller safe slice; modest benign cost increase. OR-Bench-Hard 65.35 47.76 Main source of false posi-tives; most pooled FPR gain comes from this slice. 
+
+Table 14: Benign-boundary evaluation on the shared Llama-3 benign pool used for the pooled FPR analysis. 
+
+Adaptive threat model Llama-3 ASR Gemma ASR Note Detector-aware paraphrase-preserving jailbreak 8.40 12.20 Stronger than the static benchmark set-ting, but still mate-rially below vanilla ASR. Low-perturbation suffix search against the detector features 15.60 21.80 Strongest reported white-box probe; exposes the largest adaptive weakness in the current evalua-tion. Representation-consistent multi-turn jailbreak 13.50 18.90 Important because multi-turn jailbreaks remain the hardest malicious slice in the main evaluation. Cross-model detector-aware at-tack 10.10 14.30 Suggests part of the weakness transfers across models rather than coming only from model-specific quirks. 
+
+Table 15: Adaptive-attacker stress tests across the re-ported Llama-3 and Gemma-2 settings. 
+
+Overlap check Value Note Phase-1 malicious reference rows vs held-out malicious eval-uation rows 0.00% No exact-row overlap be-tween malicious reference construction and held-out malicious evaluation rows. Phase-1 benign calibration rows vs held-out benign evaluation rows 0.00% No exact-row overlap be-tween benign calibration rows and held-out benign evaluation rows. Exact normalized goal dupli-cates across split boundaries (count) 0 Zero normalized-goal dupli-cates after split-time dedupli-cation. Held-out exact-match rate to stored phase-1 variants 18.00% Stored variants are reused in some cases, but determinis-tic construction remains the main path. 
+
+Table 16: Overlap and leakage check under the reported train/validation/test split. 
+
+G ARMOR Reference 
+
+We also report ARMOR in the appendix for context. This reference is not directly comparable to the main held-out results because the available ARMOR 
+
+evaluation does not cover the multi-turn jailbreak portion of the main held-out malicious pool, which changes the effective sample count relative to the main evaluation setting. We therefore retain it only as an auxiliary reference rather than as a matched baseline for the main table. 
+
+Method ASR (%; count/total) FPR (%; count/total) ARMOR guarded 27.53 (500/1816) 32.68 (956/2925) ARMOR original 22.58 (410/1816) 39.79 (1164/2925) 
+
+Table 17: ARMOR reference results reported for con-text. These rows are not directly comparable to the main held-out table because the available ARMOR evaluation does not cover the multi-turn jailbreak portion of the main held-out malicious pool, so the effective sample counts differ from the main evaluation setting.

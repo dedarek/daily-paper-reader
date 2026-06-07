@@ -6,58 +6,57 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-06
-- 运行时间：2026-06-06 05:53:29 UTC
+- 最新运行日期：2026-06-07
+- 运行时间：2026-06-07 06:37:22 UTC
 - 运行状态：成功
-- 本次总论文数：12
-- 精读区：6
-- 速读区：6
+- 本次总论文数：11
+- 精读区：4
+- 速读区：7
 
 ### 今日简报（AI）
-今日聚焦LLM安全防御与攻击对抗，精读两篇高分论文分别提出集成浅层网络检测提示注入及自进化对比记忆保护代理系统。  
-推荐优先阅读《GuardNet》和《Membrane》，两者均针对越狱与注入攻击提出创新防御框架，评分9.0/10。  
-建议深入精读这两篇论文的机制设计，并关注速读中《MaskForge》的结构攻击方法以理解最新威胁形态。
-- 详情：[/202606/06/README](/202606/06/README)
+今日精读两篇LLM安全防御高分论文，速读后门遗忘与对抗投毒等趋势，聚焦模型脆弱性缓解。
+
+最值得关注：基于安全变体的表示一致性方法（NeuroArmor，9.0/10）与专家感知的拒绝引导机制（8.0/10），为越狱防御提供了新范式。
+
+建议跟踪防御类研究的同时，留意后门遗忘泛化（7.0/10）及对抗反馈对Agent决策的操纵风险，可先精读《NeuroArmor》了解核心思路。
+- 详情：[/202606/07/README](/202606/07/README)
 
 ### 精读区论文标签
-1. [GuardNet: Ensemble Strategies of Shallow Neural Networks for Robust Prompt Injection and Jailbreak Detection](/202606/06/2606.05566v1-guardnet-ensemble-strategies-of-shallow-neural-networks-for-robust-prompt-injection-and-jailbreak-detection)  
+1. [NeuroArmor: Safe-Variant-Guided Representation Consistency for Selective Re-Anchoring in Jailbreak Defense](/202606/07/2606.03486v1-neuroarmor-safe-variant-guided-representation-consistency-for-selective-re-anchoring-in-jailbreak-defense)  
    标签：评分：9.0/10、query:llm-security
-   evidence：基于浅层神经网络集成的提示注入和越狱检测
-2. [Membrane: A Self-Evolving Contrastive Safety Memory for LLM Agent Defense](/202606/06/2606.05743v1-membrane-a-self-evolving-contrastive-safety-memory-for-llm-agent-defense)  
-   标签：评分：9.0/10、query:llm-security
-   evidence：为LLM智能体设计的自进化安全护栏
-3. [Towards Healthy Evolution: Exploring the Role and Mechanisms of Human-Agent Interaction in Self-Evolving Systems](/202606/06/2606.06114v1-towards-healthy-evolution-exploring-the-role-and-mechanisms-of-human-agent-interaction-in-self-evolving-systems)  
-   标签：评分：9.0/10、query:llm-security
-   evidence：ANCHOR框架通过模拟人类监督缓解自进化智能体的安全漂移
-4. [CSULoRA: Closest Safe Update Low-Rank Adaptation](/202606/06/2605.30640v1-csulora-closest-safe-update-low-rank-adaptation)  
+   evidence：提出NeuroArmor，一种针对越狱攻击的运行时防御方法
+2. [Expert-Aware Refusal Steering](/202606/07/2606.04160v1-expert-aware-refusal-steering)  
    标签：评分：8.0/10、query:llm-security
-   evidence：事后纠正LoRA适配器以保持安全，抵御对抗性更新
-5. [Inference-Time Vulnerability Beyond Shallow Safety: Alignment Along Generation Trajectories](/202606/06/2606.04778v1-inference-time-vulnerability-beyond-shallow-safety-alignment-along-generation-trajectories)  
+   evidence：拒绝行为转向用于内容安全
+3. [Hybrid Adversarial Defence for Natural Language Understanding Tasks](/202606/07/2606.04612v1-hybrid-adversarial-defence-for-natural-language-understanding-tasks)  
    标签：评分：8.0/10、query:llm-security
-   evidence：提出沿生成轨迹的对齐方法以防御推理时令牌注入
-6. [Safety Paradox: How Enhanced Safety Awareness Leaves LLMs Vulnerable to Posterior Attack](/202606/06/2606.05614v1-safety-paradox-how-enhanced-safety-awareness-leaves-llms-vulnerable-to-posterior-attack)  
+   evidence：面向NLU的混合对抗防御
+4. [Provably Auditable and Safe LLM Agents from Human-Authored Ontologies](/202606/07/2606.04903v1-provably-auditable-and-safe-llm-agents-from-human-authored-ontologies)  
    标签：评分：8.0/10、query:llm-security
-   evidence：利用安全意识的后验越狱攻击
+   evidence：具有形式化验证的安全LLM代理
 
 ### 速读区论文标签
-1. [MaskForge: Structure-Aware Adaptive Attacks for Jailbreaking Diffusion Large Language Models](/202606/06/2606.04027v1-maskforge-structure-aware-adaptive-attacks-for-jailbreaking-diffusion-large-language-models)  
+1. [Backdoor Unlearning Generalization: A Path Toward the Removal of Unknown Triggers in LLMs](/202606/07/2606.03785v2-backdoor-unlearning-generalization-a-path-toward-the-removal-of-unknown-triggers-in-llms)  
    标签：评分：7.0/10、query:llm-security
-   evidence：面向扩散LLM的自适应越狱攻击
-2. [TRACE: Task-Aware Adaptive Self-Evolving Agentic Jailbreaking](/202606/06/2605.30883v1-trace-task-aware-adaptive-self-evolving-agentic-jailbreaking)  
+   evidence：后门遗忘泛化到未知触发器
+2. [On the Limits of LLM Adaptability: Impact of Model-Internalized Priors on Annotation Task Performance](/202606/07/2606.00467v1-on-the-limits-of-llm-adaptability-impact-of-model-internalized-priors-on-annotation-task-performance)  
    标签：评分：6.0/10、query:llm-security
-   evidence：提出实用的智能体越狱框架，揭示了类似提示注入的威胁
-3. [Same Payload, Different Channel: Measuring Trust Asymmetry in Tool-Using Language Models](/202606/06/2606.00566v1-same-payload-different-channel-measuring-trust-asymmetry-in-tool-using-language-models)  
+   evidence：LLM输出毒性检测与内容安全
+3. [Adversarial Feeds Steer LLM Agent Decisions Against Their Defaults](/202606/07/2606.00914v1-adversarial-feeds-steer-llm-agent-decisions-against-their-defaults)  
    标签：评分：6.0/10、query:llm-security
-   evidence：衡量智能体LLM在用户消息、工具元数据、工具输出等渠道的安全性不对称性
-4. [CANARY: Zero-Label Detection of Fine-Tuning Contamination in Language Models](/202606/06/2606.01695v1-canary-zero-label-detection-of-fine-tuning-contamination-in-language-models)  
+   evidence：研究对抗性反馈流对LLM智能体决策的影响，涉及智能体安全机制
+4. [Safety Measurements for Fine-tuned LLMs Should be Grounded in Capability](/202606/07/2606.03648v1-safety-measurements-for-fine-tuned-llms-should-be-grounded-in-capability)  
    标签：评分：6.0/10、query:llm-security
-   evidence：零标签检测微调污染
-5. [DDOR: Delta Debugging for Explainable Overrefusal Testing and Repair](/202606/06/2606.03601v1-ddor-delta-debugging-for-explainable-overrefusal-testing-and-repair)  
+   evidence：针对微调后安全性下降的缓解方法
+5. [Don't Forget Your Embeddings: Robust Knowledge Erasure via Precise Editing of Embeddings](/202606/07/2606.03695v1-dont-forget-your-embeddings-robust-knowledge-erasure-via-precise-editing-of-embeddings)  
    标签：评分：6.0/10、query:llm-security
-   evidence：面向护栏的可解释过度拒绝测试与修复
-6. [ToolChoiceConfusion: Causal Minimal Tool Filtering for Reliable LLM Agents](/202606/06/2606.06284v1-toolchoiceconfusion-causal-minimal-tool-filtering-for-reliable-llm-agents)  
+   evidence：知识擦除方法用于内容安全，可应用于LLM输出过滤
+6. [From Agent Traces to Trust: Evidence Tracing and Execution Provenance in LLM Agents](/202606/07/2606.04990v1-from-agent-traces-to-trust-evidence-tracing-and-execution-provenance-in-llm-agents)  
    标签：评分：6.0/10、query:llm-security
-   evidence：因果最小工具过滤提升LLM智能体的可靠性与安全性
+   evidence：提供LLM智能体的溯源追踪，有助于安全审计
+7. [Steering Vectors are an Adversarial Attack Surface](/202606/07/2606.05958v1-steering-vectors-are-an-adversarial-attack-surface)  
+   标签：评分：6.0/10、query:llm-security
+   evidence：对引导向量的隐蔽数据投毒攻击，揭示了新的攻击面
 
 
 <div class="dpr-home-promo-card">
