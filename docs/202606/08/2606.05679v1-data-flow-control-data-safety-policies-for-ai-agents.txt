@@ -1,0 +1,607 @@
+Title: Data Flow Control: Data Safety Policies for AI Agents
+
+URL Source: https://arxiv.org/pdf/2606.05679v1
+
+Published Time: Fri, 05 Jun 2026 00:43:05 GMT
+
+Number of Pages: 15
+
+Markdown Content:
+# Data Flow Control 
+
+# Data Safety Policies for AI Agents 
+
+# Charlie Summers 
+
+Columbia University New York, New York, USA cgs2161@columbia.edu 
+
+# Eugene Wu 
+
+Columbia University New York, New York, USA ewu@cs.columbia.edu 
+
+## ABSTRACT 
+
+Agents increasingly generate SQL, orchestrate pipelines, and auto-mate data analysis on behalf of users. While recent work improves query correctness, correctness is not safety . A query may be semantically valid yet violate regulatory, privacy, or business con-straints that govern how data may be combined and released. We argue that enforcing such constraints is fundamentally a data in-frastructure problem. This paper introduces Data Flow Control (DFC), a framework to declaratively specify and guarantee policy enforcement over tuple-level data flows within a DBMS query. A key challenge is defining a policy language that is optimizer-invariant yet efficient to enforce at scale. We formalize data safety as aggregate predi-cates over provenance monomials and present Passant , a portable query rewriting layer that enforces DFC policies without mate-rializing provenance. Across five DBMS engines—DuckDB, Um-bra, PostgreSQL, DataFusion, and SQLServer— Passant achieves 
+
+≈ 0% overhead and outperforms alternatives by orders of mag-nitude. As a result, Data Flow Control is the first step towards moving data safety from prompts and post-hoc checks into the data infrastructure. Data Flow Control is available open source at https://github.com/dataflowcontrol/data-flow-control. 
+
+## 1 INTRODUCTION 
+
+Agents are increasingly relied upon to interact with data systems on behalf of users to generate SQL queries [ 19 , 28 ], orchestrate ETL pipelines [ 13 , 18 ], automate digital tasks like accounting [ 39 ], and perform data science [ 24 , 42 ]. Much of recent work focuses on improving text-to-SQL accuracy [ 19 , 28 , 29 , 53 ], building databases and systems to support agentic workloads [ 31 , 46 , 52 ], and designing agents for domain-specific tasks. The main goal is correctness: do the queries reflect the user’s intent? However, correctness is not safety . Correctness refers to whether a query derives a desired result, whereas safety refers to whether that query is allowed under regulatory, privacy, or business con-straints that govern how data may be transformed and released. Thus, a query may abide by the user’s intent but produce a result that should not have been computed. Unfortunately, today’s agent safety research emphasizes goal alignment, adversarial inputs, and avoiding harmful actions [ 37 , 47 ]. In contrast, data-centric settings manifest these concerns as data safety policies —declarative constraints over how records may be accessed, transformed, combined, and released. Such policies arise not only in agent-DBMS interactions, but throughout data manage-ment: ETL pipelines, data silos, third-party analytics, regulatory reporting, and manual data analytics. 
+
+Figure 1: DFC vs LLM calls check 13 TPC-H queries (5 runs each) against 1-32 trivial data flow control policies over 
+
+lineitem . Policies check simple aggregate statistics e.g., “Av-erage quantity ≤30” . LLMs are given the query and first 100 result tuples 1. DFC is correct and orders of magnitude faster. Example 1 (TaxAgent ). TaxAgent is preparing the user’s annual tax report. One subtask is to review the user’s credit card receipts and determine which can be deducted as business expenses (Figure 2). For instance, TaxAgent executes Q = INSERT INTO Expenses SELECT id, item, cost, predictbizuse(*) FROM Receipts; 
+
+Accounting is a heavily regulated industry, and violating a number of data use policies can lead to repercussions in finances, criminality, and reputation. Thus, the query must also be: (1) Private (non-leakage constraint): One user’s Receipts must never be released; they must always be aggregated across users. (2) Grounded (derivation constraint): TaxAgent may hallucinate and insert non-existent receipts into Expenses , thus every row inserted into Expenses must be derived from a receipt. (3) Law-abiding (transformation constraint): deductions must comply with tax regulations; for example, no more than 50% of a meal may be deducted as a business expenses [49]. A query may be syntactically and semantically correct but still vio-late these constraints. For instance, it may return raw receipts in a report (privacy violation), insert a non-existent Porsche purchase into 
+
+Expenses (grounding violation), or expense the full amount of a steak dinner (law violation). Unfortunately, existing safety and database mechanisms cannot guarantee compliance with any of these policies. 
+
+> arXiv:2606.05679v1 [cs.DB] 4 Jun 2026 Charlie Summers and Eugene Wu
+
+Figure 2: TaxAgent categorizes Receipts into Expenses. To ensure tax law is followed, DFC policies are defined with the PGN 
+
+language. Passant rewrites Q with Full-Push into Q′ that also evaluates the policy. Q′ violates the policy because biz_use 
+
+exceeds 50% for a Meal receipt. The row is not inserted (marked red to highlight the failure). 
+
+Beyond agents, US Department of Education’s Every Student Succeeds Act 2 requires student statistics to be disaggregated by protected classes. An analyst who aggregates across e.g., sexes may produce a correct result that nonetheless violates statutory policy (more examples in Section 2.1). The issue is not access—users and agents are allowed access—but which data flows are permitted. These examples illustrate a gap in data safety. Modern DBMSes support powerful primitives such as: access controls govern access to data; integrity constraints govern database state; and provenance explains how results are derived. However, none prevent disallowed derivations from being computed and returned. Access control restricts who may read data, not how data may be combined. Integrity constraints govern tuples stored in the data-base, not intermediate query state. Provenance can retrospectively audit results, but does not enforce derivations during execution without considerable overhead. Traditional information flow con-trol is defined over static security labels and coarse-grained flows, but not at the tuple-level. None provide declarative, constraints that are suitable for offline policy definitions, and none constrain data flows within the database system. What is needed is a deterministic way to enforce declarative policies over how data flows through the database. In other words, a mechanism for Data Flow Control (DFC) . Agents and analysts that execute complex queries over sensitive data should not be responsible for data safety and this enforcement must move into the data system itself. Current approaches attempt to enforce safety outside of the data-base system. A popular strategy encodes policies in prompts or uses LLMs to evaluate whether a query is safe [ 54 ]. These methods are inherently probabilistic, provide no formal guarantees, and degrade as policy complexity and data scale grow (Figure 1). More advanced systems track tool-level dependencies or introduce guardrails such as Semantic Integrity Constraints [ 27 ]. While these efforts are im-portant and complementary, they are unaware of the underlying 
+
+> 2https://www.ed.gov/laws-and-policy/laws-preschool-grade-12-education/every-student-succeeds-act-essa-0
+
+tuple-level data flows, or rely on probabilistic methods without guar-antees. In short, existing solutions treat data safety as a prompting or post-hoc validation problem. We argue that it is fundamentally an infrastructure problem. To make DFC practical and broadly applicable, data safety in-frastructure must satisfy the following properties: 
+
+• P1: Enforced at the Data Layer. Data safety policies must be guaranteed by the database engine itself—not delegated to applications, agents, or prompts. 
+
+• P2: Govern Data Flows, Not Access. Constrain how data is transformed and combined, not merely who may read it. 
+
+• P3: LLMs Not Required. Enforcement must not depend on LLMs, but allow policies to use LLMs if desired. 
+
+• P4: Context Is First-Class. Policies should extend beyond strict input–output flows and operate over relational and system con-text (e.g., identity, provenance, delegation, workload state). 
+
+• P5: Safety by Default. Enforcement must be cheap enough to apply to every query, so that safety is the natural choice. These properties distinguish DFC from traditional information flow control, row-level security, trigger-based enforcement, provenance for auditing, and model-level guardrails. This paper presents a prototype DFC system, Passant , that sup-ports a declarative DFC policy language for SQL-92 queries on any relational DBMS. We logically formalize data safety as aggregate predicates over a query’s record-level data provenance. A key chal-lenge in designing a language is that it must be invariant to the physical query plan because the plan affects the structure of prove-nance polynomials. As such, we define policies over provenance monomials. Since the policy language is rooted in relational con-structs, policy writers can reference any relation that is accessible to the DBMS as part of the policy. This allows policies that take user privileges, the database catalog, remote data sources, and even system state into account, and when desired, use LLMs to make semantic decisions. Data Flow Control 
+
+Despite a highly expressive policy language, Passant physically enforces policies without materializing full provenance polynomi-als . It does so by introducing a set of novel query rewriting rules that push DFC enforcement into base query execution. This lets 
+
+Passant avoid the provenance tax [ 34 ] of 20% −10 , 000 × query slow-down. Across five major DBMS engines, we demonstrate that DFC enforcement outperforms existing provenance-based approaches by up to several orders of magnitude, incurs near-zero runtime overhead, and in many cases, accelerates the base query execution. In summary, this paper contributes: 
+
+• A formalization of data safety as constraints over record-level query provenance that are invariant to the query optimizer. This elevates provenance from auditing to active policy enforcement. 
+
+• The design of PGN , a declarative language for expressing Data Flow Control policies, and Passant a portable query rewriting layer to enforce policies. 
+
+• A naive algorithm that leverages existing provenance polyno-mial capture systems and post-processes the polynomials, as well as two classes of rewriting algorithms that reduce the amount of intermediate query state needed to enforce these policies. 
+
+Partial-Push pushes policy aggregate computations down but still requires computing provenance polynomials, while Full-Push 
+
+fully inlines data flow control logic into base query execution to avoid provenance materialization. 
+
+• We identify conditions where DFC enforcement scales sub-linearly in the number of policies and query complexity (number of self-joins). We show how templated threshold policies collapse via dominance, how symmetric self-join policies avoid factorial blowup, and how to support outer joins and SQL-92 constructs without materializing full provenance. 
+
+• An empirical evaluation across five DBMS engines demonstrating near-zero overhead and substantial improvements over baseline provenance approaches. 
+
+Scope: This work focuses on the definition of DFC policies and a portable enforcement mechanism that applies to any monotonic SQL-92 query, which expresses a majority of analytic and regula-tory workloads. In this context, we show that DFC policies can be enforced efficiently. While there are pragmatic heuristics, we leave extending DFC to non-monotonic constructs (e.g., negation, recur-sion) as an important next step to be co-designed with concrete application needs. 
+
+## 2 MOTIVATION AND BACKGROUND 
+
+We present more use cases and a brief provenance primer. 
+
+## 2.1 Use Cases 
+
+We now describe additional use cases for data flow controls to support human and agents. While these use cases are expressible over data flows, modern DBMSes do not support their enforcement. 
+
+2.1.1 Regulations and Data Privacy. Data privacy requirements from governments, organizations, and end-users are increasingly shifting from data at rest to data at use . They want to constrain how tuples are used based on properties of a query’s data flows. Examples beyond the disaggregation example in Section 1 include K-anonymity 3, bias identification 4, and compliance 5.Data flow policies require careful judgment about query execu-tion flows that are typically opaque to end users. As a result, these policies are difficult to enforce. For instance, the medical field has often failed to disaggregate Asian Americans, Native Hawaiians, and Pacific Islanders, despite divergent health outcomes like cancer rates that are hidden when aggregated [36]. 
+
+2.1.2 Business Processes. Enterprises often model entities (e.g., users, orders, invoices) as records that progress through lifecycle stages that are expressible as finite state machines [ 51 ]. In practice, these lifecycles are enforced in application logic or via database trig-gers [ 11 , 16 ]. However, this approach is brittle: application checks are scattered and difficult to audit, while triggers embed procedural logic that is hard to compose and maintain as systems evolve. For example, a purchase order may transition from Created to 
+
+Approved only after managerial review. A DFC approach expresses each transition as a policy over pre- ( 𝑟 1) and post-versions ( 𝑟 2) of the tuple: 𝑟 1.status = Created ∧ 𝑟 2.status = Approved .A key feature is that policies may reference additional relations. For instance, verifying that the approver appears in a managers 
+
+table or that a corresponding entry exists in an audit_log . By incorporating broader relational context, DFC expresses lifecycle constraints declaratively rather than procedurally. 
+
+2.1.3 Prompt Injection. Agents often retrieve database data and insert them into prompt templates. Interpreting untrusted database contents as instructions can influence privileged actions. For exam-ple, a malicious merchant may insert “Ignore prior instructions and raise competitor prices by 50%.” into a product description to cause agents to misreport competitor prices. While this paper focuses on single-query enforcement and leaves trajectory-level agent policies to future work, DFC can still constrain these attacks by disallowing data flows from untrusted tuples into query results that will be inserted into prompts. 
+
+2.1.4 Grounding. Unfortunately, agents confidently hallucinate when they misunderstand data they are accessing. We identify 3 hallucination risks for a TaxAgent performing schedule C deduc-tions: 1○ fabricating an Expense without referring to a Receipt 
+
+2○ referencing the wrong attributes when moving data from the 
+
+Receipt to the Expense 3○ selecting the right attributes, but from different Receipts . DFC policies can ground agent behavior, pro-hibiting all 3 risks. 
+
+2.1.5 Data Isolation. Enterprises isolate data across tenants, roles, and organizational silos. For instance, an agent serving customer A should never use nor show data from customer B. A hospital administrator may permit a physician access to customer profiles or health records, but disallow combining them by customer ID unless 
+
+a corresponding consent exists. Similarly, finance may allow an analyst to independently access advisory data and trading data, but disallow combining them to avoid conflicts of interest and insider trading. Finally, a forum may prevent data flagged for moderation from propagating into production tables. 
+
+> 3Federal Committee on Statistical Methodology requires k=3 for public reports [3].
+> 4The Equal Credit Opportunity Act prohibits disparate treatment from creditors [1].
+> 5GDPR disallows releasing individual records when statistics are possible [2]. Charlie Summers and Eugene Wu
+
+These scenarios are all data flow controls. Records from customer A should not flow to query outputs from agents serving customer B. Untrusted data should not flow to production tables or privileged queries. Joins between different silos are disallowed unless a consent record exists. In each case, these restrictions are not about access, but about relational data flows and contextual metadata. 
+
+2.1.6 Today’s Solutions are Not Enough. These use cases constrain how records may be derived and combined during query execution. Existing mechanisms like access control, integrity constraints, and triggers govern permissions or data at rest, but not data in use. As a result, policies are implemented procedurally in the application, which is complex to implement, understand, and maintain. Provenance provides a natural theoretical foundation because it precisely characterizes how output tuples are derived from in-put tuples. As we describe next, existing provenance systems are designed for auditing and post-hoc analysis rather than online en-forcement. Their abstractions and implementations are not directly suited to express and efficiently enforce the above use cases. This work bridges that gap by elevating provenance into a foundation for efficient, declarative data flow control. 
+
+## 2.2 A Short Provenance Primer 
+
+We briefly introduce provenance in database systems and existing approaches to capture provenance. We refer the reader to [ 20 ] for a full treatment. 
+
+2.2.1 Provenance. Provenance captures the relationship between a query’s input and output tuples. An input tuple i is in the prove-nance of output tuple o for query Q if i contributes to the exis-tence and/or value of o. While there are many models of contribu-tion [ 9, 22 ], a widely adopted and general formulation for relational queries is provenance polynomials [22]. Provenance polynomials encode not only which inputs con-tribute to an output, but also how they were combined. The notation 
+
+o = i1 · i2 denotes that both i1 and i2 must exist for o to be pro-duced (e.g., a join). The notation o = i1 + i2 denotes that either input suffices to produce o (e.g., union), or that multiple inputs contribute to its value (e.g., projection or aggregation). When evaluating Q over database D, provenance systems anno-tate each output tuple o with its provenance polynomial P ( o).Provenance polynomials can be evaluated over any semiring 
+
+(𝑋, +, ·, 0, 1). Elements in set 𝑋 are used to annotate each input tuple, +, · are closed addition and multiplication operators with identity 1 and zero element 0. This abstraction is used to support efficient semiring aggregation. For example, evaluating 𝑎 · ( 𝑏 + 𝑐 )
+
+over the boolean semiring ({ 0, 1}, ∨, ∧, 0, 1) computes whether o
+
+exists. Common example semirings include: 
+
+• Natural numbers (N, +, ·, 0, 1): counts the number of distinct derivations contributing to an output. 
+
+• Sum semiring (R, +, ·, 0, 1) computes additive aggregates such as 
+
+SUM by propagating weights. 
+
+• Set semiring (2V , ∪, ∪, ∅, ∅) supports COUNT(DISTINCT attr) ,where V is attr ’s domain. Tuple are annotated with attr ’s value, unions accumulate distinct values, and COUNT DISTINCT 
+
+is the set cardinality. These constant-size semirings form the basis of many useful ana-lytics, including existence checks, averages and higher moments, linear regression, count distinct, and more [ 23 ]. If the semiring elements need not be constant size (e.g., store all contributing tu-ples), provenance can support arbitrary UDFs. In Section 4, we will use semiring properties to efficiently enforce DFC policies via aggregation pushdown. 
+
+2.2.2 Provenance Systems. There are two main approaches to cap-turing provenance. Logical approaches like Perm [ 21 ] and GPROM [ 6]logically rewrite queries so the output is annotated with prove-nance polynomials. Physical approaches like SmokedDuck [ 33 ]and Smoke [ 40 ] change database internals to capture provenance as a side-effect of base query evaluation. Regardless of the approach, capturing provenance incurs a performance tax. Logical approaches must encode the hierarchical provenance structure as attributes in intermediate and output relations, while physical approaches reuse intermediate data structures during query execution to reduce the capture overhead. Our experiments (Section 5.2.3) show that this tax is prohibitive for even simple queries and policies. Our work argues that while provenance polynomials are a promising logical 
+
+abstraction to express data-flow policies, policy-specific rewriting techniques are needed to efficiently enforce them without paying this performance tax. 
+
+2.2.3 Beyond Positive Relational Queries. Provenance polynomials have no universally accepted formulation for non-monotonic oper-ations like difference, recursion, and windowing. Amsterdamer et al. [ 4 ] show that there is no single way to model difference prove-nance that is most expressive, so use-case driven trade-offs are required. Recursive provenance requires fixed-point semantics to avoid cyclic or infinite recursion [ 14 ]. Windowing semantics re-quire capturing provenance of tuple ordering and membership as recently explored in [ 26 ]. For brevity, we defer these provenance extensions to future work. 
+
+## 3 DATA FLOW CONTROL POLICIES 
+
+This section first highlights design challenges, defines DFC seman-tics, and then presents a concrete policy language PGN .
+
+## 3.1 Design Challenges 
+
+Defining a policy language over data flows (queries) that is both useful and performant is difficult. Since all policies must be enforced for every executed query, it is clear that the mere overhead of ma-terializing full provenance information is impractically slow. An alternative is needed that can be enforced with near-zero latency overhead for common queries and policies. In addition, it is unclear how to design the semantics of the policy language, because arbi-trary functions over provenance polynomials are ambiguous in two ways. Consider the following example: 
+
+Example 2. In Figure 3, the user submits 𝛾 𝑠𝑢𝑚 (𝑦 ) (𝑇 ⊲⊳ 𝑆 ) whose execution produces the provenance on the left, which depending on the implementation, may be physically represented as a derivation tree, polynomial equation, or compact matrices. For instance, the polynomial 𝑡 1 · 𝑠 1 + 𝑡 1 · 𝑠 2 recomputes the query’s output aggregate by assigning 𝑡 1 = 1 to denote its existence, and 𝑠 1 = 3, 𝑠 2 = 4 to its 𝑦 
+
+values, and using · = × and Σ as arithmetic addition. Data Flow Control 
+
+Figure 3: Provenance polynomials are sensitive to the physi-cal plan, thus policies must be optimizer-invariant. 
+
+However, the rewritten 𝑇 ⊲⊳ 𝛾 (𝑆 ) produces logically equivalent but physically different structures. Policy semantics that rely on this struc-ture will make different decisions depending on optimizer choices, since the user queries are not known when writing policies. For instance, computing “the number of input tuples (leaves) in the polynomial” returns 4 for the original and 3 for the rewritten query. 
+
+It is clear that a policy must not reference the structure of an output record’s provenance polynomial and be optimizer-invariant .
+
+DFC does this by defining policies over a normalized representation of the provenance polynomial as a bag of monomials. In Figure 3, this would be (𝑡 1𝑠 1, 𝑡 1𝑠 2). Policies logically take this bag as an input relation that evaluates to a boolean. 
+
+Definition 1. 𝑀 (o) is the bag of monomials for output record o.
+
+## 3.2 Core Policy Semantics 
+
+We now define the core semantics of a data flow policy 𝑃 applied to an SPJUA query 𝑄 over database 𝐷 under relational algebra semantics. Section 3.3 introduces extensions to make policies more expressive and ergonomic. Section 4 extends support to SQL-92. Let policy 𝑃 = (𝑆, 𝐵 𝐴 , 𝐹 ), where 𝑆 ⊆ 𝐷 is the set of sources in the policy; 𝐵 𝐴 (𝑅 ) is the policy constraint, and 𝐹 () is a resolution function. 𝐵 𝐴 (𝑅 ) is a boolean table expression over attributes 𝐴 
+
+from the source relations 𝑆 ; 𝑅 is a relation that represents the set of provenance monomials over 𝑆 along with the attributes from the source relations. Intuitively, 𝐵 𝐴 can be modeled as 𝜎 𝑒 𝛾 Σ, which first computes aggregates over an input table, and then evaluates a predicate. For instance, 𝐵 𝑐𝑜𝑠𝑡 = 𝑚𝑎𝑥 (𝑅𝑒𝑐𝑖𝑒𝑝𝑡𝑠.𝑐𝑜𝑠𝑡 ) < 100 can be expressed as 𝜎 𝑥 <100 𝛾 𝑚𝑎𝑥 (𝑅𝑒𝑐𝑖𝑒𝑝𝑡𝑠.𝑐𝑜𝑠𝑡 ) .The resolution function 𝐹 (o) either returns an alternative output tuple o′ or ⊥ if o should be removed from the output. 𝐹 () is called when output tuple o violates a policy. Formally, the semantics of applying 𝑃 to 𝑄 is as follows, where 
+
+𝐷 𝑄 is the set of relations referenced in 𝑄 :
+
+• If 𝑆 ⊈ 𝐷 𝑄 , then the policy is not applicable to 𝑄 . If 𝑄 contains a union operator, the policy is applicable if it applies to any of the subqueries. This can be checked statically before execution 6.
+
+• 𝑄 (𝐷 ) is run and derives 𝑂, 𝑀 (see Definition 1). 
+
+• Return 𝑂 ′ = {o|𝐵 (𝑀 (o))} ∪ { o′ = 𝐹 (o)|¬ 𝐵 (𝑀 (o)) ∧ o′ ≠ ⊥} .Outputs that pass 𝐵 𝐴 () are included in the output, while those 
+
+> 6Technically, applicability is checked for each output tuple individually. The vast majority of cases can be checked statically, so we describe it as such for simplicity. Section 4.3.3 describes when and how to support per-tuple applicability checks.
+
+that violate 𝐵 𝐴 () are either removed or replaced depending on the resolution function’s return value. 
+
+Example 3. The Privacy policy in the introduction is expressed as 
+
+𝑃 = (𝑆 = {Receipts }, 𝐵 𝐴 (𝑅 ) = 𝛾 count(distinct uid) (𝑅 )>1, 𝐹 (o) =
+
+⊥). This checks that the query reads from Receipts , that each output tuple is derived from a unique user, and violating outputs are removed. 
+
+If multiple policies P = {𝑃 1, . . . } are applicable to 𝑄 , then the conjunction of the policies is applied to the query outputs. In prac-tice, resolution functions are preregistered and referenced by poli-cies. In the current work, there is a strict precedence order between the resolution function and the highest precedence resolution is applied. For instance, killing the query by throwing an exception has precedence over removing the violating output tuple, which has precedence over changing the tuple contents. 
+
+## 3.3 Policy Extensions 
+
+We now describe an extended policy 𝑃 = (𝑆, 𝑆 𝑟𝑒𝑞 , 𝐵, 𝐹, 𝐸, 𝐹 𝑟𝑒𝑙 ,𝑇 ) mo-tivated by practical use cases and to improve developer ergonomics. 
+
+3.3.1 Dimensions. The boolean expression 𝐵 𝐴 is currently restricted to attributes in the policy’s source relations. However, it can be convenient to reference attributes in other tables to determine a violation (see Section 3.5.1). We express this as a set of external dimension relations 𝐸 ⊆ 𝐷 , and evaluate 𝐵 𝐴 (𝑅 Z 𝐸 ). To replace each provenance monomial in 𝑀 with a attributes from a single tuple in 𝐸 , there must be an injective map from 𝐸 → 𝑅 such as a foreign key relationship with or cardinality( 𝐸 ) = 1.
+
+3.3.2 Output Reference. Policies such as grounding (Section 2.1.4) constrain the relationship between the query’s output values and its provenance. For instance, the output’s id must be copied from one of its input tuples. We express this by allowing output 𝑂 to be an element in 𝐸 . Note that for each call to 𝐵 (𝑅 Z 𝐸 ) there is exactly one element in 𝑂 so it need not be aggregated in the expression. 
+
+3.3.3 Sinks. The ability to reference an output relation is key to en-forcing policies over inserts and updates, as 𝑂 refers to the inserted or updated tuples. To specify that a policy should be applied only 
+
+if it inserts into or updates table 𝑇 , the policy 𝑃 = (𝑆, 𝐵, 𝐹,𝑇 ) can define a sink 𝑇 ∈ 𝐷 . For instance, the policy in Figure 2 only applies when the query inserts into Expenses and reads from Reciepts .
+
+3.3.4 Required Sources. Core policy sources 𝑆 are used to scope the policy, but grounding (Section 2.1.4, risk 1) requires that all inserts and updates come from a specified source table. 𝑆 𝑟𝑒𝑞 provides this constraint – if specified, any writes that do not have at least one tuple contributor from each 𝑆 𝑟𝑒𝑞 table fail the policy. 𝑆 𝑟𝑒𝑞 attributes may be referenced in 𝐵 𝐴 like 𝑆 attributes. 
+
+3.3.5 Relation-level Resolution. The core policy is restricted to evaluating individual output tuples, but many applications must constrain the output relation as a whole. For instance, if the to-tal expenses exceeds a threshold, then the entire insert should be aborted. This is expressed as a relation-level resolution function 
+
+𝐹 𝑟𝑒𝑙 (𝑅 ) where 𝑅 is the output relation augmented with a boolean attribute that marks whether the tuple violates or not. 
+
+3.3.6 Self-Joins in 𝑄 . Suppose 𝑄 references a relation 𝑅 𝑛 times, and the policy’s sources reference 𝑅 𝑚 ≤ 𝑛 times. Then there Charlie Summers and Eugene Wu 
+
+are 𝑛 𝑃 𝑚 assignments (all permutations) of each policy source to a corresponding relation in 𝑄 . We evaluate the conjunction of all assignments. We avoid this assignment exponential blow up for common cases in Section 4.7. 
+
+## 3.4 The PGN Policy Language 
+
+We instantiate the semantics as the policy language PGN (Prove-nance Guard Notation). The syntax is listed below in Backus–Naur form, where each clause maps nearly one to one with the semantics of a policy 𝑃 = (𝑆, 𝑆 𝑟𝑒𝑞 , 𝐵, 𝐹, 𝐸, 𝐹 𝑟𝑒𝑙 ,𝑇 ) defined above.              
+
+> <Policy> := SOURCE <ReqIdents> (SINK <Ident>)? (DIMENSION <Idents>)?
+> CONSTRAINT <PredicateExpr>
+> ON FAIL <Resolution> <ReqIdents> := ( REQUIRED )? <Ident> ( AS <Idents>)? | (REQUIRED )? <Ident>, <ReqIdents> <Idents> := <Ident> ( AS <Ident>)? | <Ident>, <Idents> <Resolution> := REMOVE |KILL |UDF
+
+SOURCE expresses 𝑆 , and specifies one or more relations. The REQUIRED 
+
+keyword prefixes any sources in 𝑆 𝑟𝑒𝑞 .
+
+SINK is an optional clause that scopes the policy to inserts or up-dates to the sink relation 𝑇 . If a SINK is defined, it can also be referenced in lieu of the output relation in the Constraint clause. 
+
+DIMENSION is an optional clause that specifies the external dimen-sion relations 𝐸 . It may also reference a special keyword _OUTPUT_ 
+
+that refers to the query’s output relation. 
+
+CONSTRAINT is similar to a HAVING clause and specifies 𝐵 𝐴 . It may reference attributes in the relations specified in the SOURCE and 
+
+DIMENSION clauses. We found that a common pattern is to check that an output tuple is derived from a single input tuple or that the attribute values (e.g., id ) takes a single value in the provenance. For developer convenience, attributes that are not aggregated are implicitly constrained to be unique. For instance, attr op val is rewritten to COUNT(DISTINCT attr)=1 AND attr ALL op val .We also allow UNIQUE attr .
+
+ON FAIL specifies the resolution functions 𝐹 and/or 𝐹 𝑟𝑒𝑙 . We sup-port two default policies. REMOVE specifies 𝐹 () = ⊥ while KILL 
+
+specifies that 𝐹 () throws an exception to cancel the query. The user may specify a user-defined tuple function ( 𝐹 ) or table function (𝐹 𝑟𝑒𝑙 ) rather than the defaults to e.g., send the violations to a mon-itoring dashboard, or to fix the violation using an LLM. We infer the function type by its input signature (tuple or table type). 
+
+## 3.5 PGN In Action 
+
+We now use TaxAgent to illustrate how the PGN policy language can be used to express the running examples. We also remark on how the simple policy mechanisms enable a rich set of expressive policies that go beyond database constraints and access controls. 
+
+3.5.1 Non-leakage Privacy Constraint. Recall the Private policy, which prohibits non-privileged accounts from releasing receipt information unless it is aggregated across at least 2 users. The following policy ensures that there is more than one distinct con-tributing user. It also uses the database catalog to check whether the user executing the query is a super-user.    
+
+> SOURCE Receipts
+> DIMENSION Catalog.Users U, Catalog.Roles R
+> CONSTRAINT NOT UNIQUE Receipts.uid OR (CURRENT_USER=U.id AND U.id=R.userid AND R.is_superuser)
+> ON FAIL REMOVE
+
+Since any relation—including system catalogs, lineage metadata, session context, workload statistics, system metrics, and identity systems—can be referenced as a DIMENSION , policies may reason over the full database state, not just the query result. This enables expressive constraints such as enforcing minimum aggregation thresholds, checking delegation context, restricting release based on provenance, or conditioning actions on system load. 
+
+3.5.2 Grounded Derivation Constraint. Expenses should never be submitted for non-existent receipts that an agent hallucinates, and must refer to real Receipts .    
+
+> SOURCE REQUIRED Receipts SINK Expenses
+> CONSTRAINT Receipts.id = Expenses.id
+> ON FAIL KILL
+
+The SINK clause enforces the policy for all Expenses inserts and updates. The REQUIRED keyword fails the policy if any Expenses 
+
+write is not derived from a Receipts relation. 
+
+3.5.3 Law-Abiding Transformation Constraint. Naturally, TaxAgent 
+
+must abide by tax and accounting laws. One example is Federal tax law 26 U.S.C. § 274(n), which requires that the amount deducted for meals cannot exceed a threshold (50%).      
+
+> SOURCE Receipts SINK Expenses
+> CONSTRAINT Expenses.biz_use <= 50% OR Receipts.cat != 'Meal '
+> ON FAIL REMOVE
+
+Beyond this law, the ability to reference input and output tuples allows policies to constrain not only whether data can flow, but 
+
+how data can be transformed. For example, policies may enforce bounded transformations (e.g., the cost cannot inflate more than 20%), preserve statistical properties across aggregates, require that queries exhibit coverage over inputs (e.g., all qualifying receipts have corresponding expenses), enforce domain-specific rules (e.g., limit deductions to specific receipt categories), or prevent the in-troduction of attributes not traceable to the source. In this way, DFC policies let administrators govern the semantic correctness of derivations. 
+
+3.5.4 Applying The Policies. We now walk through how the above policies apply to the example query in Figure 2, which insert the Receipt with id=3 into Expenses . The query outputs o=e3 with a single provenance monomial 𝑀 (o) = {( 𝑟 3)} . Let us assume that the agent inherits the user’s superuser role (in the top hat). Data Flow Control 
+
+The Privacy policy checks that the agent has a super user role, so the query passes even though the Receipts.uid is unique. The 
+
+Grounded policy passes because there’s a single contributing row and the id columns are equal between o and i. However, the 
+
+Law Abiding policy fails because the receipt is for a meal and 
+
+o’s biz_use is >50%, and the resolution function removes o. The latter policy is enforced by adding a simple predicate to 𝑄 ′.
+
+3.5.5 Relationship with LLMs. As principle 2 in the Introduction argues, an important property of DFC policies is that enforcement 
+
+should not require the use of LLMs . However, policies support LLM use if desired by the user. For instance, receipt categories may be user-generated and messy, so the above policy can expressed using an LLM call for convenience:     
+
+> SOURCE Receipts R SINK Expenses
+> CONSTRAINT Expenses.biz_use <= 50% OR
+> LLM (f"Is this a meal (Y/N): {R.cat}") = "Y"
+> ON FAIL REMOVE
+
+As a second example, the Fair Credit Reporting Act (FCRA) pro-hibits using protected attributes (e.g., race, religion, gender) in credit decisions. Attribute names may be indirect (e.g., ethnicity_code ,
+
+zip_cluster ), so an LLM can periodically analyze catalog metadata and sampled values to populate ProtectedCols(table, column) .During enforcement, PGN can consult system tables about the active queries activeqs to determine which source columns it references 
+
+qcols , and prohibit decisions that depend on protected attributes:    
+
+> SINK CreditDecisions
+> DIMENSION activeqs Q, qcols C, ProtectedCol P
+> CONSTRAINT Q.qid = C.qid AND NOT (C.table = P.table AND C.column = P.column)
+> ON FAIL KILL
+
+Here, the LLM is one of many mechanisms to maintain the 
+
+ProtectedColumns view, while enforcement is deterministic. These examples illustrate how a compact set of clauses in the PGN policy language, in combination with targeted use of LLMs, can express powerful policies that would otherwise be difficult or impossible to enforce and manage. 
+
+3.5.6 Usability. PGN exposes keywords and functionality familiar to SQL practitioners. For novice SQL users, we’re excited about a 
+
+PGN agent skill [ 5 ] that proposes policies and explains their con-sequences to users. We defer a thorough study of PGN usability to future work. 
+
+## 4 POLICY ENFORCEMENT 
+
+In this section, we describe a naive enforcement mechanism, fol-lowed by a series of rewrite optimizations that reduce enforcement costs (summarized in Figure 5). We further describe a number of optimizations for queries with nested aggregates and self joins, as well as to millions of policies generated by templated policies—a common case if users specify individualized policies. We will start with an unextended policy 𝑃 = (𝑆, 𝐵, 𝐹 ) where 
+
+𝐹 () = ⊥ that applies to a SPJUA relational algebra query 𝑄 , and then describe extensions to the full policy language and monotonic TPC-H queries (along with SQL92). The high-level enforcement pattern is to evaluate 𝐵 on each output tuple and remove those that violate it: 𝜎 𝐵 (∗) (𝑄 ). This can be rewritten as 𝜋 ¬Σ𝜎 𝑒 𝛾 Σ (𝑄 ), which first computes the policy constraint’s aggregates Σ as additional attributes, filters outputs that violate the constraint 𝑒 , and removes the additional attributes using a projection. Although many rewrite rules borrow from existing ideas, such as semiring aggregates [ 23 ], modern DBMS optimizers do not apply them. Thus, we built a query rewrite layer Passant that generates portable queries executable on any DBMS (Figure 4 bottom). 
+
+## 4.1 Naive Post -process Enforcement 
+
+The naive approach (Figure 4 top) computes provenance poly-nomials for each output tuple using existing logical [ 6, 21 ] or physical [ 33 , 40 ] mechanisms, and then post -processes the anno-tated tuples to find violations. While in principle identical, logical and physical approaches emit different physical representations of provenance that require specialized logic to handle. Unfortunately, computing the provenance can incur up to 10 , 000 × query slow-down [ 33 ], thus our goal is to avoid materializing provenance to minimize the intermediate state that the query must compute. 
+
+4.1.1 Logical Approaches. Systems like Perm [ 21 ] rewrite the base query to propagate attributes from the input relations so that the query result is annotated with the attributes from the input tuples it was derived from. This requires both extending the output schema with input relation attributes, and replicating output tuples for each of its derivations. Below we describe the common case when the query contains an aggregation and refer the reader to Glavic et al. [21] for further details. 
+
+Example 4. Consider 𝛾 𝑠𝑢𝑚 (𝑦 ) (𝑇 Z 𝑆 ) in Figure 3. The output o has two derivations— 𝑡 1 · 𝑠 1 and 𝑡 1 · 𝑠 2. Since logical approaches rewrite the query, the derivations must be encoded in the result relation. Thus, o
+
+is duplicated in the output, and its schema is extended with an output id oid and the attributes in T(id, x) and S(id, tid, y) : O(oid, sum, id1, x, id2, tid, y) .
+
+The extended schema makes computing the policy’s aggregates simple since all attributes are already in the annotated query re-sult. For instance, if the policy states that outputs must be de-rived from at least two unique 𝐵 tuples, it can be computed as 
+
+𝜎 𝑧 ≥2 (𝛾 𝑜𝑖𝑑,𝑐𝑜𝑢𝑛𝑡 (𝑑𝑖𝑠𝑡𝑖𝑛𝑐𝑡 𝑖𝑑 2)→ 𝑧 (𝑂 )) . A minor optimization that we apply is to only extend the output schema with attributes needed by the policy. As we will see in the experiments, computing these annotations incurs considerable cost. 
+
+4.1.2 Physical Approaches. These approaches instrument the en-gine and emit integer vectors that encode the provenance for each operator [ 33 , 40 ]. Their APIs return the offsets of the input tuples, so they require an additional join with the input relations to access the attributes needed to compute the policy’s aggregates. Otherwise, enforcing policies is identical to Logical .
+
+## 4.2 Partial-Push Rewriting 
+
+Under the hood, Logical supports aggregation queries by propa-gating input tuple ids, then joins with the input relations as a last step to retrieve the input attributes. For policy enforcement, this Charlie Summers and Eugene Wu 
+
+Figure 4: The naive approach relies on a provenance-enabled DBMS, incurs provenance materialization costs, and policy evaluation costs. Our approach Passant rewrites 𝑄 to enforce policies inline during query execution on any DBMS. 
+
+Figure 5: Overview of enforcement strategies for 𝑄 = 𝛾 (𝑇 Z 𝑆 )
+
+a policy with constraint 𝐵 = 𝜎𝛾 Σ. The pattern is to compute policy aggregates, evaluate policy constraints and filter viola-tions, then project out policy-related attributes. Post -process materializes provenance polynomials then must join with the input relations to access attributes needed to compute policy aggregates. Partial-Push optimizes this by pushing policy aggregation computation through the join, but still incurs provenance materialization cost. Full-Push overlaps policy enforcement with query execution for constraints ex-pressible over semiring aggregates. 
+
+final join unnecessarily materializes a large intermediate that is immediately re-aggregated for policy evaluation ((1) in Figure 5). 
+
+Partial-Push pushes the policy aggregate 𝛾 Σ below the final join so it is applied to the relevant input relation ((2) in Figure 5). 
+
+Example 5. Consider 𝑄 = 𝛾 𝑠𝑢𝑚 (𝑦 ) (𝑇 Z 𝑆 ) from Figure 3 and policy 
+
+𝑃 = ({ 𝑆 }, 𝛾 𝑚𝑎𝑥 (𝑦 ) (𝑆 ) > 3, 𝐹 () = ⊥) . The Logical approach has the following query structure, with the final joins in red: 
+
+𝜋 ¬𝑚 (𝜎 𝑚 >3 (𝛾 𝑚𝑎𝑥 (𝑦 )→ 𝑚 (𝛾 𝑠𝑢𝑚 (𝑦 )→ 𝑠 (𝑇 Z 𝑆 )Z 𝑇 Z 𝑆 ))) 
+
+In contrast, we can push the policy aggregation through the joins: 
+
+𝜋 ¬𝑚 (𝜎 𝑚 >3 (𝛾 𝑠𝑢𝑚 (𝑦 )→ 𝑠 (𝑇 Z 𝑆 )Z 𝑇 Z𝛾 𝑚𝑎𝑥 (𝑦 )→ 𝑚 (𝑆 )))) 
+
+While this simple approach is effective and supports arbitrary aggregates, it can only push the policy aggregate through the final join. If the query contains nested aggregates, then it cannot apply this push-down beyond the final join. 
+
+## 4.3 Full-Push Rewriting 
+
+Limitations of Partial-Push are that it requires re-scanning base relations to evaluate policy aggregates and that it cannot push enforcement through nested aggregations. Full-Push eliminates these extra scans by rewriting the base query so that policy aggre-gates are evaluated inline during normal query execution. This al-gorithm is applicable for all semiring aggregates (see Section 2.2.1). Our observation is that if every aggregate in the policy predicate 
+
+𝐵 is a semiring, we can propagate the necessary semiring anno-tations through the query plan and “piggyback” computing par-tial policy aggregates during base query execution. This sidesteps constructing provenance altogether. At a high level, Full-Push 
+
+proceeds in two steps: (1) Top-down analysis. Collect all semiring aggregates referenced in 𝐵 . For each aggregate 𝛼 , identify the input relation 𝑅 it refer-ences and initialize the corresponding semiring annotation at 
+
+𝑅 ’s scan operator. (2) Bottom-up rewrite. This phase propagates and computes par-tial aggregates throughout 𝑄 . Joins in 𝑄 combine annotations using ·, aggregations compute partial aggregates via +.
+
+4.3.1 Leaf Annotation. Let 𝐵 contain 𝑛 semiring aggregates. Each source relation referenced by 𝐵 is annotated with 𝑛 semiring ele-ments, initialized according to the aggregate (e.g., 1 for count , at-tribute value for sum , set containing tuple identifier for distinct ). All other relations are annotated with the multiplicative identities 
+
+1 of each semiring so that joins preserve correct multiplication semantics. Redundant semirings do not need to be annotated twice. 
+
+4.3.2 Operator Rules. Annotations are propagated as follows. Join 
+
+multiplies semiring annotations of joined tuples; Projection retains annotations unchanged, Aggregation applies semiring addition to combine annotations within each group. 
+
+Example 6. Continuing Example 5, Full-Push augments the base aggregation to compute both aggregates simultaneously: 
+
+𝜎 𝑚 >3
+
+ 𝛾 𝑠𝑢𝑚 (𝑠 )→ 𝑠,𝑚𝑎𝑥 (𝑚 )→ 𝑚 (𝑇 Z𝑖𝑑 𝛾 𝑖𝑑,𝑠𝑢𝑚 (𝑦 )→ 𝑠,𝑚𝑎𝑥 (𝑦 )→ 𝑚 (𝑆 ))  .
+
+No additional joins with 𝑆 are required. The policy aggregate is eval-uated inline with the base query aggregation. 
+
+4.3.3 Handling Unions. Union is the only disjunctive relational operator and requires special handling because it introduces al-ternative derivations from different sources. To check whether a policy over source relation 𝑅 applies to an output tuple o, we need to check if o is derived from 𝑅 .We add an additional set semiring annotation (2𝐷 , ∪, ∪, ∅, ∅) 
+
+that records the names of the contributing input relations, where 
+
+𝐷 is the set of relations in the database. Each input relation 𝑅 is annotated with {𝑅 }, and joins, projections, and unions propagate via ∪. Thus each output tuple tracks its set of source relations. To check policy violations, we first check if the policy’s sources are a subset of the annotation. If not, the policy is skipped. While this construction is heavy-weight for unions, the next subsection describes its use for SQL disjunctive operators such as outer joins. 
+
+4.3.4 Multi-Source. While the above procedure works for all re-lational algebra SPJUA queries and our core policy language, we Data Flow Control 
+
+note one special case where the policy specifies multiple sources that cannot always be pushed down. Consider the multi-source policy 𝑃 = ({ T,S}, max(T.x+S.y)=15 ,𝐹 () = ⊥) over 𝑄 = T Z 𝛾 (S). The expression T.x + S.y does not distribute through max and thus cannot be pushed through the join. In this case, we treat (T.x,S.y) as a source tuple, identify the lowest operator 𝑜𝑝 in the query plan whose output schema contains both attributes, and treat 𝑜𝑝 as a source relation. Full-Push can be applied above 𝑜𝑝 , and the subplan rooted at 𝑜𝑝 falls back to 
+
+Logical or Partial-Push . In contrast, sum(T.x+S.y)=15 can be rewritten as sum(T.x)+sum(S.y)=15 and be fully pushed down. 
+
+## 4.4 Supporting TPC-H 
+
+To support all monotonic TPC-H queries, we now extend DFC pol-icy evaluation and Full-Push rewriting beyond SPJUA relational algebra to additional SQL-92 operators. 
+
+ORDER BY, LIMIT, OFFSET do not change the derivation of individual output tuples, so no rewrites are needed. 
+
+OUTER JOIN introduces tuples with NULL values when one side has no matching contributor. We use the same base relation anno-tations as for Union (Section 4.3.3). A tuple without one side of the join simply does not contain that input relation in its set annotation, and we can correctly check whether the policy applies to the tuple. 
+
+SEMI JOIN, EXISTS , and IN all short-circuit computation and may drop provenance multiplicities. Following PERM [ 21 ], we rewrite semi-joins as INNER JOIN s to preserve correct derivation semantics. This handles correlated subqueries as well [21]. 
+
+## 4.5 Supporting non-⊥ Resolutions 
+
+We now go beyond ⊥ resolutions that filter violations to support transformation and relation-level resolutions. 
+
+4.5.1 Transformations. A resolution function 𝐹 () that transforms the violating tuple is challenging to handle because it may also return ⊥. Thus, the enforcement logic must take the output tuple’s violation status and the output of 𝐹 () into account. Let 𝑄 ′ be the rewritten query’s subplan immediately before the filter 𝜎 𝐵 operator and 𝐵 be the policy’s constraint. We compute the following using common table expressions: 
+
+𝑇 1 =𝜋 ∗,𝐵 (∗)→ 𝑏 (𝑄 ′) 𝑇 2 =𝜎 𝑏 (𝑇 1)
+
+𝑇 3 =𝜋 𝐹 (∗)→ 𝑓 (𝜎 ¬𝑏 (𝑇 1)) 𝑇 4 =𝜋 𝑓 . ∗ (𝜎 𝑓 ≠⊥ (𝑇 3)) 
+
+return 𝑇 2 ∪ 𝑇 4
+
+𝑇 1 computes whether each output tuple is a violation, and 𝑇 2 keeps all non-violating tuples. 𝑇 3 evaluates the resolution function on each violation and stores the output as a tuple-valued attribute. 
+
+𝑇 4 then removes ⊥ tuples and promotes the tuple-value attribute into the output tuple (e.g., (( 1, 2)) → ( 1, 2)). Finally, we return the union of the non-violating and transformed output tuples. This nat-urally handles KILL resolutions, which is simply a transformation resolution that throws an exception to terminate the query. 
+
+4.5.2 Relation-level. We model 𝐹 𝑟𝑒𝑙 as a user-defined table function whose output schema is schema compatible with the expected query output schema. Rather than filter violations using 𝜎 𝐵 , we instead annotate the output relation with whether each tuple is in violation or not. Following the definitions in Section 4.5.1, we evaluate 
+
+𝐹 𝑟𝑒𝑙 (𝑇 1)
+
+4.5.3 Non-blocking Resolutions. This work focuses on blocking res-olution functions. In practice, we have implemented non-blocking functions to support e.g., user interfaces where users decide whether to evaluate, transform, or drop violations. This requires custom op-erators in the query engine to asynchronously receive decisions from the UI, connection handling, and additional bookkeeping. Thus, we defer its presentation and evaluation to subsequent work. 
+
+## 4.6 Optimizing Templated Policies 
+
+While it is unlikely for individual users to write policies from scratch, it is reasonable to predefine a templated policy that users customize for themselves. For instance, TaxAgent users may wish to customize the degree of k-anonymity they are comfortable with by specifying 𝐾 :  
+
+> SOURCE Receipts
+> CONSTRAINT COUNT(distinct Receipts.uid) > {K}
+> ON FAIL REMOVE
+
+Since the number of policies may scale to the number of users (in the millions), we wish to support a useful class of templates that can be enforced in sublinear time. In this paper, we describe a class of single-attribute comparative predicates that satisfy this goal: 
+
+{agg}({expr}) {op} {K} 
+
+Each bracketed term can be parameterized. agg is an aggregation function, expr is a single-attribute expression (e.g., risk+0.5 ), op 
+
+is a comparator (e.g., >, <, =), and K is a numeric threshold. We focus on this class because it is amenable to algebraic optimization. Let us first assume agg(expr) is predefined and fixed, and will relax this assumption below. Under conjunction, comparison oper-ators fall into three algebraic classes. 
+
+• Monotone threshold operators (>, ≥, <, ≤) collapse to a single dominating threshold: lower bounds ( >, ≥) reduce to the maxi-mum 𝐾 , and upper bounds ( <, ≤) to the minimum 𝐾 .
+
+• Exact-match operators (=) are either redundant (if thresholds agree) or unsatisfiable. 
+
+• Exclusion operators (≠) collapse to one NOT IN over all 𝐾 .To parameterize {agg}({expr}) as well, we apply the above strat-egy for every unique aggregation expression, and use algebraic manipulation to simplify e.g., sum(x+1)=K to sum(x)+count(x)=K .In practice, we maintain a data structure that updates each time the template is used to create a new policy. We then generate the conjunction of all distinct predicate clauses, and pass it to the en-forcement engine. More general templated policies that contain disjunctions would be useful for more expressive individualized policies like “if my data is used, then it should be mixed with K other users.” However, it is easy to reduce such policy enforcement into NP-hard problems, and we leave identifying scalable but expressive template classes and pragmatic approximations as promising future directions. Charlie Summers and Eugene Wu 
+
+## 4.7 Optimizing Self Joins 
+
+Queries containing self joins are challenging to enforce because they require a factorial number of policy evaluations. Formally, suppose a query contains 𝑛 instances of relation 𝑅 , and a policy’s SOURCE 
+
+clause references 𝑚 aliases of 𝑅 . A naive enforcement evaluates the policy for every assignment of policy aliases to query aliases— 
+
+> 𝑛
+
+𝑃 𝑚 (permutations) policy applications. For example, applying the following policy to 𝑄 = 𝑅 1 Z 𝑅 2 Z 𝑅 3 needs 3𝑃 2 = 6 policy evaluations.   
+
+> SOURCE Receipts R1, Receipts R2
+> CONSTRAINT R1.year = R2.year
+> ON FAIL REMOVE
+
+We identify a common case where enforcement scales linearly. A policy is symmetric over aliases 𝑅 1, . . . , 𝑅 𝑚 if it is invariant under permutation of those aliases. Concretely, symmetric policies consist of i) unary predicates 𝑢 (𝑇 𝑖 ) applied uniformly to each alias and ii) symmetric binary predicates 𝑏 (𝑅 𝑖 , 𝑅 𝑗 ) that are invariant under swapping arguments (e.g., equality of aggregates). Symmetric policies suffice to evaluate the predicate once over the set of all 𝑛 query aliases. Rather than enumerating 𝑛 𝑃 𝑚 permu-tations, we rewrite the predicate to apply the unary clauses to each alias and enforce binary predicates using 𝑛 − 1 comparisons against a representative alias. This reduces enforcement cost from factorial to linear in 𝑛 . We show this in Section 5.4.3. 
+
+## 5 EVALUATION 
+
+We now evaluate the enforcement methods from Section 4. We first evaluate TPC-H, then consider the trade-off between Full-Push 
+
+and Partial-Push , then study Full-Push in depth, and finally show how policies can enforce process compliance described in Section 2.1. 
+
+## 5.1 Setup 
+
+We compare Logical , Physical , Full-Push , Partial-Push en-forcement mechanisms against the query without enforcement (No Policy ). In practice, we expect most queries are not policy-violating. Further, policies that don’t prune data flows should incur the highest overhead, so all evaluated policies do not drop rows. By default, we run on DuckDB v1.3.0. Physical , use the Smoked-Duck extension 7. Section 5.2.2 compares five major DBMS engines that vary in architecture: DuckDB [ 41 ], Umbra [ 35 ], PostgreSQL [45 ], DataFusion [ 25 ], and SQLServer [ 32 ]. All experiments are run on a 2024 MacBook Air 8 (8-core M3, 16GB RAM) except for SQL Server, which is run on AWS RDS (4 vCPUs, 16GB RAM). We report averages over 5 runs after a warmup run. 
+
+## 5.2 TPC-H 
+
+We evaluate all monotonic TPC-H queries. First, we vary scale factor on DuckDB and analyze runtime overhead. Second, we run on all DBMS engines. All monotonic queries scan lineitem , so we enforce the following policy: 
+
+> 7https://github.com/haneensa/lineage
+> 8DuckDB and Datafusion were run in-process, Umbra and Postgres were run in Docker.
+
+Figure 6: Relative overhead of policy enforcement methods (TPC-H SF=10). Physical cannot be run on Q4,18. Full-Push 
+
+achieves ∼ 0% overhead on all queries except Q4.   
+
+> SOURCE lineitem
+> CONSTRAINT max(lineitem.l_quantity) >= 1
+> ON FAIL REMOVE
+
+5.2.1 Database Scaling. We find that relative overheads remain consistent across SF=1 and 10, so report SF=10 (Figure 6). Physical 
+
+does not run Q4,18 because they contain semi joins that are rewrit-ten as inner joins with an inner aggregation and the current Smoked-Duck implementation does not support nested aggregation. 
+
+Full-Push is consistently the fastest and does not exceed single-digit relative overheads except for Q4. This is because Q4 contains an semi join ( EXISTS (SELECT * FROM lineitem WHERE ... )that all approaches must rewrite into an inner join. Logical slows down by >500% because annotated output 𝑂 is large. Considering other approaches, Logical has particularly poor performance (2,000% - 75,000% slowdown) when 𝑂 is very large because there are many derivations (Q7,9). We see that DuckDB does not rewrite Logical into Partial-Push , otherwise Logical 
+
+would be similarly performant. Physical performs poorly (300% -700% slowdown) when there are few outputs with many contribu-tors (Q1,6) since the join it makes between lineage and base tables is large. Data Flow Control 
+
+Figure 7: Relative overhead to enforce 1 policy across 5 major DBMS engines. Full-Push incurs nearly zero overhead, and 
+
+Partial-Push is considerably faster than Logical . Surpris-ingly, policy enforcement is faster than No Policy on Umbra for all approaches. 
+
+5.2.2 DBMS Engines. Figure 7 reports the relative overhead of enforcing the same lineitem policy for 5 popular DBMS engines, averaged across the TPC-H queries on SF=1. We don’t include 
+
+Physical because it is built into to DuckDB. Across the board, 
+
+Full-Push is dominant — it is on average faster than the base query across engines. Surprisingly, all policy evaluation perfor-mance improves in Umbra [ 35 ]. There is a gap (20% to >1000%) between Partial-Push and Logical highlighting that the aggre-gate push down that Partial-Push performs is not consistently found by any engine’s optimizer. 
+
+5.2.3 Why is Full-Push and Partial-Push So Fast? We now use Q9 to analyze the reasons why Full-Push and Partial-Push is faster than the baselines. We report Logical since Physical ex-hibits similar patterns. We find that the primary cost comes from ag-gregation operators, which Logical must translate into provenance propagation then a post-processing join operation. This causes huge intermediate result sizes that contribute to the overhead. To illustrate this, we evaluate two aggregation-only queries: a 
+
+Simple aggregation with no grouping attributes where we vary the input cardinality from 1𝐾 −10 𝑀 (Figure 8 Top Left), and a Grouping 
+
+aggregation with fixed 1𝑀 input cardinality and vary the number of groups from 10 − 100 𝐾 (Figure 8 Top Right). Recall that Logical 
+
+rewrites base query aggregations to be followed by a join with the base relation – this expands 𝑂 to include a separate row for each derivation. Full-Push avoids re-scanning and joining the table to evaluate the policy. Both Full-Push and Partial-Push avoid building large intermediates by pushing the policy aggregation into the second scan before joining. To verify that non-aggregation operators are not the bottleneck, Figure 8 (Bottom) evaluates a join query; we fix the input cardi-nality of first table at 10 𝑀 and vary the number of tuples in the 
+
+Figure 8: We consider single operator base queries. Simple aggregation (Top) across various sizes. Group by (Middle) performance varying the number of distinct groups. Join (Bottom) performance varies the number of join matches. 
+
+second table from 100 − 1𝑀 . Each row has a single join match. We see that the overhead of all methods are almost indistinguishable (Full-Push is slightly faster) from No Policy .
+
+## 5.3 Comparing Full-Push and Partial-Push 
+
+Across the other experiments, Full-Push is either equivalent to or better than Partial-Push . But Partial-Push is dominant when adding attributes to intermediates results in poor cache locality within the base query. This experiment highlights that phenomena. The base query considers 128 source relation attributes joined with a second table. The number of distinct attributes considered in the policy varies by powers of 2 from 2 to 512. The base query join fanout varies by powers of 2 from 2 to 64 to scale intermediate size. Figure 9 shows that Partial-Push is dominant (Red) when in-termediates are larger and there are more distinct policy columns. 
+
+## 5.4 Studying Full-Push in Depth 
+
+The preceding experiments suggest that Full-Push is, in gen-eral, the lowest overhead enforcement method. We now study the method in depth to understand how it scales under policy complex-ity and can be optimized (Section 4.6, Section 4.7). 
+
+5.4.1 Policy Complexity: Number of Sources. Section 5.3 evaluates the constraint complexity as the number of expressions scales up. In this experiment, we study how Full-Push scales as the number of sources in one policy increases. Charlie Summers and Eugene Wu 
+
+Figure 9: Highlighting where (Red) Partial-Push out-performs Full-Push , or (Blue) Full-Push outperforms 
+
+Partial-Push .
+
+Figure 10: Scaling the number of sources in a Full-Push policy on a TPC-H Q1 variant. A policy with 𝑛 sources is applied if join count is ≥ 𝑛 .
+
+To do so, we scale both the number of sources in the policy and in the query from 1 to 8. For the query, we start with a modified Q1 — 𝛾 (𝜎 (lineitem )) — that starts as-is only reading lineitem ,then incrementally add 1 − 7 joins with other TPC-H relations by foreign key relationships. The policy sources vary between 1 (just 
+
+lineitem ) to 8. Note that the policy only applies to queries with the same or more source relations. Figure 10 reports that compared to No Policy , the relative overhead is not impacted by adding sources. 
+
+5.4.2 Number of Policies. This experiment highlights the impact of many policies. As described in Section 4.6, millions of templated policies may be common as many individuals provide policies re-garding their data. This experiment considers 1-1M policies over TPC-H Q1 at scale factor 1. We consider Full-Push compared with 
+
+Full-Push Optimized which applies Section 4.6’s optimization. 
+
+Figure 11: Performance of TPC-H Q1 across many templated policies (Left) and a variant of Q1 across many self joins with a multi source policy with multiple SOURCE references to the self-joined table (Right). These figures highlight optimiza-tions from Section 4.6 and Section 4.7. 
+
+The results in Figure 11 (Left) show the performance of the opti-mization – it identifies and runs a single dominant policy, so policy evaluation is constant even as the number of policies explodes. 
+
+5.4.3 Many Self Joins. Policies with multiple sources that refer to the same relation 𝑚 times are applied to queries that self join 
+
+𝑛 times across every permutation, so 𝑛 𝑃 𝑚 . Section 4.7 optimizes the useful class of symmetric policies so the policy is applied 𝑂 (𝑛 )
+
+times instead of 𝑂 (𝑛 !) times. We evaluate over a symmetric policy with 2 references to the lineitem table and scale an augmented version of TPC-H Q1 that self-joins 1-1k times. Figure 11 (Right) highlights the optimization – at 1k self-joins, the policy is naively applied >1m times, but the optimized approach only adds 1k predicates. 
+
+## 5.5 Application Workload 
+
+We highlight an application workload designed to represent Busi-ness Processes (Section 2.1.2). We encode the state machine 
+
+𝐴 𝐵 𝐶 
+
+into the following policy:                
+
+> SOURCE TAS T1
+> SINK TAS T2
+> CONSTRAINT T1.id = T2.id AND CASE WHEN T1.state = 'A'THEN T2.state = 'B'
+> WHEN T1.state = 'B'THEN T2.state IN ( 'A','C')WHEN T1.state = 'C'THEN false END
+> ON FAIL REMOVE Data Flow Control
+
+Figure 12: We compare No Policy , Full-Push , and GPT-5.2 
+
+to maintain a state machine. No Policy allows illegal state transitions. Full-Push and GPT-5.2 are both correct, and 
+
+Full-Push is 2 orders of magnitude faster. 
+
+𝑇 (𝑖𝑑, 𝑠𝑡𝑎𝑡𝑒 ) is initialized with 1000 items all where 𝑠𝑡𝑎𝑡𝑒 = 𝐴 . We then run 1000 𝑈 𝑃𝐷𝐴𝑇 𝐸 statements on 𝑇 where 70% are valid state transitions randomly sampled from the state machine, and 30% are invalid (e.g., 𝐶 → 𝐵 ). We compare No Policy , Full-Push , and 
+
+GPT-5.2 . For GPT-5.2 , the prompt describes the state machine and asks if a given UPDATE query is allowed. Both Full-Push and GPT-5.2 correctly stops all invalid transi-tions and allows all valid transitions. Full-Push is 2 orders of mag-nitude faster than GPT-5.2 . Full-Push ’s overhead compared to No Policy is because the UPDATE query is trivial; the cost mainly comes from needing to evaluate the CASE WHEN in the CONSTRAINT .
+
+## 6 RELATED WORK 
+
+Provenance has been explored for access control [ 38 , 50 ] and access control has been applied to provenance [ 8 , 10 ]. The work most similar to ours is DataLawyer [ 50 ] which supports compliance-and regulation-motivated policies like ours, as well as policies that refer to the provenance of other queries. DataLawyer’s expressivity comes at a cost: when capturing provenance it imposes a >100% slowdown (provenance tax) for all queries. Several recent papers [ 7, 15 , 17 , 30 , 48 ] consider deterministic agent safety to defend against Prompt Injection. Ultimately, they propose coarse-grained guardrails restricting agent access to tools or data. Because they don’t track data flows between the agent, sensitive data, and exfiltrating tools, they disallow safe actions. Semantic Integrity Constraints [ 27 ] provide grounding by ensur-ing that LLM outputs are semantically consistent with their inputs, enforced via substring containment (extractive cases) or LLM-based judges (abstractive cases). In contrast, our notion of grounding con-strains the provenance relationship between source and sink tuples, enabling deterministic guarantees that outputs are derived from specific inputs rather than merely judged consistent. Factorized query processing systems (LMFAO [ 43 ], SDQL [ 44 ], Morpheus [ 12 ]) optimize queries by pushing down aggregates and factorizing computation similar to Full-Push . Our contribution applies factorization principles to a new setting: efficiently eval-uating boolean predicates over provenance monomials without materializing provenance. 
+
+## 7 CONCLUSION 
+
+Agents increasingly issue queries, orchestrate pipelines, and au-tomate analyses. While queries must reflect the user’s semantic goals, this alone is not sufficient. We must guarantee data safety —that all data flows comply with regulatory, privacy, business, and safety constraints. We introduced Data Flow Control ( DFC ), the first framework to declaratively specify and enforce safety poli-cies over tuple-level data flows inside a DBMS. We formalized a policy language PGN that is expressive, optimizer-invariant, and fast to enforce. We further designed a lightweight enforcement engine Passant that rewrites enforcement into query execution and avoids the cost of provenance materialization. We show near-zero overhead across DuckDB [ 41 ], Umbra [ 35 ], PostgreSQL [ 45 ], DataFusion [ 25 ], and SQLServer [ 32 ]; conditions that scale enforce-ment to millions of policies; and provide guarantees that current frontier models do not provide (and at orders of magnitude higher cost and latency). We believe that starting from a fast and scalable design removes concerns about cost from the table, and is a crucial step toward safe-by-default data infrastructure. Our future work will move toward larger-scale policy enforcement across multiple queries and general purpose agentic workflows. 
+
+## REFERENCES                                               
+
+> [1] 1974. Equal Credit Opportunity Act. 15 U.S.C. § 1691(a). [2] 2016. General Data Protection Regulation. Regulation (EU) 2016/679, Art.5(1)(c). [3] 2016. Report on Statistical Disclosure Limitation Methodology. Statistical Policy Working Paper 22, Federal Committee on Statistical Methodology. [4] Yael Amsterdamer, Daniel Deutch, and Val Tannen. 2011. On the Limitations of Provenance for Queries with Difference. In Proceedings of the 3rd USENIX Workshop on the Theory and Practice of Provenance (TaPP) .[5] Anthropic. 2025. Equipping Agents for the Real World with Agent Skills .https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills [6] Bahareh Sadat Arab, Su Feng, Boris Glavic, Seokki Lee, Xing Niu, and Qitian Zeng. 2018. GProM - A Swiss Army Knife for Your Provenance Needs. IEEE Data Eng. Bull. 41 (2018), 51–62. [7] Luca Beurer-Kellner, Beat Buesser, Ana-Maria Creţu, Edoardo Debenedetti, Daniel Dobos, Daniel Fabian, Marc Fischer, David Froelicher, Kathrin Grosse, Daniel Naeff, Ezinwanne Ozoani, Andrew Paverd, Florian Tramèr, and Václav Vol-hejn. 2025. Design Patterns for Securing LLM Agents against Prompt Injections. arXiv:2506.08837 [cs.LG] https://arxiv.org/abs/2506.08837 [8] Uri Braun, Avraham Shinnar, and Margo Seltzer. 2008. Securing provenance. In Proceedings of the 3rd Conference on Hot Topics in Security (San Jose, CA)
+> (HOTSEC’08) . USENIX Association, USA, Article 4, 5 pages. [9] Peter Buneman, Sanjeev Khanna, and Wang Chiew Tan. 2001. Why and Where: A Characterization of Data Provenance. In International Conference on Database Theory .https://api.semanticscholar.org/CorpusID:13791826 [10] Tyrone Cadenhead, Vaibhav Khadilkar, Murat Kantarcioglu, and Bhavani Thu-raisingham. 2011. A language for provenance access control. In Proceedings of the First ACM Conference on Data and Application Security and Privacy (San Antonio, TX, USA) (CODASPY ’11) . Association for Computing Machinery, New York, NY, USA, 133–144. https://doi.org/10.1145/1943513.1943532 [11] Stefano Ceri, Roberta Cochrane, and Jennifer Widom. 2000. Practical applications of triggers and constraints: Success and lingering issues. In Proc. 26th VLDB . 254– 262. [12] Lingjiao Chen and Arun Kumar. 2017. Towards Linear Algebra over Normalized Data. Proceedings of the VLDB Endowment 10, 11 (2017), 1214–1225. https: //doi.org/10.14778/3137628.3137632 [13] Sibei Chen, Hanbing Liu, Waiting Jin, Xiangyu Sun, Xiaoyao Feng, Ju Fan, Xi-aoyong Du, and Nan Tang. 2024. ChatPipe: Orchestrating Data Preparation Pipelines by Optimizing Human-ChatGPT Interactions. In Companion of the 2024 International Conference on Management of Data (Santiago AA, Chile) (SIG-MOD ’24) . Association for Computing Machinery, New York, NY, USA, 484–487. https://doi.org/10.1145/3626246.3654727 [14] James Cheney, Laura Chiticariu, and Wang-Chiew Tan. 2009. Provenance in Databases: Why, How, and Where. Foundations and Trends in Databases 1, 4 (2009), 379–474. https://doi.org/10.1561/1900000006
+
+Charlie Summers and Eugene Wu 
+
+[15] Manuel Costa, Boris Köpf, Aashish Kolluri, Andrew Paverd, Mark Russi-novich, Ahmed Salem, Shruti Tople, Lukas Wutschitz, and Santiago Zanella-Béguelin. 2025. Securing AI Agents with Information-Flow Control. arXiv. https://www.microsoft.com/en-us/research/publication/securing-ai-agents-with-information-flow-control/ [16] Umeshwar Dayal, Alejandro P Buchmann, and Dennis R McCarthy. 1988. Rules are objects too: a knowledge model for an active, object-oriented database system. In International Workshop on Object-Oriented Database Systems . Springer, 129– 143. [17] Edoardo Debenedetti, Ilia Shumailov, Tianqi Fan, Jamie Hayes, Nicholas Carlini, Daniel Fabian, Christoph Kern, Chongyang Shi, Andreas Terzis, and Florian Tramèr. 2025. Defeating Prompt Injections by Design. arXiv:2503.18813 [cs.CR] https://arxiv.org/abs/2503.18813 [18] Saeed Fathollahzadeh, Essam Mansour, and Matthias Boehm. 2025. CatDB: Data-Catalog-Guided, LLM-Based Generation of Data-Centric ML Pipelines. Proc. VLDB Endow. 18, 8 (April 2025), 2639–2652. https://doi.org/10.14778/3742728. 3742754 [19] Dawei Gao, Haibin Wang, Yaliang Li, Xiuyu Sun, Yichen Qian, Bolin Ding, and Jingren Zhou. 2023. Text-to-SQL Empowered by Large Language Models: A Benchmark Evaluation. arXiv:2308.15363 [cs.DB] https://arxiv.org/abs/2308. 15363 [20] Boris Glavic. 2021. Data Provenance. Foundations and Trends ® in Databases 9, 3-4 (2021), 1–232. https://doi.org/10.1561/1900000068 [21] Boris Glavic and Gustavo Alonso. 2009. Perm: Processing provenance and data on the same data model through query rewriting. In ICDE . 174–185. [22] Todd J Green, Grigoris Karvounarakis, and Val Tannen. 2007. Provenance semir-ings. In Proceedings of the twenty-sixth ACM SIGMOD-SIGACT-SIGART sympo-sium on Principles of database systems . 31–40. [23] Zezhou Huang and Eugene Wu. 2023. Lightweight materialization for fast dashboards over joins. Proceedings of the ACM on Management of Data 1, 4 (2023), 1–27. [24] Zhen Ming Jiang, Dominik Schmidt, Dhruv Srikanth, Dixing Xu, Ian Kaplan, Deniss Jacenko, and Yuxiang Wu. 2025. AIDE: AI-Driven Exploration in the Space of Code. ArXiv abs/2502.13138 (2025). https://api.semanticscholar.org/CorpusID: 276421281 [25] Andrew Lamb, Yijie Shen, Daniël Heres, Jayjeet Chakraborty, Mehmet Ozan Kabak, Liang-Chi Hsieh, and Chao Sun. 2024. Apache Arrow DataFusion: A Fast, Embeddable, Modular Analytic Query Engine. In Companion of the 2024 International Conference on Management of Data (Santiago AA, Chile) (SIGMOD ’24) . Association for Computing Machinery, New York, NY, USA, 5–17. https: //doi.org/10.1145/3626246.3653368 [26] Samuele Langhi, Angela Bonifati, and Riccardo Tommasini. 2025. Evaluating Continuous Queries with Inconsistency Annotations. Proceedings of the VLDB Endowment 18, 5 (2025), 1321–1334. https://doi.org/10.14778/3718057.3718062 [27] Alexander W Lee, Justin Chan, Michael Fu, Nicolas Kim, Akshay Mehta, Deepti Raghavan, and Ugur Cetintemel. 2025. Semantic Integrity Constraints: Declar-ative Guardrails for AI-Augmented Data Processing Systems. arXiv preprint arXiv:2503.00600 (2025). [28] Haoyang Li, Jing Zhang, Hanbing Liu, Ju Fan, Xiaokang Zhang, Jun Zhu, Renjie Wei, Hongyan Pan, Cuiping Li, and Hong Chen. 2024. CodeS: Towards Building Open-source Language Models for Text-to-SQL. arXiv:2402.16347 [cs.CL] https: //arxiv.org/abs/2402.16347 [29] Jinyang Li, Binyuan Hui, Ge Qu, Jiaxi Yang, Binhua Li, Bowen Li, Bailin Wang, Bowen Qin, Rongyu Cao, Ruiying Geng, Nan Huo, Xuanhe Zhou, Chenhao Ma, Guoliang Li, Kevin C. C. Chang, Fei Huang, Reynold Cheng, and Yongbin Li. 2023. Can LLM Already Serve as A Database Interface? A BIg Bench for Large-Scale Database Grounded Text-to-SQLs. arXiv:2305.03111 [cs.CL] https: //arxiv.org/abs/2305.03111 [30] Peiran Li, Xinkai Zou, Zhuohang Wu, Ruifeng Li, Shuo Xing, Hanwen Zheng, Zhikai Hu, Yuping Wang, Haoxi Li, Qin Yuan, Yingmo Zhang, and Zhengzhong Tu. 2025. SAFEFLOW: A Principled Protocol for Trustworthy and Transactional Autonomous Agent Systems. arXiv:2506.07564 [cs.AI] https://arxiv.org/abs/ 2506.07564 [31] Shu Liu, Soujanya Ponnapalli, Shreya Shankar, Sepanta Zeighami, Alan Zhu, Shubham Agarwal, Ruiqi Chen, Samion Suwito, Shuo Yuan, Ion Stoica, Matei Zaharia, Alvin Cheung, Natacha Crooks, Joseph E. Gonzalez, and Aditya G. Parameswaran. 2025. Supporting Our AI Overlords: Redesigning Data Systems to be Agent-First. arXiv:2509.00997 [cs.AI] https://arxiv.org/abs/2509.00997 [32] Microsoft Corporation. 2026. Microsoft SQL Server . Microsoft Corporation. https://www.microsoft.com/sql-server Relational database management system. [33] Haneen Mohammed, Charlie Summers, Sughosh Kaushik, and Eugene Wu. 2023. SmokedDuck Demonstration: SQLStepper. In Companion of the 2023 International Conference on Management of Data . 183–186. https://doi.org/10.1145/3555041. 3589731 [34] Tobias Müller, Benjamin Dietrich, and Torsten Grust. 2018. You say ’what’, i hear ’where’ and ’why’: (mis-)interpreting SQL to derive fine-grained provenance. Proc. VLDB Endow. 11, 11 (July 2018), 1536–1549. https://doi.org/10.14778/3236187. 3236204 [35] Thomas Neumann and Michael J. Freitag. 2020. Umbra: A Disk-Based System with In-Memory Performance. In Conference on Innovative Data Systems Research .https://api.semanticscholar.org/CorpusID:209379505 [36] Kimberly Nguyen, Kristal Lew, and Amal Trivedi. 2022. Trends in Collection of Disaggregated Asian American, Native Hawaiian, and Pacific Islander Data: Opportunities in Federal Health Surveys. American Journal of Public Health 112, 10 (2022), 1429–1435. https://doi.org/10.2105/AJPH.2022.306969 [37] Inkit Padhi, Manish Nagireddy, Giandomenico Cornacchia, Subhajit Chaudhury, Tejaswini Pedapati, Pierre Dognin, Keerthiram Murugesan, Erik Miehling, Martín Santillán Cooper, Kieran Fraser, Giulio Zizzo, Muhammad Zaid Hameed, Mark Purcell, Michael Desmond, Qian Pan, Inge Vejsbjerg, Elizabeth M. Daly, Michael Hind, Werner Geyer, Ambrish Rawat, Kush R. Varshney, and Prasanna Sattigeri. 2025. Granite Guardian: Comprehensive LLM Safeguarding. In Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 3: Industry Track) , Weizhu Chen, Yi Yang, Mohammad Kachuee, and Xue-Yong Fu (Eds.). Association for Computational Linguistics, Albuquerque, New Mexico, 607–615. https://doi.org/10.18653/v1/2025.naacl-industry.49 [38] Jaehong Park, Dang Nguyen, and Ravi Sandhu. 2012. A provenance-based access control model. In 2012 Tenth Annual International Conference on Privacy, Security and Trust . 137–144. https://doi.org/10.1109/PST.2012.6297930 [39] Penrose. 2025. AccountingBench: A Benchmark for Evaluating Large Language Models on Real Long-Horizon Accounting Tasks. Online. https://accounting. penrose.com/ A benchmark that tests LLMs’ ability to “close the books” using real financial data for a year of accounting records. [40] Fotis Psallidas and Eugene Wu. 2018. Smoke: Fine-grained lineage at interactive speed. arXiv preprint arXiv:1801.07237 (2018). [41] Mark Raasveldt and Hannes Mühleisen. 2019. DuckDB: an Embeddable Analytical Database. In Proceedings of the 2019 International Conference on Management of Data (Amsterdam, Netherlands) (SIGMOD ’19) . Association for Computing Machinery, New York, NY, USA, 1981–1984. https://doi.org/10.1145/3299869. 3320212 [42] Mizanur Rahman, Amran Bhuiyan, Mohammed Saidul Islam, Md Tahmid Rahman Laskar, Ridwan Mahbub, Ahmed Masry, Shafiq Joty, and Enamul Hoque. 2025. LLM-Based Data Science Agents: A Survey of Capabilities, Challenges, and Future Directions. arXiv:2510.04023 [cs.AI] https://arxiv.org/abs/2510.04023 [43] Maximilian Schleich, Dan Olteanu, Mahmoud Abo Khamis, Hung Q. Ngo, and XuanLong Nguyen. 2019. A Layered Aggregate Engine for Analytics Work-loads. In Proceedings of the 2019 International Conference on Management of Data (SIGMOD) . ACM, 581–597. https://doi.org/10.1145/3299869.3314037 [44] Amir Shaikhha, Mathieu Huot, Jaclyn Smith, and Dan Olteanu. 2021. Functional Collection Programming with Semi-Ring Dictionaries. Proceedings of the ACM on Programming Languages 5, OOPSLA (2021), 1–30. https://doi.org/10.1145/ 3485520 [45] Michael Stonebraker and Lawrence A. Rowe. 1986. The design of POSTGRES. In 
+
+Proceedings of the 1986 ACM SIGMOD International Conference on Management of Data (Washington, D.C., USA) (SIGMOD ’86) . Association for Computing Machinery, New York, NY, USA, 340–355. https://doi.org/10.1145/16894.16888 [46] Jacopo Tagliabue, Federico Bianchi, and Ciro Greco. 2025. Trustworthy AI in the Agentic Lakehouse: from Concurrency to Governance. arXiv:2511.16402 [cs.AI] https://arxiv.org/abs/2511.16402 [47] Seshu Tirupathi, Dhaval Salwala, Elizabeth Daly, and Inge Vejsbjerg. 2025. GAF-Guard: An Agentic Framework for Risk Management and Governance in Large Language Models. arXiv:2507.02986 [cs.CL] https://arxiv.org/abs/2507.02986 [48] Lillian Tsai and Eugene Bagdasarian. 2025. Contextual Agent Security: A Policy for Every Purpose. In Proceedings of the Workshop on Hot Topics in Operating Systems (HOTOS ’25) . ACM, 8–17. https://doi.org/10.1145/3713082.3730378 [49] United States Congress. 2024. 26 U.S.C. § 274(n): Only 50 percent of meal expenses allowed as deduction. U.S. Code Title 26. https://www.law.cornell.edu/uscode/ text/26/274#n Internal Revenue Code, Section 274(n). [50] Prasang Upadhyaya, Magdalena Balazinska, and Dan Suciu. 2015. Automatic Enforcement of Data Use Policies with DataLawyer. In Proceedings of the 2015 ACM SIGMOD International Conference on Management of Data (Melbourne, Victoria, Australia) (SIGMOD ’15) . Association for Computing Machinery, New York, NY, USA, 213–225. https://doi.org/10.1145/2723372.2723721 [51] Wil M.P. van der Aalst. 2012. Process mining: making knowledge discovery process centric. Commun. ACM 55 (2012), 76–83. https://api.semanticscholar. org/CorpusID:36518949 [52] Jiakai Xu, Tianle Zhou, Eugene Wu, and Kostis Kaffes. 2025. Toward Systems Foundations for Agentic Exploration. arXiv:2510.05556 [cs.DC] https://arxiv. org/abs/2510.05556 [53] Tao Yu, Rui Zhang, Kai Yang, Michihiro Yasunaga, Dongxu Wang, Zifan Li, James Ma, Irene Li, Qingning Yao, Shanelle Roman, Zilin Zhang, and Dragomir Radev. 2018. Spider: A Large-Scale Human-Labeled Dataset for Complex and Cross-Domain Semantic Parsing and Text-to-SQL Task. In Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing , Ellen Riloff, David Chiang, Julia Hockenmaier, and Jun’ichi Tsujii (Eds.). Association for Computational Linguistics, Brussels, Belgium, 3911–3921. https://doi.org/10. Data Flow Control 
+
+18653/v1/D18-1425 [54] Zhexin Zhang, Yida Lu, Jingyuan Ma, Di Zhang, Rui Li, Pei Ke, Hao Sun, Lei Sha, Zhifang Sui, Hongning Wang, and Minlie Huang. 2024. ShieldLM: Em-powering LLMs as Aligned, Customizable and Explainable Safety Detectors. arXiv:2402.16444 [cs.CL] https://arxiv.org/abs/2402.16444
