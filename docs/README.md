@@ -6,37 +6,56 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-09
-- 运行时间：2026-06-09 05:55:51 UTC
+- 最新运行日期：2026-06-10
+- 运行时间：2026-06-10 06:53:24 UTC
 - 运行状态：成功
-- 本次总论文数：5
-- 精读区：4
-- 速读区：1
+- 本次总论文数：12
+- 精读区：6
+- 速读区：6
 
 ### 今日简报（AI）
-1) 今日推荐5篇论文，精读聚焦大模型安全与观点操控，重点关注越狱攻击防御与虚假证据注入风险。  
-2) 最值得精读的是《Defending Jailbreak Attacks on Large Language Models via Manifold Trajectory Kinetics》（9.0分），创新利用流形轨迹动力学防御越狱；《Steering LLM Viewpoints through Fabricated Evidence Injection》（8.0分）揭示伪造证据如何左右模型立场。  
-3) 建议优先阅读这两篇高分论文，加深对LLM安全脆弱性与对抗攻击机制的理解，并关注后门攻击防御（BVORn）作为补充。
-- 详情：[/202606/09/README](/202606/09/README)
+今日12篇论文聚焦AI安全与漏洞攻防，重点解锁两大突破：系统变异法挖掘错误路径隐性权限，以及轨迹感知推理护航科学发现代理。优先精读9.0分的《VATS》与《SciTrace》，速读可关注LLM后门统一检测与设备端安全蒸馏方案。
+- 详情：[/202606/10/README](/202606/10/README)
 
 ### 精读区论文标签
-1. [Defending Jailbreak Attacks on Large Language Models via Manifold Trajectory Kinetics](/202606/09/2606.07335v1-defending-jailbreak-attacks-on-large-language-models-via-manifold-trajectory-kinetics)  
+1. [VATS: Exploiting Implicit Authority in Error-Path Injection via Systematic Mutation](/202606/10/2606.07992v1-vats-exploiting-implicit-authority-in-error-path-injection-via-systematic-mutation)  
    标签：评分：9.0/10、query:llm-security
-   evidence：利用流形轨迹动力学防御越狱攻击
-2. [Steering LLM Viewpoints through Fabricated Evidence Injection](/202606/09/2606.06244v1-steering-llm-viewpoints-through-fabricated-evidence-injection)  
+   evidence：直接研究针对自主智能体的错误路径提示注入攻击
+2. [SciTrace: Trajectory-Aware Safety Reasoning for Scientific Discovery Agents](/202606/10/2606.08234v1-scitrace-trajectory-aware-safety-reasoning-for-scientific-discovery-agents)  
+   标签：评分：9.0/10、query:llm-security
+   evidence：LLM智能体的安全推理框架
+3. [Hiding in Plain Floats: Steganographic Carriers for Indirect Prompt and Content Injection](/202606/10/2606.08403v1-hiding-in-plain-floats-steganographic-carriers-for-indirect-prompt-and-content-injection)  
+   标签：评分：9.0/10、query:llm-security
+   evidence：利用浮点数参数进行隐写的间接提示注入方法，可绕过文本检测
+4. [SecureClaw: Clawing Back Control of LLM Agents](/202606/10/2606.09549v1-secureclaw-clawing-back-control-of-llm-agents)  
+   标签：评分：9.0/10、query:llm-security
+   evidence：为LLM智能体提供双边界安全架构，包括授权和明文隔离
+5. [Towards Healthy Evolution: Exploring the Role and Mechanisms of Human-Agent Interaction in Self-Evolving Systems](/202606/10/2606.06114v2-towards-healthy-evolution-exploring-the-role-and-mechanisms-of-human-agent-interaction-in-self-evolving-systems)  
    标签：评分：8.0/10、query:llm-security
-   evidence：通过捏造证据注入攻击操控LLM观点
-3. [SafeGene: Reusable Adapters for Transferable Safety Alignment](/202606/09/2606.06519v1-safegene-reusable-adapters-for-transferable-safety-alignment)  
+   evidence：同v1：ANCHOR框架通过模拟人类监督缓解自进化智能体的安全漂移
+6. [DPAgent-in-the-Middle: Agentic Defense and Repair Against AI-Groomed Deceptive Patterns](/202606/10/2606.06914v1-dpagent-in-the-middle-agentic-defense-and-repair-against-ai-groomed-deceptive-patterns)  
    标签：评分：8.0/10、query:llm-security
-   evidence：可复用安全适配器恢复微调后对齐
-4. [TRACE: Trajectory Reasoning through Adaptive Cross-Step Evidence Aggregation for LLM Agents](/202606/09/2606.07054v1-trace-trajectory-reasoning-through-adaptive-cross-step-evidence-aggregation-for-llm-agents)  
-   标签：评分：8.0/10、query:llm-security
-   evidence：LLM智能体安全监控框架
+   evidence：提出代理防御机制针对AI修饰的欺骗模式，涉及提示注入
 
 ### 速读区论文标签
-1. [BYORn: Bootstrap Your Own Responses to Defend Large Vision-Language Models Against Backdoor Attacks](/202606/09/2606.02947v1-byorn-bootstrap-your-own-responses-to-defend-large-vision-language-models-against-backdoor-attacks)  
+1. [SGTO-MAS: Secure Gorilla Troops Optimization for Multi-Agent LLM Systems](/202606/10/2606.07940v1-sgto-mas-secure-gorilla-troops-optimization-for-multi-agent-llm-systems)  
+   标签：评分：8.0/10、query:llm-security
+   evidence：提出安全感知的多智能体LLM协调方法，集成信任与风险评估
+2. [Distilling Safe LLM Systems via Soft Prompts for On Device Settings](/202606/10/2606.09388v1-distilling-safe-llm-systems-via-soft-prompts-for-on-device-settings)  
+   标签：评分：8.0/10、query:llm-security
+   evidence：通过软提示和蒸馏训练实现轻量级安全对齐，适用于输出护栏
+3. [Shared Latent Structures Enable Unified Backdoor Detection and Mitigation in LLMs](/202606/10/2606.07963v1-shared-latent-structures-enable-unified-backdoor-detection-and-mitigation-in-llms)  
+   标签：评分：7.0/10、query:llm-security
+   evidence：统一检测和缓解多种后门攻击（包括越狱），与对抗性提示缓解相关
+4. [PRISM: Recovering Instruction Sets from Language Model Activations](/202606/10/2606.09563v1-prism-recovering-instruction-sets-from-language-model-activations)  
+   标签：评分：7.0/10、query:llm-security
+   evidence：基于激活状态的解释器，用于恢复LLM代理的活跃指令以实现监控
+5. [RecurGuard: Runtime Monitoring for Reasoning-Token Consumption Attacks](/202606/10/2606.07968v1-recurguard-runtime-monitoring-for-reasoning-token-consumption-attacks)  
    标签：评分：6.0/10、query:llm-security
-   evidence：通过自举响应防御后门攻击
+   evidence：运行时监控推理令牌消耗攻击，一种提示注入拒绝服务攻击
+6. [Fast LLM-Based Semantic Filtering: From a Unified Framework to an Adaptive Two-Phase Method](/202606/10/2606.08090v1-fast-llm-based-semantic-filtering-from-a-unified-framework-to-an-adaptive-two-phase-method)  
+   标签：评分：6.0/10、query:llm-security
+   evidence：用于内容安全的语义过滤方法
 
 
 <div class="dpr-home-promo-card">
