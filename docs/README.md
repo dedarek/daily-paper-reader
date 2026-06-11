@@ -6,56 +6,50 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-10
-- 运行时间：2026-06-10 06:53:24 UTC
+- 最新运行日期：2026-06-11
+- 运行时间：2026-06-11 07:22:34 UTC
 - 运行状态：成功
-- 本次总论文数：12
-- 精读区：6
-- 速读区：6
+- 本次总论文数：10
+- 精读区：5
+- 速读区：5
 
 ### 今日简报（AI）
-今日12篇论文聚焦AI安全与漏洞攻防，重点解锁两大突破：系统变异法挖掘错误路径隐性权限，以及轨迹感知推理护航科学发现代理。优先精读9.0分的《VATS》与《SciTrace》，速读可关注LLM后门统一检测与设备端安全蒸馏方案。
-- 详情：[/202606/10/README](/202606/10/README)
+今天推荐10篇论文，精读了2篇高分研究，分别聚焦多智能体博弈推理与实时输出监控。最值得关注的是9.0分的两篇：多智能体博弈提升LLM推理鲁棒性，以及利用隐状态探测实现低成本的流式输出审核。建议优先精读这两篇，探索博弈论与隐状态探测在LLM安全与效率优化中的实际应用。
+- 详情：[/202606/11/README](/202606/11/README)
 
 ### 精读区论文标签
-1. [VATS: Exploiting Implicit Authority in Error-Path Injection via Systematic Mutation](/202606/10/2606.07992v1-vats-exploiting-implicit-authority-in-error-path-injection-via-systematic-mutation)  
+1. [Game-Theoretic Multi-Agent Control for Robust Contextual Reasoning in LLMs](/202606/11/2606.10322v1-game-theoretic-multi-agent-control-for-robust-contextual-reasoning-in-llms)  
    标签：评分：9.0/10、query:llm-security
-   evidence：直接研究针对自主智能体的错误路径提示注入攻击
-2. [SciTrace: Trajectory-Aware Safety Reasoning for Scientific Discovery Agents](/202606/10/2606.08234v1-scitrace-trajectory-aware-safety-reasoning-for-scientific-discovery-agents)  
+   evidence：基于博弈论的提示注入与上下文投毒防御
+2. [Stop Early, Spend Less: Hidden-State Probes as a Practical Recipe for Streaming Moderation of LLM Outputs](/202606/11/2606.10487v1-stop-early-spend-less-hidden-state-probes-as-a-practical-recipe-for-streaming-moderation-of-llm-outputs)  
    标签：评分：9.0/10、query:llm-security
-   evidence：LLM智能体的安全推理框架
-3. [Hiding in Plain Floats: Steganographic Carriers for Indirect Prompt and Content Injection](/202606/10/2606.08403v1-hiding-in-plain-floats-steganographic-carriers-for-indirect-prompt-and-content-injection)  
+   evidence：利用隐状态探针进行流式输出内容过滤
+3. [Assessing Automated Prompt Injection Attacks in Agentic Environments](/202606/11/2606.10525v1-assessing-automated-prompt-injection-attacks-in-agentic-environments)  
    标签：评分：9.0/10、query:llm-security
-   evidence：利用浮点数参数进行隐写的间接提示注入方法，可绕过文本检测
-4. [SecureClaw: Clawing Back Control of LLM Agents](/202606/10/2606.09549v1-secureclaw-clawing-back-control-of-llm-agents)  
+   evidence：智能体环境中的自动化提示注入攻击
+4. [Comparative Analysis of Inference-Time Defense Methods for Multimodal Large Language Models](/202606/11/2606.10904v1-comparative-analysis-of-inference-time-defense-methods-for-multimodal-large-language-models)  
    标签：评分：9.0/10、query:llm-security
-   evidence：为LLM智能体提供双边界安全架构，包括授权和明文隔离
-5. [Towards Healthy Evolution: Exploring the Role and Mechanisms of Human-Agent Interaction in Self-Evolving Systems](/202606/10/2606.06114v2-towards-healthy-evolution-exploring-the-role-and-mechanisms-of-human-agent-interaction-in-self-evolving-systems)  
+   evidence：多模态大模型对抗攻击的推理时防御方法比较评估
+5. [Toward Secure LLM Agents: Threat Surfaces, Attacks, Defenses, and Evaluation](/202606/11/2606.10749v1-toward-secure-llm-agents-threat-surfaces-attacks-defenses-and-evaluation)  
    标签：评分：8.0/10、query:llm-security
-   evidence：同v1：ANCHOR框架通过模拟人类监督缓解自进化智能体的安全漂移
-6. [DPAgent-in-the-Middle: Agentic Defense and Repair Against AI-Groomed Deceptive Patterns](/202606/10/2606.06914v1-dpagent-in-the-middle-agentic-defense-and-repair-against-ai-groomed-deceptive-patterns)  
-   标签：评分：8.0/10、query:llm-security
-   evidence：提出代理防御机制针对AI修饰的欺骗模式，涉及提示注入
+   evidence：涵盖LLM智能体安全威胁与防御的调查
 
 ### 速读区论文标签
-1. [SGTO-MAS: Secure Gorilla Troops Optimization for Multi-Agent LLM Systems](/202606/10/2606.07940v1-sgto-mas-secure-gorilla-troops-optimization-for-multi-agent-llm-systems)  
-   标签：评分：8.0/10、query:llm-security
-   evidence：提出安全感知的多智能体LLM协调方法，集成信任与风险评估
-2. [Distilling Safe LLM Systems via Soft Prompts for On Device Settings](/202606/10/2606.09388v1-distilling-safe-llm-systems-via-soft-prompts-for-on-device-settings)  
-   标签：评分：8.0/10、query:llm-security
-   evidence：通过软提示和蒸馏训练实现轻量级安全对齐，适用于输出护栏
-3. [Shared Latent Structures Enable Unified Backdoor Detection and Mitigation in LLMs](/202606/10/2606.07963v1-shared-latent-structures-enable-unified-backdoor-detection-and-mitigation-in-llms)  
-   标签：评分：7.0/10、query:llm-security
-   evidence：统一检测和缓解多种后门攻击（包括越狱），与对抗性提示缓解相关
-4. [PRISM: Recovering Instruction Sets from Language Model Activations](/202606/10/2606.09563v1-prism-recovering-instruction-sets-from-language-model-activations)  
-   标签：评分：7.0/10、query:llm-security
-   evidence：基于激活状态的解释器，用于恢复LLM代理的活跃指令以实现监控
-5. [RecurGuard: Runtime Monitoring for Reasoning-Token Consumption Attacks](/202606/10/2606.07968v1-recurguard-runtime-monitoring-for-reasoning-token-consumption-attacks)  
+1. [Shared Latent Structures Enable Unified Backdoor Detection and Mitigation in LLMs](/202606/11/2606.07963v1-shared-latent-structures-enable-unified-backdoor-detection-and-mitigation-in-llms)  
    标签：评分：6.0/10、query:llm-security
-   evidence：运行时监控推理令牌消耗攻击，一种提示注入拒绝服务攻击
-6. [Fast LLM-Based Semantic Filtering: From a Unified Framework to an Adaptive Two-Phase Method](/202606/10/2606.08090v1-fast-llm-based-semantic-filtering-from-a-unified-framework-to-an-adaptive-two-phase-method)  
+   evidence：利用共享潜在结构的统一后门检测与缓解
+2. [VESTA: A Fully Automated Scenario Generation and Safety Evaluation Framework for LLM Agents](/202606/11/2606.08531v1-vesta-a-fully-automated-scenario-generation-and-safety-evaluation-framework-for-llm-agents)  
    标签：评分：6.0/10、query:llm-security
-   evidence：用于内容安全的语义过滤方法
+   evidence：面向LLM智能体的自动化安全评估
+3. [Data Agents Under Attack: Vulnerabilities in LLM-Driven Analytical Systems](/202606/11/2606.08661v1-data-agents-under-attack-vulnerabilities-in-llm-driven-analytical-systems)  
+   标签：评分：6.0/10、query:llm-security
+   evidence：LLM驱动分析智能体漏洞的系统研究
+4. [Personalization Meets Safety:Mechanisms,Risks,and Mitigations in Personalized LLMs](/202606/11/2606.09038v1-personalization-meets-safetymechanismsrisksand-mitigations-in-personalized-llms)  
+   标签：评分：6.0/10、query:llm-security
+   evidence：个性化LLM安全风险与缓解措施的全面综述
+5. [AgentCanary: A Security Evaluation Framework for Autonomous AI Agents in Real Executable Environments](/202606/11/2606.10484v1-agentcanary-a-security-evaluation-framework-for-autonomous-ai-agents-in-real-executable-environments)  
+   标签：评分：6.0/10、query:llm-security
+   evidence：自主AI智能体的安全评估框架
 
 
 <div class="dpr-home-promo-card">

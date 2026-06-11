@@ -1,0 +1,834 @@
+Title: Data Agents Under Attack: Vulnerabilities in LLM-Driven Analytical Systems
+
+URL Source: https://arxiv.org/pdf/2606.08661v1
+
+Published Time: Tue, 09 Jun 2026 01:17:54 GMT
+
+Number of Pages: 14
+
+Markdown Content:
+# Data Agents Under Attack: Vulnerabilities in LLM-Driven Analytical Systems 
+
+# Kuncan Wang 1,∗, Ziting Wang 1,∗, Peizhuo Lv 1, Haoyang Li 2, Guoliang Li 3, Gao Cong 1, Wei Dong 1
+
+> 1
+
+Nanyang Technological University, Singapore; 2The Hong Kong Polytechnic University; 3Tsinghua University {kuncan001,ziting001}@e.ntu.edu.sg,{peizhuo.lyu,gaocong,wei_dong}@ntu.edu.sg,haoyang-comp.li@polyu.edu.hk,liguoliang@tsinghua.edu.cn 
+
+## ABSTRACT 
+
+Data agents integrate LLM-driven reasoning with relational data access, executable analytical tools, and multi-step workflow orches-tration, making them increasingly central to enterprise analytics. This integration introduces new security vulnerabilities across data resources, database execution, and agent reasoning, recombining concerns from database security and general-purpose LLM-agent security into failure modes that neither line of work captures on its own. To address this gap, we present a systematic security study of data agents. Our contributions are threefold. First, we develop a layered vulnerability framework that identifies eight data agent-specific risks across interpretation, execution, and policy layers. Second, we introduce an attack taxonomy organized by adversary goal, tactic, and technique, covering three goals, seven tactics, and fourteen techniques, and pair it with an LLM-driven payload genera-tion pipeline grounded in real database schemas. Third, we evaluate these attacks on six systems, including four open-source data agents and two production cloud analytics services. Our experiments re-veal substantial security vulnerabilities across current systems and yield four key takeaways. 
+
+## 1 INTRODUCTION 
+
+Large Language Model (LLM)-driven analytical systems, also known as data agents , interleave LLM-based reasoning with executable tools such as SQL queries and Python scripts [ 36 , 53 ]. In these systems, the LLM acts as a coordinator that interprets natural lan-guage requests, queries databases, reasons over heterogeneous data sources, invokes analytical tools, and generates reports. As a result, data agents are becoming an increasingly important component of modern data-driven decision-making [ 49 , 58 ]. This capability has already been integrated into commercial analytics platforms such as Databricks Genie [ 7], Snowflake Cortex [ 43 ], and BigQuery [ 16 ], while open-source frameworks including DataInterpreter [ 18 ], DB-GPT [ 52 ], DeepAnalyze [ 56 ], and LAMBDA [ 44 ] support end-to-end analytical workflows spanning querying, statistical analysis, visu-alization, and report generation. Data agents differ from both traditional analytical systems and general-purpose LLMs. Compared with traditional systems, they enable more autonomous and flexible data access: the agent can decide what to query, how to decompose an analytical task, which tools to invoke, and how to synthesize intermediate results. Com-pared with general-purpose LLMs, they are specialized for data analytics by grounding reasoning in relational databases, multi-modal data resources, and executable analytical tools. This allows 
+
+> ∗Both authors contributed equally to this research.
+
+them to extract precise, evidence-grounded knowledge from large-scale datasets rather than relying solely on parametric knowledge, prompt context, or fragmented external sources such as documents. Such autonomy and database-grounded execution make data agents powerful, but they also raise a natural question: are existing data agents secure, and what vulnerabilities do they expose? So far, existing security-relevant research studies vulnerabilities either in traditional relational database systems [ 4 , 5 , 17 , 47 , 48 ]or in general-purpose LLM agents [ 1, 8, 29 , 37 , 53 , 54 ] in isolation. However, data agents couple LLM-driven reasoning with iterative database execution, creating security risks that emerge from their interaction rather than from either component alone. Below, we give an example. 
+
+Example. Because a data agent answers requests through a multi-step analytical process, an adversary can exploit the anal-ysis itself as an attack vector. Individually legitimate queries may collectively disclose sensitive information that no single query would reveal. This risk is distinctive to data agents: con-ventional database access-control mechanisms may miss cu-mulative leakage, while general-purpose agents that access un-structured text do not expose the same query-driven channel. 
+
+The above example illustrates the fundamental gap between data agent security, traditional database security, and the security of general-purpose LLM agents. First, traditional database security studies typically model relational databases as closed SQL execu-tion environments, focusing on query execution, access control, and data integrity. As a result, they cannot fully capture security risks introduced by the iterative interaction between the database and the agent. Second, studies of general-purpose LLM agents are also limited because their safety policies are primarily designed for reasoning over text, such as documents and webpages. They do not anticipate risks specific to relational access, such as compositional privacy leakage and excessive resource consumption during query execution. Below, we further examine these security-relevant differ-ences along three dimensions: data resources, database execution, and agent reasoning. 
+
+On the data-resource side , relational databases differ from the documents, webpages, and files typically considered in general-purpose agent settings in several security-relevant ways. First, they are large-scale and highly structured: malicious content can be hidden in table cells, schema comments, or metadata, making it dif-ficult for the agent to assess provenance or distinguish adversarial content from legitimate evidence. Second, databases often store sen-sitive information, such as customer records, financial transactions, 
+
+> arXiv:2606.08661v1 [cs.CR] 7 Jun 2026
+
+healthcare data, and operational logs; once retrieved into the LLM context, such data may be treated as ordinary reasoning material or inadvertently exposed in generated outputs. Third, databases are shared multi-user resources with fine-grained access-control requirements over tables, columns, rows, and views. If an agent operates through a shared service account or a connection with broader privileges than the current user, this mismatch can lead to over-privileged access and privilege-scope confusion. 
+
+On the database execution side , unlike general-purpose agents that primarily retrieve information from documents, webpages, or files, data agents can issue SQL queries over relational databases. These queries may involve joins, aggregations, full-table scans, and repeated subqueries, generating large intermediate states whose costs are difficult for the LLM to estimate in advance. An adver-sary can exploit this gap by crafting requests or planting data that induces expensive but syntactically valid queries, causing denial-of-service or excessive resource consumption without using mal-formed SQL or bypassing access control. This risk is further ampli-fied by the agent’s limited visibility into table sizes, value distribu-tions, and data skew. For example, a few skewed values inserted into a shared join key can increase query costs by orders of magnitude, leading the agent to exhaust database resources or deny service to concurrent users. 
+
+On the agent reasoning side , the multi-step workflow is itself an attack surface: unlike general-purpose LLM agents that primar-ily reason over text such as documents and webpages, data agents conduct multi-step analytical workflows over relational databases. They may retrieve data from multiple tables, issue follow-up queries, invoke analytical tools, inspect intermediate results, and synthesize final reports. As a result, early errors or malicious manipulations can propagate through later tool calls and distort the final output, and a series of individually legitimate queries can compose into a disclosure that no single step would reveal. Moreover, as interme-diate results and reasoning traces accumulate in context, security constraints may become less salient or be forgotten, causing the agent to perform actions that would have been blocked earlier in the session. This motivates us to conduct a comprehensive study of security threats to data agents, focusing on three research questions: 
+
+RQ1: What new attack surface does a data agent expose? 
+
+Specifically, we ask what new vulnerabilities arise when relational databases are incorporated into the agent reasoning process: on the data-resource side, where large-scale, privacy-sensitive, and mixed-trust relational data may introduce implicit trust bias, weak source verification, leakage, and over-privileged access; on the database-execution side, where high-cost operators, unbounded query chains, and SQL–Python semantic gaps can cause resource amplification or inconsistent results; and on the agent-reasoning side, where multi-step workflows may carry poisoned context forward, drop a security policy that held earlier, or combine individually legitimate query results into a sensitive disclosure. 
+
+RQ2: How can these vulnerabilities be systematically ex-ploited? Knowing where the weaknesses arise does not by itself explain how an adversary can exploit them, how broadly they ap-ply, or how severe their consequences may be. We therefore need a systematic method to translate each vulnerability into concrete attack techniques, organize those techniques by adversary goal, instantiate them as runnable payloads, and evaluate their impact on real systems. 
+
+RQ3: How should future data agent systems be designed to defend against attacks? Because these threats span the data-base layer, the agent reasoning layer, and the boundary between them, neither existing LLM safety mechanisms nor classical data-base security controls are sufficient on their own. We therefore ask how a secure data agent should treat the database as an ac-tive security boundary and coordinate resource-aware execution control, compositional disclosure control, and provenance-aware evidence handling across the full data agent workflow, and how these defenses should inform the design of future secure data agent architectures. 
+
+Contributions. Our contributions are summarized as follows: 
+
+• Vulnerability discovery and taxonomy. We present a system-atic study of vulnerabilities specific to data agent systems. By analyzing the data agent pipeline across the interpretation, exe-cution, and policy layers, we identify eight vulnerabilities (§4). These vulnerabilities emerge from the integration of relational data access and LLM-driven reasoning, and are not surfaced when relational databases or general-purpose LLM agents are stud-ied in isolation, spanning risks on the data-resource, database-execution, and agent-reasoning sides ( Addressing RQ1 ). 
+
+• Attack design and payload generation. Building on the iden-tified vulnerabilities, we develop a goal–tactic–technique taxon-omy with 7 tactics and 14 techniques under three adversary goals, 
+
+Hijack , Mislead , and Drain (§5). We then instantiate each tech-nique into runnable payloads using an LLM generation pipeline grounded in the target schema (§5.3). ( Addressing RQ2 )
+
+• Extensive experiments and key takeaways. We measure all 14 techniques on six systems, four open-source (DeepAna-lyze, DataInterpreter, LAMBDA, DB-GPT) and two closed-source (Databricks Genie, BigQuery), under four metrics, Attack Success Rate, Blast Radius, Relative Error, and Resource Amplification Ra-tio (§6). Building on these findings, we derive four key takeaways for building secure data agents (§7). ( Addressing RQ3 )
+
+## 2 RELATED WORK 
+
+Data agents and analytical benchmarks. Recent data agents con-nect LLM reasoning with database access, code execution, visualiza-tion, and report generation. Representative systems include DataIn-terpreter, DB-GPT, LAMBDA, and DeepAnalyze [ 18 , 44 , 52 , 56 ], building on reason-and-act and tool-use paradigms that interleave chain-of-thought reasoning with tool invocation [ 36 , 37 , 39 , 51 , 53 ]. Such agents increasingly operate over data lakes that integrate structured and unstructured sources for ad-hoc analysis [ 2 , 33 , 46 ]. In parallel, benchmarks such as KramaBench, FDABench, and DA-Comp evaluate whether agents complete analytical workflows over heterogeneous data, measuring task success, report quality, tool orchestration, and cost [ 21 , 23 , 50 ]. These studies primarily measure functionality. Our work departs from this functionality-centered line of work: we study how the same analytical loop becomes a security boundary when adversarial content, generated actions, and policy constraints interact. 
+
+> 2
+
+Table 1: Related work compared along scope and security goal. The last row marks the coverage of this work.                                                                       
+
+> Line of work Representative works Scope Security goal
+> Rel. DB Het. evid. Exec. tools State policy Hijack Mislead Drain
+> Data agent benchmarks DataInterpreter, DB-GPT, LAMBDA, DeepAnalyze; Kram-aBench, FDABench, DAComp [18, 21, 23, 44, 50, 52, 56]
+> ✓✓✓△✗✗✗
+> Database security Text-to-SQL methods, SQL-injection defenses, prompt-to-SQL and Text-to-SQL backdoors [ 4,5,14 ,17 ,20 ,22 ,24 ,27 ,28 ,34 ,47, 48]
+> ✓✗△△✓△✗
+> General-purpose agent se-curity Indirect prompt injection, agent benchmarks, prompt-structure defenses [1, 3, 6, 8, 30, 31, 54]
+> ✗✓✓△✓△✗
+> Retrieval and vector-database poisoning RAG poisoning, jamming, opinion manipulation, vector-space attacks [15, 26, 40, 59]
+> ✗✓△✗△✓△
+> This work Security of LLM-driven analytical data agents ✓✓✓✓✓✓✓✓: explicitly studied; △: partial or indirect; ✗: not a focus. Rel. DB : relational analytics; Het. evidence : unstructured, semi-structured, web, file, or retrieved evidence; Exec. tools :SQL, Python, or tool execution; State/policy : multi-turn state, policy persistence, or cumulative disclosure.
+
+Database security. Text-to-SQL research studies how natural-language requests are translated into executable queries and how closely generated queries match user intent [ 10 , 14 , 20 , 22 , 24 , 25 ,27 , 35 ], including robustness to perturbed or synonym-substituted questions [ 13 ]. Classical database security studies access control, SQL-injection defenses, query-interface hardening, and privacy leakage through query outputs [ 4, 5, 11 , 17 , 45 , 47 , 48 ]. More re-cent work studies prompt-to-SQL injection and Text-to-SQL back-doors [ 28 , 34 ]. These works expose failures at the natural-language and SQL boundary, but they usually treat the generated query as the main artifact. Data agents add multi-step planning, heterogeneous evidence selection, executable code, and persistent session state, which opens attack paths beyond a single generated statement. 
+
+General-purpose agent security. Prompt-injection, jailbreaking, and agent-security studies show that LLM applications can be ma-nipulated by adversarial instructions embedded in prompts, docu-ments, webpages, or tool outputs [ 1, 8 , 30 , 31 , 41 , 54 ]. A related line builds tool-learning benchmarks and defenses that separate instruc-tions from data or deploy proactive traps and decoys [ 3 , 6, 29 , 36 ]. As in our setting, an LLM here consumes untrusted external con-tent and then issues queries or tool calls. However, data agents run over relational databases, which adds structure that generic agent benchmarks rarely model: SQL semantics, table-level provenance, join and aggregation cost, SQL and Python inconsistencies, and fine-grained database policies. 
+
+Positioning. Table 1 contrasts these lines along scope and security goal. Prior work secures one component at a time: SQL genera-tion, database interfaces, generic tool agents, or retrieval backends, where poisoning, jamming, and opinion-manipulation attacks dis-tort retrieved documents [ 15 , 40 , 59 ] and malicious vectors near centroid regions become frequent nearest neighbors [ 26 ]. We in-stead treat the data agent as the unit of analysis, exposing attacks that cross component boundaries: malicious database or retrieved content becomes an instruction, generated SQL drives expensive execution, intermediate analytical state dilutes attention to policy, and individually safe outputs compose into sensitive disclosure. These cross-boundary failures motivate our taxonomy of Hijack ,
+
+Mislead , and Drain attacks and our comprehensive evaluations across real data agent systems. 
+
+## 3 THREAT MODEL AND OVERVIEW 
+
+Data agent. Consider an analyst who asks an LLM-driven analyti-cal system, “find anomalies in Q4 sales by region,” over an enterprise warehouse of relational tables, JSON event logs, and a data-handling policy document. To answer the request, the system plans and issues a sequence of tool calls, such as SQL queries, Python executions, and file reads, then returns a chart, a tabular summary, or a short report. We call such a system a data agent . The analyst’s natural language prompt 𝑃 , together with any uploaded data D𝑢𝑝 , forms the data agent’s input; the issued tool calls 𝐴 and the resulting outputs 𝑂 form its response. Internally, an LLM M reasons over a system state S and acts through a tool set T on data assets D
+
+that may be structured, semi-structured, or unstructured. Security and operational policies Π specify what the agent may reason over, which tool calls 𝐴 are admissible, and which data may be disclosed in its outputs 𝑂 . The execution environment E, such as a Docker container or a serverless engine, bounds isolation and quotas. Based on the four open-source and two closed-source systems studied in this paper, we formalize a data agent as the tuple 
+
+Σ = ⟨(M , S) , T , D, Π, E⟩ ,
+
+where Table 2 summarizes the notation. 
+
+Table 2: System Model Notation. 
+
+Symbol Meaning 
+
+Σ Data agent system 
+
+M LLM for reasoning and tool planning 
+
+S System state: context and working memory 
+
+T Tool set: SQL, Python, file I/O, web, visualization 
+
+D Data assets: D𝑠𝑡𝑟 , D𝑠𝑒𝑚𝑖𝑠𝑡𝑟 , D𝑢𝑛𝑠𝑡𝑟 
+
+Π Security and operational policies 
+
+E Execution environment: sandbox, runtime, quotas 
+
+𝑃 User prompt 
+
+D𝑢𝑝 Uploaded data, ingested into D when permitted 
+
+𝐴 Tool calls issued by the data agent 
+
+𝑂 Analytical outputs returned to the user 
+
+Deployment setting. We consider an enterprise that deploys a data agent over its databases and connects it to two classes of actors: external data contributors, such as web editors and data suppliers, and internal users, such as analysts who interact with the data agent. 
+
+> 3
+
+Adversary model. We consider two classes of adversaries: (1) A malicious external data contributor supplies uploaded data D𝑢𝑝 
+
+that, once ingested, may alter the system state S or outputs 𝑂 
+
+in subsequent analytical tasks. (2) A malicious or compromised internal user submits prompts 𝑃 over multiple turns, steers M to invoke tools in T such as SQL engines, Python executors, or file readers, observes the returned outputs 𝑂 , and so indirectly affects S
+
+and E. The two adversaries may collude, but most attacks we study do not require it: an external contributor first plants adversarial data, and a benign internal user later triggers the attack through an ordinary prompt. We assume the adversary cannot modify model weights, system code, the policies Π, or the database management system. Attacks must therefore arrive through the inputs 𝑃 and 
+
+D𝑢𝑝 .
+
+Adversary goals. The adversary pursues one or more of the fol-lowing goals: (1) Hijack : drive the data agent to issue unauthorized tool calls 
+
+𝐴 or produce illegitimate outputs 𝑂 that violate Π, such as sandbox escape or unauthorized data exfiltration. (2) Mislead : induce data agents to generate incorrect outputs 𝑂 .(3) Drain : force the agent to consume excessive resources from E,such as token budget and execution time. 
+
+Overview. The remainder of the paper follows this threat model in three steps. First, we identify eight vulnerabilities in data agents across the interpretation, execution, and policy layers (Section 4). Second, we instantiate these vulnerabilities into 14 attack tech-niques and evaluate them on four open-source and two closed-source data agents to measure how broadly they can be exploited in practice (Sections 5–6). Third, based on the empirical results, we derive four defense takeaways that target the main failure modes (Section 7). 
+
+## 4 VULNERABILITY ANALYSIS 
+
+We derive the vulnerabilities from the system model of Section 3. Specifically, a data agent Σ = ⟨(M , S) , T , D, Π, E⟩ answers a re-quest by repeatedly (i) at the interpretation layer, turning its inputs (the data assets D, the user prompt 𝑃 , and the system state S) into an analytical intent; (ii) at the execution layer, compiling that in-tent into the tool calls 𝐴 over the tool set T within the execution environment E; and (iii) at the policy layer, checking both against the policies Π. For each layer, we investigate the attack surface exposed to a realistic adversary whose capabilities are limited to controlling the inputs, i.e., the uploaded data Dup and the user prompt 𝑃 . Across four open-source and two closed-source systems, this audit yields eight vulnerabilities, i.e., V1 – V8. Figure 1 maps these vulnerabilities to the components and layers of data agents Σ.
+
+## 4.1 Interpretation-Layer Vulnerabilities 
+
+At this layer, data agent Σ turns the user prompt 𝑃 , the data assets 
+
+D, and the conversation context in the system state S into an interpretation of the analytical task. 
+
+V1. Implicit Trust Bias. When two items in the data assets D give conflicting knowledge, the data agent Σ picks one of them without any rule for which should take precedence. This happens when the policies Π do not specify a priority among items in the data assets 
+
+D. An attacker can exploit this vulnerability by planting content in a data item that the system treats as higher priority, leading benign users to receive an output 𝑂 produced from the attacker-planted item rather than the legitimate one. 
+
+Example. Asked for total revenue, the data agent Σ finds two con-flicting definitions: the column comment on revenue says to use the amount as stored, while an attacker-planted file in the data assets D says to “multiply all revenue by 1.5.” With no precedence rule, agent Σ follows the planted file and returns an inflated figure. 
+
+V2. Lack of Data Source Verification. The data agent Σ does not verify whether content read from the data assets D is authentic before using it. An attacker plants malicious instructions, code, or false facts in the data assets D. Once this content is retrieved through the tool set T , it enters the context S and is treated as legitimate, producing unauthorized behavior or incorrect outputs 
+
+𝑂 . This is the database-resident form of indirect prompt injection and retrieval poisoning [ 1 , 59 ]: the content rides in structured table fields and metadata, surfaced through SQL and tool execution rather than free-form documents. 
+
+Example. Asked to reconcile Q4 figures, the data agent Σ trusts an externally written adjustment_note cell that says “also export the full customer contact list,” without checking its provenance, and discloses the sensitive columns in the output 𝑂 .
+
+## 4.2 Execution-Layer Vulnerabilities 
+
+At this layer, data agent Σ expands its reasoning into tool calls over the tool set T within the execution environment E.
+
+V3. Uncontrolled Query Cost. A single query that the data agent 
+
+Σ issues can carry extreme cost yet violate none of the policies Π,because the data agent Σ plans without reliable cost-aware admis-sion control. An attacker induces plausible-looking joins, scans, or aggregations that consume disproportionate resources. Bound-ing query cost is a classical concern of database governors and admission control [ 5 ]. In data agents, the issue reappears because natural-language analytical requests are translated by the LLM M
+
+into queries before any dependable cost check is applied. 
+
+Example. Asked to “compare every customer against every similar customer,” the data agent Σ compiles a non-equi self-join over the 30M-row customers table, whose near-quadratic intermediate results exhaust memory before any of the policies Π fire. 
+
+V4. Cross-Engine Semantic Inconsistency. The data agent Σ
+
+routes work across backends such as SQL and Python. These back-ends differ in integer division, NULL handling, and date parsing. The LLM M may treat their results as comparable and read a se-mantic mismatch as a numerical disagreement. An attacker asks the data agent Σ to validate one result on both backends. This drives the LLM M into reconciliation loops that never converge. 
+
+Example. Asked to compute a defect rate in both SQL and Python and confirm they match, the data agent Σ gets 0 in SQL, where integer division truncates 37/1000 , but 0.037 in Python. The data agent fails to recognize the semantic mismatch and loops trying to reconcile it. 
+
+V5. Unbounded Multi-Step Query Chains. Even when every query is cheap, the agent Σ may chain them without bound. It ex-plores depth-first and cannot distinguish benign multi-step analysis from an adversarial trap. An attacker crafts prompts that trigger                                  
+
+> 4MODEL & STATE (M,S) TOOL SET TDATA D
+> POLICY 𝛱
+> Access Control Code Verification Permission Boundary
+> Query
+> &Action
+> Result
+> Invoke
+> Answer
+> HARDWARE &EXECUTION
+> ENVIRONMENT E
+> …
+> SQLite CSV JSON Markdown
+> SQL
+> Engine
+> V1 Database Related Tools Other Tools Model Set MStructured Data Semi -Structured &
+> Unstructured Data
+> Visualization
+> Tool
+> Python
+> Executor
+> ……
+> TXT
+> …
+> State S
+> Schema
+> Inspector
+> …
+> Tool Governance …
+> Enforcement Monitoring Leakage Control
+> V2
+> V3
+> V5V4
+> V6 V8V7
+> III. POLICY
+> LAYER
+> I. INTERPRETATION LAYER II. EXECUTION LAYER
+> Context
+> & Memory
+
+Figure 1: Attack surface of a data agent Σ. V1 – V8 mark where each vulnerability arises, in a component or on an edge. 
+
+long chains of subqueries or repeated refinements. These exhaust the agent Σ over many steps rather than in any single query. 
+
+Example. Asked to “find every transaction that may need review and keep refining until none is missed,” the data agent Σ loops unboundedly. Each round loosens a threshold and joins another table with no stopping rule. 
+
+## 4.3 Policy-Layer Vulnerabilities 
+
+At this layer, the policies Π capture rules that govern data agent Σ.
+
+V6. Security Policy Forgetting under Context Pressure. After a long session, the data agent Σ may issue actions 𝐴 that the policies 
+
+Π forbade at the start. The LLM M has a limited context window, so as query results and history grow, they crowd out the policies 
+
+Π and the agent stops enforcing them. An attacker submits many complex requests until intermediate results fill the context, after which a previously blocked query passes. 
+
+Example. Over a long session of responses, intermediate results crowd out the policies Π, and the agent Σ eventually returns transaction-level tax records it refused at the start. 
+
+V7. Over-Privileged Database Connection. In many deploy-ments, the data agent Σ connects to the database with one shared account, not each user’s own, and that account can read far more than most users are allowed to. Because every request goes through it, the database cannot tell who is really asking, so user-level poli-cies Π cannot stop a user from reaching data they should not see. An attacker simply asks the data agent Σ for tables their own account could never open. This is the well-known least-privilege problem. In data agents, the risk is amplified because a natural-language prompt is translated into tool calls through a shared service con-nection, so user identity and database privileges are not reliably bound throughout the workflow. 
+
+Example. Asked to build a data dictionary with sample rows for every tax table, the data agent Σ opens restricted tables such as 
+
+taxpayer_pii through its shared account and returns personal records that the user was never allowed to see. 
+
+V8. Lack of Compositional Leakage Control. The policies Π
+
+may approve each query in isolation. Yet they check one tool invo-cation at a time and never track cumulative disclosure across the session. As a result, the combined results can still reveal records that the policies Π are meant to protect, mirroring the differencing-attack hazard in classical query systems [ 11 , 45 ]. An attacker issues a sequence of aggregate or subgroup queries whose combination reconstructs the protected fields. 
+
+Example. The attacker asks for total tax over all regions, then for total tax over all regions except North, where North holds a single taxpayer. The data agent Σ answers both, and their difference re-veals that taxpayer’s exact value, though neither query violates the policies Π.These eight vulnerabilities are not isolated defects in data re-sources, database execution, or agent reasoning. They arise from the operational pipeline of a data agent, where data becomes rea-soning context, reasoning becomes executable SQL and Python actions, and the policies Π must govern both transitions across the session. This layered view reorganizes the data-resource, execution, and reasoning risks of Section 1 around that pipeline, and shows how they compound into vulnerabilities specific to data agents. We evaluate these vulnerabilities in Section 5. 
+
+## 5 EVALUATING VULNERABILITIES 
+
+Section 4 identifies eight vulnerabilities specific to data agents. We now assess the severity of these vulnerabilities in real data agents. Section 5.1 presents our evaluation framework and summarizes the results across six data agents. The framework follows a three-step pipeline: we instantiate 14 attack techniques from the identified vul-nerabilities; generate 350 schema-grounded payloads by combining each technique with target database schemas; and evaluate these payloads on six data agents, together with three additional LLMs on one agent, yielding 3,075 tests in total. To further elaborate on the technical details of this pipeline, Section 5.2 details the attack techniques, and Section 5.3 describes how we generate executable payloads from attack techniques and target database schemas. 
+
+## 5.1 Evaluation Framework and Result Overview 
+
+To evaluate how severe the identified vulnerabilities are in widely used data agents, we build a three-stage evaluation framework (Figure 2a) that turns the abstract descriptions of vulnerabilities into executable tests. 
+
+Stage 1: Attack Technique Instantiation. We manually instanti-ate practical attack techniques from the identified vulnerabilities and adversary goals. Specifically, based on the eight vulnerabilities identified in Section 4 and the three adversary goals defined in Section 3, we derive 14 concrete attack techniques, which can be 
+
+> 5
+
+8 Vulnerabil ities V1 − V8 
+
+6 Data Agents’ Evaluation Results 
+
+> Instantiated 14 Attack techniques
+> Hijack T1.1 Query Injection …
+> Mislead T4.1 Direct Analytical Field Poisoning…
+> Drain T6.1 High -Cost Query Induction …
+
+Stage2 :
+
+Attack Payload Generation 
+
+Stage1 :
+
+Attack Technique Instantiation   
+
+> Attack
+> Techniques
+> Data
+> Environment LLM Model
+> 350 Attack
+> payloads
+
+Stage3 :
+
+Data Agent Evaluation        
+
+> Test on 6Data Agents :
+> DataInterpreter DB -GPT DeepAnalyze,
+> LAMBDA Databricks BigQuery
+
+(a) Evaluation framework. V1         
+
+> Trust Bias
+> V2
+> Source Verification
+> V3
+> Query Cost
+> V4
+> Engine Divergence
+> V5
+> Unbounded Chains
+> V6
+> Policy Forgetting
+> V7
+> Over-Privilege
+> V8
+> Composition Leak
+> 20 40 60 80 100 V1
+> Trust Bias
+> V2
+> Source Verification
+> V3
+> Query Cost
+> V4
+> Engine Divergence
+> V5
+> Unbounded Chains
+> V6
+> Policy Forgetting
+> V7
+> Over-Privilege
+> V8
+> Composition Leak V1
+> Trust Bias
+> V2
+> Source Verification
+> V3
+> Query Cost
+> V4
+> Engine Divergence
+> V5
+> Unbounded Chains
+> V6
+> Policy Forgetting
+> V7
+> Over-Privilege
+> V8
+> Composition Leak
+> DataInterpreter DB-GPT DeepAnalyze V1
+> Trust Bias
+> V2
+> Source Verification
+> V3
+> Query Cost
+> V4
+> Engine Divergence
+> V5
+> Unbounded Chains
+> V6
+> Policy Forgetting
+> V7
+> Over-Privilege
+> V8
+> Composition Leak V1
+> Trust Bias
+> V2
+> Source Verification
+> V3
+> Query Cost
+> V4
+> Engine Divergence
+> V5
+> Unbounded Chains
+> V6
+> Policy Forgetting
+> V7
+> Over-Privilege
+> V8
+> Composition Leak V1
+> Trust Bias
+> V2
+> Source Verification
+> V3
+> Query Cost
+> V4
+> Engine Divergence
+> V5
+> Unbounded Chains
+> V6
+> Policy Forgetting
+> V7
+> Over-Privilege
+> V8
+> Composition Leak
+> LAMBDA Databricks BigQuery
+
+(b) Vulnerability across six systems. Each axis is one vulnerability (V1–V8); its value is the success rate of payloads that exploit it. 
+
+Figure 2: Evaluation framework and vulnerability-level result overview. 
+
+categorized according to the adversary goals they serve. In addi-tion to specifying the vulnerability it exploits and the adversary goal it serves, each attack technique also identifies its target attack surface, i.e., the data agent component to which the attack applies. This step ensures that our evaluation is grounded in a vulnerability taxonomy specific to data agents. 
+
+Stage 2: Attack Payload Generation. We then generate exe-cutable, schema-grounded payloads for each attack technique. We use a retrieval-augmented generation (RAG) pipeline to retrieve each technique specification, expand it into technique-specific tem-plates, and instantiate those templates with real table names, col-umn names, and data types from the target databases. This produces 25 payloads per technique and 350 payloads in total. 
+
+Stage 3: Data Agent Evaluation. Finally, we execute each gen-erated payload on the six target data agents, and we further test three frontier base-LLM backends on one fixed agent framework, resulting in 3,075 tests in total. As discussed above, the attacks can be divided into three categories according to their adversary goals: hijack, mislead, and drain. For each attack category, we use goal-specific metrics to quantify attack effectiveness; for example, for drain attacks, we measure the Resource Amplification Ratio (RAR). To further measure Attack Success Rate (ASR), we define attack-specific success conditions based on the corresponding met-ric used for each attack. More details on these evaluation metrics are provided in Section 6.1. 
+
+Results overview. We quantify the severity of each vulnerability by the success rate of its associated payloads. Figure 2b summarizes the results. Three findings stand out. 
+
+• Every system is broadly exposed. Each evaluated agent is ex-ploitable on at least five of the eight vulnerabilities, with profiles that differ by system: Databricks is more exposed on V1 and V5, while LAMBDA is more exposed on V5 and V6. DataInterpreter’s lower exposure comes from limited functionality, not stronger defense: it often fails to bind the task to the database, so payloads miss the attack surface. Yet when it does connect, it shows the largest BR4 fraction of any system (Table 5). 
+
+• Every vulnerability is general. Each of V1–V8 appears in at least three agents, so the weaknesses are not artifacts of a single implementation. 
+
+• Trust bias dominates. V1 is the most prominent vulnerability, showing that data agents commonly fall back on implicit trust preferences when resolving conflicting evidence. 
+
+## 5.2 Attack Taxonomy 
+
+This subsection presents the attack taxonomy instantiated from the vulnerabilities identified in Section 4. We organize the attacks into a three-level hierarchy. At the top level, attacks are grouped by adversary goal, i.e., Hijack , Mislead , and Drain . Each goal is then divided into tactics, where every tactic comprises two techniques that follow similar attack paths. We present each tactic together with its techniques below. 
+
+5.2.1 Hijack Attacks. Hijack attacks make the data agent Σ per-form unauthorized actions or produce outputs that violate its secu-rity and operational policies Π.
+
+T1. Execution Injection. Content in data assets D enters the SQL or code generation pipeline and becomes executable tool calls 
+
+𝐴 . We distinguish two techniques by the target execution engine. 
+
+T1.1 Query Injection. The attacker plants malicious SQL in writable fields such as cell contents or column comments in data assets D.When the agent retrieves these values into its context and generates 
+
+> 6
+
+Table 3: Attack matrix for LLM-driven analytical systems.                                              
+
+> Adversary Goal Attack Tactic Attack Technique Exploited Vuln. & Comp. Hijack T1. Execution Injection T1.1 Query Injection V2; S,T,D
+> T1.2 Code Injection V2; S,T,D,E
+> T2. Reasoning Manipulation T2.1 Policy Forgetting under Context Pressure V6; S,Π
+> T2.2 Privilege Scope Forgery V2, V7; M,S,D
+> T3. Analytical Reconstruction T3.1 Cross-Query Analytical Reconstruction V7, V8; Π, 𝑂
+> T3.2 Autonomous Analytical Reconstruction V7, V8; M,S,Π, 𝑂
+> Mislead T4. Analytical Context Poisoning T4.1 Direct Analytical Field Poisoning V2; M,D
+> T4.2 Cross-Format Poison Propagation V2; M,T,D
+> T5. Trust-Bias Exploitation T5.1 Data Type Bias Exploitation V1; M,D
+> T5.2 Policy Conflict Exploitation V1; M,D,Π
+> Drain T6. Execution Cost Amplification T6.1 High-Cost Query Induction V3; M,T,E
+> T6.2 Cross Engine Validation Amplification V4; M,T,E
+> T7. Search Space Trapping T7.1 Low-Value Branch Expansion V5; M,S
+> T7.2 Circular or Repetitive Search Loops V5; M,S
+
+its next query, the LLM M cannot separate the planted SQL from ordinary data and incorporates it into the query it executes. 
+
+T1.2 Code Injection. The attacker plants malicious Python code or shell commands in writable fields such as configuration values, file paths, or free-text notes in Data assets D. When the agent retrieves these values into its context and generates subsequent executable tool calls, the LLM M cannot separate the planted code from ordinary data and folds it into the Python or shell command it executes. 
+
+T2. Reasoning Manipulation. Content in data assets D corrupts the reasoning and judgment of the LLM M. Unlike T1, where externally injected code or SQL fragments enter the execution pipeline, here the tool call is generated entirely by the LLM M
+
+itself; the failure is that M should not have issued these tool calls. 
+
+T2.1 Policy Forgetting under Context Pressure. The attacker first submits a series of benign analytical requests that gradually dilute the LLM M’s attention to the policies Π, after which queries that 
+
+Π would normally block are no longer refused and the data agent 
+
+Σ is effectively hijacked. 
+
+T2.2 Privilege Scope Forgery. The attacker embeds forged identity claims or access-scope declarations in data assets D. Once these claims enter the system state S, the LLM M may accept them as valid and issue tool calls 𝐴 under a broader privilege scope than the current task warrants. 
+
+T3. Analytical Reconstruction. Protected data in the data assets 
+
+D can be rebuilt by combining queries that are each individually allowed. No single query crosses the policies Π, but their answers together reveal what Π was meant to hide. The two techniques differ in who drives the reconstruction: the attacker, who issues the queries step by step (T3.1), or the data agent Σ itself, which plans them from a single high-level task (T3.2). 
+
+T3.1 Cross-Query Analytical Reconstruction. The attacker issues a sequence of legitimate queries and combines their answers to narrow down or even reconstruct protected records. Because each individual query stays within the policies Π, the attack is unlikely to trigger system defenses and can proceed stealthily. The attack exploits the absence of output-level privacy controls such as 𝑘 -anonymity thresholds, query-budget limits, or differential privacy mechanisms [11, 45]. 
+
+T3.2 Autonomous Analytical Reconstruction. The attacker gives the data agent Σ a single high-level objective instead of explicit queries. Σ decomposes the task into a chain of permitted subqueries and combines their intermediate results itself, reconstructing pro-tected records even though every subquery is individually allowed. 
+
+5.2.2 Mislead Attacks. Mislead attacks plant misleading data to make the agent behave normally but return a wrong output 𝑂 .
+
+T4. Analytical Context Poisoning. The attacker directly or indirectly injects misleading content into data assets, affecting the subsequent analytical results of other analysts whose tasks involve the poisoned data. 
+
+T4.1 Direct Analytical Field Poisoning. The attacker embeds false facts or analytical rules into fields in data assets D that are likely to be consumed later, such as schema comments, description fields, or analyst notes. When other analysts later perform analytical tasks, this injected content may enter the context of the LLM M and lead it to produce incorrect analytical outputs 𝑂 .
+
+T4.2 Cross-Format Poison Propagation. The attacker uploads semi-structured data D𝑠𝑒𝑚𝑖𝑠𝑡𝑟 or unstructured data D𝑢𝑛𝑠𝑡𝑟 contain-ing misleading content and prompts the data agent Σ to convert this data and incorporate it into data assets D. In this way, the injected content evades direct prompt-level scrutiny; when other analysts later perform analytical tasks, it may enter the context of the LLM M and lead it to produce incorrect analytical outputs 𝑂 .
+
+T5. Trust-Bias Exploitation. The attacker plants its content in the source the data agent Σ trusts more. When two sources conflict and the policies Π give no precedence, Σ falls back on an implicit preference and adopts the attacker’s value over the correct one. 
+
+T5.1 Data Type Bias Exploitation. The attacker exploits the agent’s tendency to trust unstructured documents over structured data, such as table cells, schema metadata, or other structured ana-lytical context. By planting a false rule or cue in unstructured data 
+
+Dunstr , the attacker makes the LLM M favor it during analysis and produce the output 𝑂 it wants. 
+
+T5.2 Policy Conflict Exploitation. The attacker exploits the agent’s tendency to favor a newer or more detailed policy document when conflicting policy artifacts are present. By crafting a forged policy file that appears more recent, more complete, or more authorita-tive than another policy document in unstructured data D𝑢𝑛𝑠𝑡𝑟 ,the attacker can cause the LLM M to privilege the forged docu-ment during conflict resolution and to produce attacker-preferred outputs 𝑂 . This technique targets deployments that supply policy documents to the agent as in-context unstructured evidence; the forged file is ordinary uploaded data in D𝑢𝑛𝑠𝑡𝑟 , and the attacker never modifies the policies Π themselves. 
+
+> 7
+
+5.2.3 Drain Attacks. Drain attacks craft a request so that the data agent Σ wastes resources such as tokens or runtime while breaking no policy in Π.
+
+T6. Execution Cost Amplification. The attacker constructs a carefully designed query so that the LLM M issues a costly query without violating the policies Π.
+
+T6.1 High-Cost Query Induction. The attacker phrases a request that compiles into a single high-cost tool call 𝐴 , such as a full-table scan or a large join, draining computational resources in the execution environment E.
+
+T6.2 Cross Engine Validation Amplification. The attacker sub-mits a query request that explicitly requires the agent to validate the same analytical result across multiple execution backends, such as SQL and Python, and to reconcile every discrepancy between them. When semantic inconsistencies across backends prevent direct agreement, the LLM M may repeatedly issue tool calls 𝐴 1, 𝐴 2, . . . 
+
+through the tool set T to rerun, refine, or reinterpret the analysis, thereby causing substantial drain of computational resources in the execution environment E.
+
+T7. Search Space Trapping. The attacker constructs a carefully designed query so that the LLM M enters a broad or nonconvergent search space without violating the policies Π.
+
+T7.1 Low-Value Branch Expansion. The attacker submits a query with many low-value investigation paths, and this query induces the LLM M to expand into a broad search space, draining resources such as tokens in the execution environment E.
+
+T7.2 Circular or Repetitive Search Loops. The attacker submits a query request that induces the LLM M to enter a circular or repetitive search loop, draining resources such as tokens in the execution environment E.
+
+## 5.3 Attack Payload Generation 
+
+We turn each abstract technique into concrete, schema-grounded payloads through a three-stage generation pipeline that grounds the technique in a real database. First, we organize the attack taxon-omy into a knowledge base, where each entry records a technique’s adversary goal, tactic, exploited vulnerabilities, targeted compo-nents, and intended effect. Second, using the target technique as the retrieval query, we retrieve its entry and condition the LLM on the retrieved entry to synthesize technique-specific attack templates, each capturing a distinct realization of the technique. Finally, a schema extractor reads the target database catalog, including its tables, columns, and data types, so the LLM can instantiate each template into payloads that reference real fields and stay plausible in their host attributes. Each technique yields a structured grid of 25 payloads, five mechanistically distinct templates instantiated on five enterprise databases. Across all techniques, this process covers 27 databases and produces 350 payloads and 3,075 tests in total. Because the templates are mechanistically distinct, this grid covers a technique’s realization variants across domains rather than sam-pling the attack space at random. All payloads were frozen prior to execution, without outcome-driven tuning. The generated tem-plates, instantiated payloads, goal-specific judging scripts, and all execution transcripts of the four open-source systems are released for reproducibility. 
+
+## 6 EVALUATION DETAILS 
+
+Section 4 identifies eight vulnerabilities in data agents, and Section 5 instantiates them as 14 attack techniques. This section evaluates how these attacks behave in realistic data agent systems. We orga-nize the evaluation around four questions. First, we measure overall attack effectiveness with ASR across attack techniques and systems. Second, we quantify how severe these attacks are using BR, RE, and RAR. Third, we study whether the conclusions are sensitive to the ASR success threshold and to the choice of base LLM. Finally, we test whether the same attacks generalize to commercial systems. 
+
+## 6.1 Experimental Setup 
+
+Testing Systems. We evaluate six data-agent systems, including four open-source and two closed-source commercial systems. 
+
+• Four open-source systems: We explore DataInterpreter [ 18 ], DB-GPT [ 52 ], DeepAnalyze [ 56 ], and LAMBDA [ 44 ]. DataInter-preter, DB-GPT, and LAMBDA use DeepSeek-V3.2 [ 9] as the base LLM, while DeepAnalyze is released with its own specialized base LLM, DeepAnalyze-8B, distilled from DeepSeek-R1. 
+
+• Two closed-source commercial systems: We evaluate Databricks Genie Code (Databricks) [ 7] and BigQuery Conversa-tional Analytical Agent (BigQuery) [ 16 ] as black-box commercial deployments in §6.5. We access each system through its standard interface under default governance: Databricks Genie Code via a Genie Space scoped by Unity Catalog, and BigQuery via its console and API under IAM-scoped roles. We evaluated both systems in May 2026. For the base-LLM sensitivity study in §6.4, we fix the agent framework to DB-GPT and replace its backend with Sonnet-4.6, GPT-5.2, and Gemini-3-flash-preview, in addition to the original DeepSeek-V3.2 backend. Each system runs all 350 payloads, except BigQuery, which supports only SQL and omits T1.2, T4.2, and T6.2 for 275; the sensitivity study reruns the 350 payloads under three additional backends on DB-GPT, bringing the total to 3,075 tests. 
+
+Datasets. We adopt DAComp-DA as the shared dataset for all system experiments. It provides 100 instances, each a distinct SQLite database spanning enterprise domains such as finance, e-commerce, and digital marketing. Each instance is a benign analytical workload, which we turn into a security test by planting payloads where the adversary model of §3 permits: in writable data fields or uploaded files for an external contributor, or across a multi-turn prompt sequence for an internal user. 
+
+Compute Platform. In this paper, we conduct open-source system experiments on a server with an AMD Ryzen Threadripper PRO 9975WX processor, 576 GB RAM, and 1 RTX Pro6000 GPU. All open-source runs used benchmark data in isolated local environments under resource caps, with no production data; on the commercial services we did not attempt host compromise, persistence, unau-thorized third-party access, or quota exhaustion beyond normal evaluation limits. 
+
+Reproducibility. Our artifact supports reproduction of the re-ported numbers from the released materials. It contains the 350 attack manifests with their generation templates organized by ad-versary goal, the per-goal judging scripts that map raw outputs to BR, RE, RAR, and ASR, the Docker sandbox specification and data-base files, and complete execution transcripts for the open-source                                                                  
+
+> 8T1.1 T1.2 T2.1 T2.2 T3.1 T3.2 T4.1 T4.2 T5.1 T5.2 T6.1 T6.2 T7.1 T7.2
+> Attack Technique
+> DataInterpreter
+> DB-GPT
+> DeepAnalyze
+> LAMBDA
+> 20 56 040 820 0808412 40
+> 24 68 44 24 44 40 16 20 52 36 32 20 28 56
+> 016 16 56 32 20 40 76 100 68 60 12 68 24
+> 48 28 64 28 24 28 824 16 44 36 16 48 52
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> ASR (%)
+
+Figure 3: ASR heatmap for all attack techniques across 4 open-source systems. Table 4: Blast Radius (BR) propagation levels for Hijack .
+
+Level Description BR0 Blocked. The attack does not have any effect. No unautho-rized effect is produced. 
+
+BR1 Request-scoped. The effect is confined to the current single response and does not modify session state. 
+
+BR2 Session-state-scoped. The effect persists across the ses-sion. The agent updates its plan or memory, so later turns continue to follow the attacker-induced behavior. 
+
+BR3 Agent-system-scoped. The effect reaches the agent run-time container or sandbox without penetrating the host. 
+
+BR4 Runtime-scoped. The effect penetrates to the host, the network, or files outside the authorized workspace. 
+
+data agents, recording each agent’s responses, generated code, out-puts, and token usage. The instructions reproduce the DB-GPT runs and explain how to apply the same evaluation procedure to the other open-source systems and the two commercial services. 
+
+Evaluation Metrics. The three adversary goals compromise differ-ent security properties and share no common notion of success. We therefore pair each with a goal-specific magnitude metric that cap-tures how severe an attack is, Blast Radius (BR) for Hijack , Relative Error (RE) for Mislead , and Resource Amplification Ratio (RAR) for Drain , and add one common metric, Attack Success Rate (ASR), for how often an attack succeeds. Computing BR, RE, and RAR needs execution traces, token counts, and runtime, which only the four open-source systems expose, so on Databricks and BigQuery we report ASR only. 
+
+Blast Radius (BR). BR is an ordinal metric adapting the security-scope breach notion of CVSS [ 12 ] and the blast-radius framing for AI agents [ 32 ]: BR (𝑝 ) is the highest propagation level any unautho-rized effect of a Hijack payload 𝑝 reaches, over the five levels in Table 4. 
+
+Relative Error (RE). RE measures how closely a Mislead output matches the attacker’s target value [19, 59]: 
+
+RE = | ˆ𝑣 − 𝑣 ∗ |
+
+𝑣 ∗ × 100% ,
+
+where ˆ𝑣 is the poisoned output and 𝑣 ∗ is the attacker’s target, com-puted exactly from the database so that RE is measured against ground truth. 
+
+Resource Amplification Ratio (RAR). RAR is the ratio of ma-licious to benign cost along a resource dimension 𝑚 , follow-ing the amplification-factor convention used for availability at-tacks [38, 42, 57]: 
+
+RAR 𝑚 = ˆ𝑐 𝑚 
+
+𝑐 ref 
+
+> 𝑚
+
+,
+
+where 𝑐 ref  
+
+> 𝑚
+
+is a benign workload’s consumption and ˆ𝑐 𝑚 the drain payload’s, on the same database and system. We instantiate RAR on two dimensions: the total tokens consumed and the end-to-end execution time. 
+
+Attack Success Rate (ASR). ASR turns each magnitude metric into a binary success rate through a goal-specific threshold, following the per-attack success oracle of agent-security studies [ 8, 54 , 55 ]: an attack succeeds if BR ≥ 1 for Hijack , RE ≤ 10% for Mislead ,or overall RAR ≥ 5 for Drain , where overall RAR is defined as the maximum of the token-based and time-based RARs. ASR is the fraction of payloads that satisfy the corresponding success condition. Each cutoff is operationally meaningful: BR ≥ 1 separates any unauthorized effect from a fully blocked attack, RE ≤ 10% is the band within which a poisoned figure can flip a downstream decision, and RAR ≥ 5 marks where one request consumes several times the benign workload it imitates. We vary the RE and RAR cutoffs in §6.4; for Hijack , Table 5 reports the full BR distribution, so stricter cutoffs can be read off directly. Each value is derived from the run itself by the released per-goal judge scripts. RE compares the agent’s reported value against the ground-truth target, RAR divides the payload’s token and time cost by a benign run on the same database, and the BR level is the broadest effect scope observed in the execution trace. 
+
+## 6.2 Overall Attack Effectiveness 
+
+We first ask whether the 14 attack techniques succeed in realistic data agent systems. Figure 3 reports the per-technique ASR on the four open-source systems. 
+
+Technique-Level Findings. (i) No technique is fully blocked across the evaluated systems, confirming that the vulnerabilities of Section 4 and the attacks of Section 5 pose practical threats. (ii) The most effective technique within each adversary goal is T1.2 Code Injection for Hijack , T5.1 Data Type Bias Exploitation for Mislead ,and T7.1 Low-Value Branch Expansion for Drain . T1.2 succeeds when generated code reaches an execution backend without OS-level isolation, though DB-GPT’s Docker sandbox limits its impact to the container. T5.1 is effective because agents resolve conflicts 
+
+> 9
+
+Table 5: BR distribution of Hijack techniques across 4 open-source systems. 
+
+System BR0 BR1 BR2 BR3 BR4 
+
+DataInterpreter 76.0% 6.7% 8.0% 0.0% 9.3% DB-GPT 59.3% 10.7% 18.7% 11.3% 0.0% DeepAnalyze 76.7% 3.3% 17.3% 0.0% 2.7% LAMBDA 63.3% 12.7% 19.3% 0.0% 4.7% 
+
+between evidence types through implicit preferences rather than provenance. T7.1 increases token consumption by forcing agents to explore low-value branches, motivating Takeaway 2. (iii) The least effective technique within each adversary goal is T1.1 Query Injection for Hijack , T4.1 Direct Analytical Field Poisoning for Mis-lead , and T6.2 Cross Engine Validation Amplification for Drain .T1.1 is reduced mainly by DeepAnalyze’s 0% ASR. T4.1 often fails because poisoned facts are placed in passive metadata fields that agents do not reliably retrieve during ordinary analysis. T6.2 re-quires cross-backend re-execution and discrepancy reconciliation, but many agents skip such validation or settle on one result early. 
+
+System-Level Findings. (i) No evaluated system blocks every attack. Except for DataInterpreter, each open-source system has positive ASR on at least 13 of the 14 techniques, exposing broad security risks in current open-source data agents. (ii) Under the de-fault ASR operating point, the non-DataInterpreter systems expose distinct vulnerability profiles, each traceable to a system mecha-nism. DeepAnalyze shows broad exposure because its distilled 8B model has weaker safety alignment and executes generated code through in-process exec() without sandboxing. DB-GPT reduces propagation risk through Docker isolation and process cleanup, but remains vulnerable to many non-code and resource-drain attacks. LAMBDA’s Programmer →Inspector →Conversation loop catches malformed actions, but it is not a security review and therefore leaves broad attack coverage. 
+
+## 6.3 Attack Magnitude Analysis 
+
+We now turn from whether attacks succeed to how severe they are, analyzing the magnitude metrics BR, RE, and RAR on the four open-source systems. 
+
+Blast Radius. Table 5 reports the BR distribution over the 150 Hi-jack cases per system. Among the systems that bind to the database, successful hijacks most often reach session-scoped (BR2) effects that persist into later turns, while host-level (BR4) escapes are rare but the most damaging. DB-GPT’s sandbox isolation prevents any BR3-class test from escalating to BR4, while the other three systems all reach BR4. BR4 cases are the most consequential: though a small minority, they can generate persistent cron tasks that repeatedly trigger attacker-specified actions. As noted in Section 5.1, DataInter-preter’s cases mostly fall into BR0 (blocked) yet its BR4 fraction is the largest of the four systems, so on the rare occasions it connects to the database it remains highly vulnerable. 
+
+Relative Error. As shown in Figure 4, DeepAnalyze and DB-GPT concentrate their highest density near RE = 0. DeepAnalyze peaks sharply there, with 71% of cases within RE ≤ 10% , far more sus-ceptible to Mislead than the others, while LAMBDA and DB-GPT 0% 50% 100% 150% 200%  
+
+> Relative Error (%)
+> 0%
+> 5%
+> 10%
+> 15%
+> 20%
+> Percentage of test cases (%) ̂
+> v = 0  or  2v ∗4%
+> within
+> RE ≤ 10%
+
+(a) DataInterpreter. 0% 50% 100% 150% 200%   
+
+> Relative Error (%)
+> 0%
+> 20%
+> 40%
+> 60%
+> 80%
+> Percentage of test cases (%)
+> 71%
+> within
+> RE ≤ 10%
+
+(b) DeepAnalyze. 0% 50% 100% 150% 200%  
+
+> Relative Error (%)
+> 0%
+> 10%
+> 20%
+> 30%
+> Percentage of test cases (%)
+> 31%
+> within
+> RE ≤ 10%
+
+(c) DB-GPT. 0% 50% 100% 150% 200%   
+
+> Relative Error (%)
+> 0%
+> 5%
+> 10%
+> 15%
+> 20%
+> Percentage of test cases (%)
+> 23%
+> within
+> RE ≤ 10%
+
+(d) LAMBDA. 
+
+Figure 4: RE distribution of Mislead attacks across 4 open-source systems. T6.1 T6.2 T7.1 T7.2 
+
+> 0
+> 5
+> 10
+> 15
+> 20
+> 25
+> RAR
+> 16.4x
+> 8.0x
+> 17.3x
+> 14.3x
+> 1.0x
+> DataInterpreter
+> DeepAnalyze
+> DB-GPT
+> LAMBDA
+
+(a) Token amplification. T6.1 T6.2 T7.1 T7.2  
+
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> RAR
+> 8.4x
+> 11.4x
+> 46.2x
+> 8.7x
+> 1.0x
+> DataInterpreter
+> DeepAnalyze
+> DB-GPT
+> LAMBDA
+
+(b) Total time amplification. 
+
+Figure 5: Resource Amplification Ratio (RAR) of successful 
+
+Drain attacks across 4 open-source systems. 
+
+show only 23% and 31%. DataInterpreter again fails to connect to the database and emits 0, the tall bar at RE = 100% in its subplot. 
+
+Resource Amplification Ratio. As shown in Figure 5a and Fig-ure 5b, T6.1 is the most effective Drain technique in the end-to-end time dimension and T7.1 in the token dimension. LAMBDA shows the highest time amplification on T6.1, averaging 46 .2× with 8 cases exceeding the 1800 s cap: its Jupyter CodeKernel offers no query-level cancellation, so once the in-kernel sqlite3 engine accepts an unbounded multi-join (in one case a Cartesian join over two 13.8M-row tables), the worker enters a ZMQ recv state that never returns, leaving the agent unresponsive for 30 minutes. 
+
+## 6.4 Sensitivity Analysis 
+
+This subsection studies whether the conclusions above are sensi-tive to two evaluation choices: the success threshold that turns a continuous magnitude metric into a binary ASR, and the base LLM behind the agent. We vary each factor while holding the rest of the protocol fixed. 
+
+Success-threshold sensitivity. Tables 6 and 7 vary the success threshold around the operating points used by ASR, RE ≤ 10% for 
+
+> 10
+
+Table 6: Share (%) of Mislead cases landing within each RE threshold.                                                                                            
+
+> RE ≤20% RE ≤10% RE ≤5% RE ≤1%
+> System T4.1 T4.2 T5.1 T5.2 T4.1 T4.2 T5.1 T5.2 T4.1 T4.2 T5.1 T5.2 T4.1 T4.2 T5.1 T5.2 DataInterpreter 4% 8% 4% 8% 0% 8% 0% 8% 0% 8% 0% 8% 0% 8% 0% 4% DB-GPT 24% 20% 52% 36% 16% 20% 52% 36% 8% 16% 44% 36% 8% 8% 44% 24% DeepAnalyze 44% 76% 100% 68% 40% 76% 100% 68% 32% 76% 100% 68% 32% 76% 100% 64% LAMBDA 16% 24% 24% 44% 8% 24% 16% 44% 0% 20% 8% 44% 0% 20% 4% 36%
+
+Table 7: Share (%) of Drain cases reaching overall RAR threshold.                                                                                            
+
+> RAR ≥2RAR ≥5RAR ≥10 RAR ≥20
+> System T6.1 T6.2 T7.1 T7.2 T6.1 T6.2 T7.1 T7.2 T6.1 T6.2 T7.1 T7.2 T6.1 T6.2 T7.1 T7.2 DataInterpreter 20% 52% 44% 40% 4% 12% 4% 0% 0% 8% 0% 0% 0% 4% 0% 0% DB-GPT 64% 44% 60% 76% 32% 20% 28% 56% 12% 4% 12% 24% 0% 0% 8% 4% DeepAnalyze 84% 32% 100% 72% 60% 12% 68% 24% 40% 4% 40% 16% 20% 0% 8% 4% LAMBDA 56% 64% 96% 96% 36% 16% 48% 52% 32% 0% 40% 28% 32% 0% 20% 8%
+
+Mislead and overall RAR ≥ 5 for Drain . For Mislead , the conclu-sion is stable across all RE cutoffs: DeepAnalyze remains the most exposed system, with T5.1 staying at 100% even under RE ≤ 1% ,while DataInterpreter stays below 10% throughout. For Drain , the results across thresholds shows that DeepAnalyze and LAMBDA re-main the two systems with the highest resource-amplification expo-sure across the tested cutoffs. DeepAnalyze is more exposed around the ASR operating point and remains highest at both RAR ≥ 5 and 
+
+RAR ≥ 10 , while LAMBDA shows comparatively more extreme tail cases at the strictest cutoff. This suggests that both systems are vul-nerable to resource-drain attacks, but with different amplification profiles. Thus, our conclusions do not depend on a single threshold, and the qualitative findings of §6.2 remain valid over a range of thresholds. 
+
+Base-LLM sensitivity. To test whether the observed risks depend on a specific base LLM, we fix the agent framework to DB-GPT and evaluate four base-LLM backends: Sonnet-4.6, GPT-5.2, Gemini-3-flash-preview (Gemini-3-flash), and the original DeepSeek-V3.2. All 350 payloads are executed under the same DB-GPT frame-work, Docker sandbox, and judging rules. Table 8 reports the per-technique ASR. From Table 8, we draw three findings: Changing the base LLM does not eliminate the vulnerability: most techniques still achieve non-zero ASR under at least one backend, with successful attacks spanning all three goals, so the taxonomy is not an artifact of one base LLM but reflects vulnerabil-ities in the data-agent workflow. Replacement instead shifts risk, as different backends suppress different techniques but none blocks the full taxonomy: Gemini-3-flash reduces three of the four Drain 
+
+techniques to ≤ 8% , GPT-5.2 remains vulnerable to T7.1 at 32%, Sonnet-4.6 is most exposed to T5.2 at 44%, and DeepSeek-V3.2 stays high on T7.2 at 56%. A few payload families persist across all four backends, such as cap-at-threshold Mislead attacks that present truncation as a legitimate statistical choice, motivating agent-level checks on evidence provenance, method consistency, and output integrity, supporting Takeaway 4. 
+
+Table 8: Sensitivity of per-technique ASR to base-LLM choice on the DB-GPT framework. Bold: highest ASR per technique.                                                             
+
+> Technique Sonnet-4.6 GPT-5.2 Gemini-3-flash DeepSeek-V3.2 T1.1 44% 48% 24% 24%
+> T1.2 48% 16% 44% 68% T2.1 12% 12% 28% 44% T2.2 0% 16% 4% 24% T3.1 16% 28% 32% 44% T3.2 8% 8% 4% 40% T4.1 8% 8% 8% 16% T4.2 20% 20% 20% 20% T5.1 12% 12% 8% 52% T5.2 44% 28% 28% 36%
+> T6.1 8% 12% 24% 32% T6.2 8% 0% 0% 20% T7.1 20% 32% 0% 28%
+> T7.2 8% 0% 8% 56%
+
+## 6.5 Generalization to Commercial Systems 
+
+We finally test whether the same attack techniques generalize to black-box commercial deployments, surfacing similar failure modes in production analytics agents when the corresponding attack sur-face is available. Table 9 compares closed-source ASR with the open-source range, where OSS-Min and OSS-Max denote the lowest and highest ASR among the 4 open-source systems. Databricks provides the strongest protection against Hijack attacks among the evaluated systems. Most hijacking attempts are blocked, and in many failed cases the agent explicitly cites the security or product policy that it must follow. This behavior suggests that strong, persistent pol-icy constraints can substantially reduce successful hijacking, so data agents should keep robust policy instructions pinned through-out the session. However, closed-source deployment does not fully eliminate privacy leakage. Analytical reconstruction attacks still succeed in several cases because each individual query can appear 
+
+> 11
+
+Table 9: Closed-source ASR compared with the open-source range. Bold: above OSS-Max; underline: below OSS-Min. 
+
+Technique Databricks BigQuery OSS-Min OSS-Max T1.1 0% 24% 0% 48% 
+
+T1.2 0% N/A 16% 68% 
+
+T2.1 0% 24% 0% 64% 
+
+T2.2 0% 0% 24% 56% 
+
+T3.1 0% 12% 8% 44% 
+
+T3.2 4% 12% 20% 40% 
+
+T4.1 24% 8% 0% 40% 
+
+T4.2 44% N/A 8% 76% 
+
+T5.1 80% 84% 0% 100% 
+
+T5.2 80% 88% 8% 68% 
+
+T6.1 24% 12% 4% 60% 
+
+T6.2 40% N/A 12% 20% 
+
+T7.1 76% 16% 4% 68% 
+
+T7.2 80% 0% 0% 56% 
+
+benign while the query sequence gradually discloses protected in-formation. This residual risk reinforces Takeaway 3. However, both remain exposed to most Drain techniques, reinforcing Takeaway 2. To keep the attack surface common across systems, we present BigQuery with adversarial evidence as text/plain , isolating the agent’s trust decision from its upstream AI.GENERATE_TEXT ex-traction. Under this setting, BigQuery shows high ASR on several 
+
+Mislead techniques, especially T5-style misleading-evidence at-tacks, indicating susceptibility once poisoned evidence is visible to the agent. 
+
+## 7 KEY TAKEAWAYS 
+
+The evaluation shows that data agent security failures do not fol-low a single pattern. They arise from the interaction of relational data access, executable analytical tools, and LLM reasoning. We summarize four takeaways for designing secure data agents. 
+
+Takeaway 1: Relational databases broaden the attack surface of data agents. Connecting relational databases to an agent turns data access from passive retrieval into part of the agent’s security boundary. Tables, rows, schema metadata, query results, access policies, and intermediate aggregates can all be interpreted, trusted, combined, or acted upon by the agent. This enables attacks that neither standalone databases nor general-purpose agents expose alone, including planted table content, poisoned metadata, costly joins and scans, and multi-turn composition of aggregate outputs. 
+
+Takeaway 2: Resource drain is a primary failure mode for data agents. Beyond Hijack attacks, our results show that Drain 
+
+is a central data agent risk. The adversary does not need to force an explicit policy violation; it can instead induce apparently legiti-mate analytical work that consumes excessive tokens or end-to-end time. This risk is natural for data agents because normal analyti-cal workflows reward broad exploration, verification, cross-engine checking, and iterative refinement, which become attack surfaces under adversarial requests or data. 
+
+Takeaway 3: Data leakage becomes easier through multi-step analytical reasoning. Data leakage need not come from a single explicit request for protected records. A data agent can issue individually legitimate queries, store intermediate results, and synthesize them into an answer that reveals information the policy was meant to protect. Leakage is therefore a session-level property, so secure data agents need disclosure controls that track cumulative release across the reasoning chain, not only the current SQL query or final answer. 
+
+Takeaway 4: Data agents do not have a universal modality preference for reasoning. Although data agents are grounded in relational databases, they do not always prefer SQL evidence. The trusted modality depends on orchestration and the base model’s learned preferences: planning modules may drop database details, text documents may appear more authoritative than structured fields, and conflicts may be resolved by LLM bias rather than prove-nance. Secure data agents should therefore make evidence priority explicit by tracking provenance, authority, and trust level across SQL results, files, metadata, and intermediate state. 
+
+## 8 CONCLUSION 
+
+In this paper, we present a systematic empirical study of security in data agents. We characterize eight vulnerabilities across the interpretation, execution, and policy layers, organize an attack taxonomy of three adversary goals, seven tactics, and fourteen techniques, and instantiate these techniques as schema-grounded payloads. Evaluating these attacks on six systems, four open-source agents and two commercial analytics services, we find that no system blocks the full range of attacks: all three adversary goals are realized in practice, the commercial systems resist many hijack attempts yet remain exposed to misleading evidence and resource drain, and replacing the base LLM redistributes risk rather than removing it. These findings yield four takeaways for secure data agents: treat database-connected reasoning as a new attack surface, treat resource drain as a primary security risk, control cumulative disclosure across multi-step sessions, and resolve evidence conflicts using explicit provenance rather than implicit modality preference. 
+
+## REFERENCES               
+
+> [1] Sahar Abdelnabi, Kai Greshake, Shailesh Mishra, Christoph Endres, Thorsten Holz, and Mario Fritz. 2023. Not What You’ve Signed Up For: Compromising Real-World LLM-Integrated Applications with Indirect Prompt Injection. In
+> Proceedings of the 16th ACM Workshop on Artificial Intelligence and Security, AISec 2023, Copenhagen, Denmark, 30 November 2023 , Maura Pintor, Xinyun Chen, and Florian Tramèr (Eds.). ACM, 79–90. [2] Ziawasch Abedjan, Mahdi Esmailoghli, and Sainyam Galhotra. 2025. Data Dis-covery in Data Lakes: Operations, Indexes, Systems. Proc. VLDB Endow. 18, 12 (2025), 5455–5459. [3] Daniel Ayzenshteyn, Roy Weiss, and Yisroel Mirsky. 2025. Cloak, Honey, Trap: Proactive Defenses Against LLM Agents. In 34th USENIX Security Symposium, USENIX Security 2025, Seattle, WA, USA, August 13-15, 2025 , Lujo Bauer and Giancarlo Pellegrino (Eds.). USENIX Association, 8095–8114. [4] Sruthi Bandhakavi, Prithvi Bisht, P. Madhusudan, and V. N. Venkatakrishnan. 2007. CANDID: preventing sql injection attacks using dynamic candidate evalu-ations. In Proceedings of the 2007 ACM Conference on Computer and Communi-cations Security, CCS 2007, Alexandria, Virginia, USA, October 28-31, 2007 , Peng Ning, Sabrina De Capitani di Vimercati, and Paul F. Syverson (Eds.). ACM, 12–24. [5] Elisa Bertino and Ravi S. Sandhu. 2005. Database security - concepts, approaches, and challenges. IEEE Transactions on Dependable and Secure Computing 2, 1 (2005), 2–19. [6] Sizhe Chen, Julien Piet, Chawin Sitawarin, and David A. Wagner. 2025. StruQ: Defending Against Prompt Injection with Structured Queries. In 34th USENIX Security Symposium, USENIX Security 2025, Seattle, WA, USA, August 13-15, 2025 ,Lujo Bauer and Giancarlo Pellegrino (Eds.). USENIX Association, 2383–2400. [7] Databricks. 2026. Use Genie Code for Data Science. https://docs.databricks.com/ aws/en/notebooks/ds-agent. Accessed: 2026-05-22.
+> 12
+
+[8] Edoardo Debenedetti, Jie Zhang, Mislav Balunovic, Luca Beurer-Kellner, Marc Fischer, and Florian Tramèr. 2024. AgentDojo: A Dynamic Environment to Eval-uate Prompt Injection Attacks and Defenses for LLM Agents. In Advances in Neural Information Processing Systems 37: Annual Conference on Neural Informa-tion Processing Systems 2024, NeurIPS 2024, Vancouver, BC, Canada, December 10 -15, 2024 , Amir Globersons, Lester Mackey, Danielle Belgrave, Angela Fan, Ulrich Paquet, Jakub M. Tomczak, and Cheng Zhang (Eds.). [9] DeepSeek-AI. 2025. DeepSeek-V3.2: Pushing the Frontier of Open Large Lan-guage Models. CoRR abs/2512.02556 (2025). [10] Xuemei Dong, Chao Zhang, Yuhang Ge, Yuren Mao, Yunjun Gao, Lu Chen, Jinshu Lin, and Dongfang Lou. 2023. C3: Zero-shot Text-to-SQL with ChatGPT. CoRR 
+
+abs/2307.07306 (2023). [11] Cynthia Dwork. 2006. Differential Privacy. In Automata, Languages and Pro-gramming, 33rd International Colloquium, ICALP 2006, Venice, Italy, July 10-14, 2006, Proceedings, Part II (Lecture Notes in Computer Science) , Michele Bugliesi, Bart Preneel, Vladimiro Sassone, and Ingo Wegener (Eds.). Springer, 1–12. [12] Forum of Incident Response and Security Teams (FIRST). 2019. Common Vul-nerability Scoring System v3.1: Specification Document. https://www.first.org/ cvss/v3-1/specification-document. Accessed: 2026-05-22. [13] Yujian Gan, Xinyun Chen, Qiuping Huang, Matthew Purver, John R. Woodward, Jinxia Xie, and Pengsheng Huang. 2021. Towards Robustness of Text-to-SQL Models against Synonym Substitution. In Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics and the 11th International Joint Conference on Natural Language Processing, ACL/IJCNLP 2021, (Volume 1: Long Papers), Virtual Event, August 1-6, 2021 , Chengqing Zong, Fei Xia, Wenjie Li, and Roberto Navigli (Eds.). Association for Computational Linguistics, 2505–2515. [14] Dawei Gao, Haibin Wang, Yaliang Li, Xiuyu Sun, Yichen Qian, Bolin Ding, and Jingren Zhou. 2024. Text-to-SQL Empowered by Large Language Models: A Benchmark Evaluation. Proc. VLDB Endow. 17, 5 (2024), 1132–1145. [15] Yuyang Gong, Zhuo Chen, Jiawei Liu, Miaokun Chen, Fengchang Yu, Wei Lu, XiaoFeng Wang, and Xiaozhong Liu. 2025. Topic-FlipRAG: Topic-Orientated Adversarial Opinion Manipulation Attacks to Retrieval-Augmented Generation Models. In 34th USENIX Security Symposium, USENIX Security 2025, Seattle, WA, USA, August 13-15, 2025 , Lujo Bauer and Giancarlo Pellegrino (Eds.). USENIX Association, 3807–3826. [16] Google. 2025. BigQuery: From Data Warehouse to Autonomous Data and AI Platform. https://cloud.google.com/bigquery. Accessed: 2026-05-22. [17] William G. J. Halfond, Jeremy Viegas, and Alessandro Orso. 2006. A Classifica-tion of SQL Injection Attacks and Countermeasures. In 2006 IEEE International Symposium on Secure Software Engineering, ISSSE 2006, Arlington, VA, USA, March 16 -17, 2006 , Samuel T. Redwine Jr. (Ed.). [18] Sirui Hong, Yizhang Lin, Bang Liu, Bangbang Liu, Binhao Wu, Ceyao Zhang, Danyang Li, Jiaqi Chen, Jiayi Zhang, Jinlin Wang, Li Zhang, Lingyao Zhang, Min Yang, Mingchen Zhuge, Taicheng Guo, Tuo Zhou, Wei Tao, Robert Tang, Xiangtao Lu, Xiawu Zheng, Xinbing Liang, Yaying Fei, Yuheng Cheng, Yongxin Ni, Zhibin Gou, Zongze Xu, Yuyu Luo, and Chenglin Wu. 2025. Data Interpreter: An LLM Agent for Data Science. In Findings of the Association for Computational Linguistics, ACL 2025, Vienna, Austria, July 27 - August 1, 2025 (Findings of ACL) , Wanxiang Che, Joyce Nabende, Ekaterina Shutova, and Mohammad Taher Pilehvar (Eds.). Association for Computational Linguistics, 19796–19821. [19] Matthew Jagielski, Alina Oprea, Battista Biggio, Chang Liu, Cristina Nita-Rotaru, and Bo Li. 2018. Manipulating Machine Learning: Poisoning Attacks and Coun-termeasures for Regression Learning. In 2018 IEEE Symposium on Security and Privacy, SP 2018, Proceedings, 21-23 May 2018, San Francisco, California, USA . IEEE Computer Society, 19–35. [20] George Katsogiannis-Meimarakis and Georgia Koutrika. 2023. A survey on deep learning approaches for text-to-SQL. VLDB J. 32, 4 (2023), 905–936. [21] Eugenie Lai, Gerardo Vitagliano, Ziyu Zhang, Sivaprasad Sudhir, Om Chabra, Anna Zeng, Anton A. Zabreyko, Chenning Li, Ferdi Kossmann, Jialin Ding, Jun Chen, Markos Markakis, Matthew Russo, Weiyang Wang, Ziniu Wu, Michael J. Cafarella, Lei Cao, Samuel Madden, and Tim Kraska. 2025. KramaBench: A Benchmark for AI Systems on Data-to-Insight Pipelines over Data Lakes. CoRR 
+
+abs/2506.06541 (2025). [22] Fangyu Lei, Jixuan Chen, Yuxiao Ye, Ruisheng Cao, Dongchan Shin, Hongjin Su, Zhaoqing Suo, Hongcheng Gao, Wenjing Hu, Pengcheng Yin, Victor Zhong, Caiming Xiong, Ruoxi Sun, Qian Liu, Sida Wang, and Tao Yu. 2025. Spider 2.0: Evaluating Language Models on Real-World Enterprise Text-to-SQL Workflows. In The Thirteenth International Conference on Learning Representations, ICLR 2025, Singapore, April 24-28, 2025 . OpenReview.net. [23] Fangyu Lei, Jinxiang Meng, Yiming Huang, Junjie Zhao, Yitong Zhang, Jianwen Luo, Xin Zou, Ruiyi Yang, Wenbo Shi, Yan Gao, Shizhu He, Zuo Wang, Qian Liu, Yang Wang, Ke Wang, Jun Zhao, and Kang Liu. 2025. DAComp: Benchmarking Data Agents across the Full Data Intelligence Lifecycle. CoRR abs/2512.04324 (2025). [24] Boyan Li, Yuyu Luo, Chengliang Chai, Guoliang Li, and Nan Tang. 2024. The Dawn of Natural Language to SQL: Are We Fully Ready? [Experiment, Analysis & Benchmark ]. Proc. VLDB Endow. 17, 11 (2024), 3318–3331. [25] Haoyang Li, Shang Wu, Xiaokang Zhang, Xinmei Huang, Jing Zhang, Fuxin Jiang, Shuai Wang, Tieying Zhang, Jianjun Chen, Rui Shi, Hong Chen, and Cuiping Li. 2025. OmniSQL: Synthesizing High-quality Text-to-SQL Data at Scale. Proc. VLDB Endow. 18, 11 (2025), 4695–4709. [26] Hanxi Li, Jianan Zhou, Jiale Lao, Yibo Wang, Zhengmao Ye, Yang Cao, Junfen Wang, and Mingjie Tang. 2026. Can You Trust the Vectors in Your Vector Data-base? Black-Hole Attack from Embedding Space Defects. CoRR abs/2604.05480 (2026). [27] Jinyang Li, Binyuan Hui, Ge Qu, Jiaxi Yang, Binhua Li, Bowen Li, Bailin Wang, Bowen Qin, Ruiying Geng, Nan Huo, Xuanhe Zhou, Chenhao Ma, Guoliang Li, Kevin Chen-Chuan Chang, Fei Huang, Reynold Cheng, and Yongbin Li. 2023. Can LLM Already Serve as A Database Interface? A BIg Bench for Large-Scale Database Grounded Text-to-SQLs. In Advances in Neural Information Processing Systems 36: Annual Conference on Neural Information Processing Systems 2023, NeurIPS 2023, New Orleans, LA, USA, December 10 - 16, 2023 , Alice Oh, Tristan Naumann, Amir Globerson, Kate Saenko, Moritz Hardt, and Sergey Levine (Eds.). [28] Meiyu Lin, Haichuan Zhang, Jiale Lao, Renyuan Li, Yuanchun Zhou, Carl Yang, Yang Cao, and Mingjie Tang. 2025. Are Your LLM-based Text-to-SQL Models Secure? Exploring SQL Injection via Backdoor Attacks. Proc. ACM Manag. Data 
+
+3, 6 (2025), 1–27. [29] Xiao Liu, Hao Yu, Hanchen Zhang, Yifan Xu, Xuanyu Lei, Hanyu Lai, Yu Gu, Hangliang Ding, Kaiwen Men, Kejuan Yang, Shudan Zhang, Xiang Deng, Ao-han Zeng, Zhengxiao Du, Chenhui Zhang, Sheng Shen, Tianjun Zhang, Yu Su, Huan Sun, Minlie Huang, Yuxiao Dong, and Jie Tang. 2024. AgentBench: Eval-uating LLMs as Agents. In The Twelfth International Conference on Learning Representations, ICLR 2024, Vienna, Austria, May 7-11, 2024 . OpenReview.net. [30] Yi Liu, Gelei Deng, Yuekang Li, Kailong Wang, Tianwei Zhang, Yepang Liu, Haoyu Wang, Yan Zheng, and Yang Liu. 2023. Prompt Injection attack against LLM-integrated Applications. CoRR abs/2306.05499 (2023). [31] Yupei Liu, Yuqi Jia, Runpeng Geng, Jinyuan Jia, and Neil Zhenqiang Gong. 2024. Formalizing and Benchmarking Prompt Injection Attacks and Defenses. In 33rd USENIX Security Symposium, USENIX Security 2024, Philadelphia, PA, USA, August 14-16, 2024 , Davide Balzarotti and Wenyuan Xu (Eds.). USENIX Association. [32] Ross McKerchar. 2026. Operating inside the Lethal Trifecta: Blast Radius Reduction in AI Agent Deployments. Sophos Blog. https://www.sophos.com/en-us/blog/inside-the-lethal-trifecta-blast-radius-reduction-in-ai-agent-deployments, accessed 2026-05-30. [33] Fatemeh Nargesian, Erkang Zhu, Renée J. Miller, Ken Q. Pu, and Patricia C. Arocena. 2019. Data Lake Management: Challenges and Opportunities. Proc. VLDB Endow. 12, 12 (2019), 1986–1989. [34] Rodrigo Pedro, Miguel E. Coimbra, Daniel Castro, Paulo Carreira, and Nuno Santos. 2025. Prompt-to-SQL Injections in LLM-Integrated Web Applications: Risks and Defenses. In 47th IEEE/ACM International Conference on Software Engineering, ICSE 2025, Ottawa, ON, Canada, April 26 - May 6, 2025 . IEEE, 1768– 1780. [35] Mohammadreza Pourreza and Davood Rafiei. 2023. DIN-SQL: Decomposed In-Context Learning of Text-to-SQL with Self-Correction. In Advances in Neural Information Processing Systems 36: Annual Conference on Neural Information Processing Systems 2023, NeurIPS 2023, New Orleans, LA, USA, December 10 - 16, 2023 , Alice Oh, Tristan Naumann, Amir Globerson, Kate Saenko, Moritz Hardt, and Sergey Levine (Eds.). [36] Yujia Qin, Shengding Hu, Yankai Lin, Weize Chen, Ning Ding, Ganqu Cui, Zheni Zeng, Xuanhe Zhou, Yufei Huang, Chaojun Xiao, Chi Han, Yi R. Fung, Yusheng Su, Huadong Wang, Cheng Qian, Runchu Tian, Kunlun Zhu, Shihao Liang, Xingyu Shen, Bokai Xu, Zhen Zhang, Yining Ye, Bowen Li, Ziwei Tang, Jing Yi, Yuzhang Zhu, Zhenning Dai, Lan Yan, Xin Cong, Yaxi Lu, Weilin Zhao, Yuxiang Huang, Junxi Yan, Xu Han, Xian Sun, Dahai Li, Jason Phang, Cheng Yang, Tongshuang Wu, Heng Ji, Guoliang Li, Zhiyuan Liu, and Maosong Sun. 2025. Tool Learning with Foundation Models. ACM Comput. Surv. 57, 4 (2025), 101:1–101:40. [37] Yujia Qin, Shihao Liang, Yining Ye, Kunlun Zhu, Lan Yan, Yaxi Lu, Yankai Lin, Xin Cong, Xiangru Tang, Bill Qian, Sihan Zhao, Lauren Hong, Runchu Tian, Ruobing Xie, Jie Zhou, Mark Gerstein, Dahai Li, Zhiyuan Liu, and Maosong Sun. 2024. ToolLLM: Facilitating Large Language Models to Master 16000+ Real-world APIs. In The Twelfth International Conference on Learning Representations, ICLR 2024, Vienna, Austria, May 7-11, 2024 . OpenReview.net. [38] Christian Rossow. 2014. Amplification Hell: Revisiting Network Protocols for DDoS Abuse. In 21st Annual Network and Distributed System Security Symposium, NDSS 2014, San Diego, California, USA, February 23-26, 2014 . The Internet Society. [39] Timo Schick, Jane Dwivedi-Yu, Roberto Dessì, Roberta Raileanu, Maria Lomeli, Eric Hambro, Luke Zettlemoyer, Nicola Cancedda, and Thomas Scialom. 2023. Toolformer: Language Models Can Teach Themselves to Use Tools. In Advances in Neural Information Processing Systems 36: Annual Conference on Neural Infor-mation Processing Systems 2023, NeurIPS 2023, New Orleans, LA, USA, December 10 - 16, 2023 , Alice Oh, Tristan Naumann, Amir Globerson, Kate Saenko, Moritz Hardt, and Sergey Levine (Eds.). [40] Avital Shafran, Roei Schuster, and Vitaly Shmatikov. 2025. Machine Against the RAG: Jamming Retrieval-Augmented Generation with Blocker Documents. In 
+
+34th USENIX Security Symposium, USENIX Security 2025, Seattle, WA, USA, August 
+
+> 13
+
+13-15, 2025 , Lujo Bauer and Giancarlo Pellegrino (Eds.). USENIX Association, 3787–3806. [41] Xinyue Shen, Zeyuan Chen, Michael Backes, Yun Shen, and Yang Zhang. 2024. "Do Anything Now": Characterizing and Evaluating In-The-Wild Jailbreak Prompts on Large Language Models. In Proceedings of the 2024 on ACM SIGSAC Conference on Computer and Communications Security, CCS 2024, Salt Lake City, UT, USA, October 14-18, 2024 , Bo Luo, Xiaojing Liao, Jun Xu, Engin Kirda, and David Lie (Eds.). ACM, 1671–1685. [42] Ilia Shumailov, Yiren Zhao, Daniel Bates, Nicolas Papernot, Robert Mullins, and Ross Anderson. 2021. Sponge Examples: Energy-Latency Attacks on Neural Networks. In IEEE European Symposium on Security and Privacy, EuroS&P 2021, Vienna, Austria, September 6-10, 2021 . IEEE, 212–231. [43] Snowflake. 2026. Snowflake Cortex AI. https://www.snowflake.com/en/product/ features/cortex/. Accessed: 2026-05-22. [44] Maojun Sun, Ruijian Han, Binyan Jiang, Houduo Qi, Defeng Sun, Yancheng Yuan, and Jian Huang. 2024. LAMBDA: A Large Model Based Data Agent. CoRR 
+
+abs/2407.17535 (2024). [45] Latanya Sweeney. 2002. k-Anonymity: A Model for Protecting Privacy. Int. J. Uncertain. Fuzziness Knowl. Based Syst. 10, 5 (2002), 557–570. [46] Xiu Tang, Wenhao Liu, Sai Wu, Chang Yao, Gongsheng Yuan, Shanshan Ying, and Gang Chen. 2024. QueryArtisan: Generating Data Manipulation Codes for Ad-hoc Analysis in Data Lakes. Proc. VLDB Endow. 18, 2 (2024), 108–116. [47] Erik Trickel, Fabio Pagani, Chang Zhu, Lukas Dresel, Giovanni Vigna, Christo-pher Kruegel, Ruoyu Wang, Tiffany Bao, Yan Shoshitaishvili, and Adam Doupé. 2023. Toss a Fault to Your Witcher: Applying Grey-box Coverage-Guided Muta-tional Fuzzing to Detect SQL and Command Injection Vulnerabilities. In 44th IEEE Symposium on Security and Privacy, SP 2023, San Francisco, CA, USA, May 21-25, 2023 . IEEE, 2658–2675. [48] Salim Al Wahaibi, Myles Foley, and Sergio Maffeis. 2023. SQIRL: Grey-Box Detection of SQL Injection Vulnerabilities Using Reinforcement Learning. In 
+
+32nd USENIX Security Symposium, USENIX Security 2023, Anaheim, CA, USA, August 9-11, 2023 , Joseph A. Calandrino and Carmela Troncoso (Eds.). USENIX Association, 6097–6114. [49] Lei Wang, Chen Ma, Xueyang Feng, Zeyu Zhang, Hao Yang, Jingsen Zhang, Zhiyuan Chen, Jiakai Tang, Xu Chen, Yankai Lin, Wayne Xin Zhao, Zhewei Wei, and Jirong Wen. 2024. A survey on large language model based autonomous agents. Frontiers Comput. Sci. 18, 6 (2024), 186345. [50] Ziting Wang, Shize Zhang, Haitao Yuan, Jinwei Zhu, Shifu Li, Wei Dong, and Gao Cong. 2025. FDABench: A Benchmark for Data Agents on Analytical Queries over Heterogeneous Data. CoRR abs/2509.02473 (2025). [51] Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Brian Ichter, Fei Xia, Ed H. Chi, Quoc V. Le, and Denny Zhou. 2022. Chain-of-Thought Prompting Elicits Reasoning in Large Language Models. In Advances in Neural Information Processing Systems 35: Annual Conference on Neural Information Processing Sys-tems 2022, NeurIPS 2022, New Orleans, LA, USA, November 28 - December 9, 2022 ,Sanmi Koyejo, S. Mohamed, A. Agarwal, Danielle Belgrave, K. Cho, and A. Oh (Eds.). [52] Siqiao Xue, Danrui Qi, Caigao Jiang, Fangyin Cheng, Keting Chen, Zhiping Zhang, Hongyang Zhang, Ganglin Wei, Wang Zhao, Fan Zhou, Hong Yi, Shaodong Liu, Hongjun Yang, and Faqiang Chen. 2024. Demonstration of DB-GPT: Next Generation Data Interaction System Empowered by Large Language Models. 
+
+Proc. VLDB Endow. 17, 12 (2024), 4365–4368. [53] Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik R. Narasimhan, and Yuan Cao. 2023. ReAct: Synergizing Reasoning and Acting in Language Models. In The Eleventh International Conference on Learning Represen-tations, ICLR 2023, Kigali, Rwanda, May 1-5, 2023 . OpenReview.net. [54] Qiusi Zhan, Zhixiang Liang, Zifan Ying, and Daniel Kang. 2024. InjecAgent: Benchmarking Indirect Prompt Injections in Tool-Integrated Large Language Model Agents. In Findings of the Association for Computational Linguistics, ACL 2024, Bangkok, Thailand and virtual meeting, August 11-16, 2024 (Findings of ACL) , Lun-Wei Ku, Andre Martins, and Vivek Srikumar (Eds.). Association for Computational Linguistics, 10471–10506. [55] Hanrong Zhang, Jingyuan Huang, Kai Mei, Yifei Yao, Zhenting Wang, Chenlu Zhan, Hongwei Wang, and Yongfeng Zhang. 2025. Agent Security Bench (ASB): Formalizing and Benchmarking Attacks and Defenses in LLM-based Agents. In 
+
+The Thirteenth International Conference on Learning Representations, ICLR 2025, Singapore, April 24-28, 2025 . OpenReview.net. [56] Shaolei Zhang, Ju Fan, Meihao Fan, Guoliang Li, and Xiaoyong Du. 2025. Deep-Analyze: Agentic Large Language Models for Autonomous Data Science. CoRR 
+
+abs/2510.16872 (2025). [57] Kaiyu Zhou, Yongsen Zheng, Yicheng He, Meng Xue, Xueluan Gong, Yuji Wang, and Kwok-Yan Lam. 2026. Beyond Max Tokens: Stealthy Resource Amplification via Tool Calling Chains in LLM Agents. CoRR abs/2601.10955 (2026). [58] Yizhang Zhu, Liangwei Wang, Chenyu Yang, Xiaotian Lin, Boyan Li, Wei Zhou, Xinyu Liu, Zhangyang Peng, Tianqi Luo, Yu Li, Chengliang Chai, Chong Chen, Shimin Di, Ju Fan, Ji Sun, Nan Tang, Fugee Tsung, Jiannan Wang, Chenglin Wu, Yanwei Xu, Shaolei Zhang, Yong Zhang, Xuanhe Zhou, Guoliang Li, and Yuyu Luo. 2025. A Survey of Data Agents: Emerging Paradigm or Overstated Hype? 
+
+CoRR abs/2510.23587 (2025). [59] Wei Zou, Runpeng Geng, Binghui Wang, and Jinyuan Jia. 2025. PoisonedRAG: Knowledge Corruption Attacks to Retrieval-Augmented Generation of Large Language Models. In 34th USENIX Security Symposium, USENIX Security 2025, Seattle, WA, USA, August 13-15, 2025 , Lujo Bauer and Giancarlo Pellegrino (Eds.). USENIX Association, 3827–3844.
