@@ -6,38 +6,29 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-12
-- 运行时间：2026-06-12 06:45:36 UTC
+- 最新运行日期：2026-06-13
+- 运行时间：2026-06-13 06:30:59 UTC
 - 运行状态：成功
-- 本次总论文数：6
+- 本次总论文数：2
 - 精读区：2
-- 速读区：4
+- 速读区：0
 
 ### 今日简报（AI）
-今日聚焦6篇LLM安全与对齐前沿研究，两篇高分精读揭示语法约束解码可诱导生成恶意代码，以及推理时对齐转移的新方法。最值得关注的是语法解码越狱风险及虚拟后门防御策略，建议普通读者优先理解LLM安全边界与对齐机制的新挑战。
-- 详情：[/202606/12/README](/202606/12/README)
+今日精读两篇论文，聚焦LLM Agent安全护栏与机器非合规行为研究。  
+《From Risk Classification to Action Plan Remediation》提出护栏反馈驱动框架，《Towards Responsibly Non-Compliant Machines》探讨负责任的不合规机制。  
+建议关注AI安全中“可解释违规”与“行动补救”的结合方向。
+- 详情：[/202606/13/README](/202606/13/README)
 
 ### 精读区论文标签
-1. [Grammar-Constrained Decoding Can Jailbreak LLMs into Generating Malicious Code](/202606/12/2606.11817v1-grammar-constrained-decoding-can-jailbreak-llms-into-generating-malicious-code)  
+1. [From Risk Classification to Action Plan Remediation: A Guardrail Feedback Driven Framework for LLM Agents](/202606/13/2606.05805v1-from-risk-classification-to-action-plan-remediation-a-guardrail-feedback-driven-framework-for-llm-agents)  
    标签：评分：8.0/10、query:llm-security
-   evidence：CodeShield安全对齐对抗基于GCD的越狱攻击
-2. [ALIGNBEAM : Inference-Time Alignment Transfer via Cross-Vocabulary Logit Mixing](/202606/12/2606.12342v1-alignbeam--inference-time-alignment-transfer-via-cross-vocabulary-logit-mixing)  
+   evidence：面向LLM智能体的护栏反馈框架，包含风险分类与修复
+2. [Towards Responsibly Non-Compliant Machines](/202606/13/2606.12147v1-towards-responsibly-non-compliant-machines)  
    标签：评分：8.0/10、query:llm-security
-   evidence：推理时对齐迁移作为输出护栏
+   evidence：自主智能体负责任不服从的安全框架
 
 ### 速读区论文标签
-1. [Dummy Backdoor as a Defense: Removing Unknown Backdoors via Shared Internal Mechanisms for Generative LLMs](/202606/12/2606.11648v1-dummy-backdoor-as-a-defense-removing-unknown-backdoors-via-shared-internal-mechanisms-for-generative-llms)  
-   标签：评分：7.0/10、query:llm-security
-   evidence：作为防御手段的生成式大语言模型后门移除方法
-2. [Silent Failure in LLM Agent Systems: The Entropy Principle and the Inevitable Disorder of Autonomous Agents](/202606/12/2606.08162v1-silent-failure-in-llm-agent-systems-the-entropy-principle-and-the-inevitable-disorder-of-autonomous-agents)  
-   标签：评分：6.0/10、query:llm-security
-   evidence：分析LLM代理系统的静默失败，与代理安全机制相关
-3. [Alignment Defends LLMs from Property Inference Attacks](/202606/12/2606.10217v1-alignment-defends-llms-from-property-inference-attacks)  
-   标签：评分：6.0/10、query:llm-security
-   evidence：基于对齐的LLM推断攻击防御
-4. [Risk Under Pressure: Compute-Aware Evaluation of Adversarial Robustness in Language Models](/202606/12/2606.11409v1-risk-under-pressure-compute-aware-evaluation-of-adversarial-robustness-in-language-models)  
-   标签：评分：6.0/10、query:llm-security
-   evidence：对抗鲁棒性的计算感知评估框架
+- 本次无速读推荐。
 
 
 <div class="dpr-home-promo-card">
