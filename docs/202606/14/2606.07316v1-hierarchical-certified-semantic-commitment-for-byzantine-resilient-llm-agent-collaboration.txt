@@ -1,0 +1,1551 @@
+Title: Hierarchical Certified Semantic Commitment for Byzantine-Resilient LLM-Agent Collaboration
+
+URL Source: https://arxiv.org/pdf/2606.07316v1
+
+Published Time: Mon, 08 Jun 2026 00:58:38 GMT
+
+Number of Pages: 27
+
+Markdown Content:
+# Hierarchical Certified Semantic Commitment for Byzantine-Resilient LLM-Agent Collaboration 
+
+# Haoran Xu 
+
+2614067X@student.gla.ac.uk University of Glasgow Glasgow, United Kingdom 
+
+# Lei Zhang 
+
+lei.zhang@glasgow.ac.uk University of Glasgow Glasgow, United Kingdom 
+
+# Iadh Ounis 
+
+Iadh.Ounis@glasgow.ac.uk University of Glasgow Glasgow, United Kingdom 
+
+# Xianbin Wang 
+
+xianbin.wang@uwo.ca University of Western Ontario London, Canada 
+
+## Abstract 
+
+Byzantine collaboration among large-language-model agents re-quires a finality-control primitive: given a delivered set of stochastic, structured natural-language proposals, the protocol must decide whether the round supports a commit, what kind of commit, or a typed safe abort. Naive aggregation hides this choice behind a single verdict; classical Byzantine fault tolerance hides it behind byte-identity that LLM proposals do not satisfy. We introduce Hier-archical Certified Semantic Commitment (H-CSC), a BFT-inspired protocol that converts embedding-derived finality signals over verdict-conditioned proposal groups into one of three typed out-comes: a semantic_commit (a 2𝑓 +1 within-verdict semantic core backs the verdict, and the protocol emits a parameter-bound di-gest over the quantised aggregate), a verdict_commit (the verdict has a strong margin but the within-verdict semantic rationale is dispersed, and the protocol emits a verdict-level certificate with-out claiming a semantic aggregate), or an explicit abort with a typed reason. The contribution is typed finality, not raw com-mit accuracy. We evaluate H-CSC on two complementary bench-marks. On a controlled semantic-poisoning diagnostic (BCS_v1, 120 
+
+episodes), the H-CSC implementation commits with low angular deviation on the BFT-feasible buckets ( 0.31 ◦–2.04 ◦, sub-degree on three of four buckets; the upper bound is a no-Byzantine diagnostic floor), validating the controlled semantic-separation branch. On beyond-BFT diagnostic buckets ( 𝑛 < 3𝑓 +1), the implementation guard aborts 100% of rounds, illustrating the intended refusal be-haviour outside the model’s feasibility region. On a real LLM-agent claim-verification benchmark (MVR-50, 50 tasks, Climate-FEVER fallback) under paired static and rushing Byzantine attacks, H-CSC commits 0.90 static / 0.92 rushing with honest-reference-invalid commit rates ( invalid_hmaj , see Definition 3.7) of 0.02 / 0.00 and is not statistically separated from a strong fair certificate-emitting verdict-only baseline (B3 certificate_wrapped_majority , com-mit rate 0.88 / 0.92 ) on the headline coverage and safety axes under the reported task-level 95% bootstrap CIs (CI widths 0.14 –0.28 at 
+
+𝑛 =50 ). What the verdict-only baselines cannot produce, however, is the embedding-backed semantic_commit digest: H-CSC emits one on 74% /72% of rounds, supplying typed semantic provenance the verdict path is silent on. A strict-semantic ablation of the same framework commits only 0.54 /0.48 , demonstrating that the verdict-level fallback is necessary for coverage ( +0.36 /+ 0.44 ) at the same 
+
+≤ 0.04 safety floor. A 100-task cross-model robustness check across four agent LLMs further preserves invalid_hmaj within 0.00 –0.03 .
+
+## Keywords 
+
+LLM agents; finality control; hierarchical certified semantic com-mitment; typed commit; semantic commit; verdict commit; safe abort; Byzantine robustness; multi-agent collaboration 
+
+> arXiv:2606.07316v1 [cs.MA] 5 Jun 2026 H. Xu et al.
+
+## 1 Introduction 
+
+Multi-agent systems built on large language models (LLMs) are increasingly used for tasks where the output of agreement is a 
+
+natural-language artefact : a verdict on a scientific claim, a triage recommendation, a high-level plan. Such artefacts are not the byte-identical values that classical Byzantine fault tolerance (BFT) takes for granted. Two honest agents asked the same question, given the same evidence, and prompted with the same profile, will routinely emit textually distinct strings whose semantic content is the same. A protocol that needs to commit to one “answer” for the round must therefore reason about proposals as semantic objects, not as bytes. Classical BFT protocols (PBFT [ 5], HotStuff [ 29 ], and successors) provide deterministic finality for discrete values: a quorum of 2𝑓 +1
+
+distinct signers on a single byte-string, which under |B| ≤ 𝑓 con-tains at least 𝑓 +1 honest signatures, is sufficient. Recent work on multi-agent LLM voting and debate offers the dual extreme [ 6, 10 ,18 ]: a soft aggregation step (majority verdict, confidence-weighted verdict, or a learned judge) with no certificate, no abort behaviour, and no formal connection between the aggregation and the under-lying semantic content. Neither extreme is adequate for LLM-agent systems where downstream consumers need a verifier-checkable handle on which verdict was committed under which parameters by which signer set, and where a Byzantine fraction of the agents may produce plausible but semantically poisoned proposals [ 7, 12 ]. 
+
+Byzantine semantic poisoning is a real failure mode. A Byzan-tine LLM agent does not need to be “broken”; it can simply be prompted to produce proposals that are fluent, on-topic, and lexi-cally close to the honest mass while conveying the opposite verdict. The textual-attack literature has long shown that small, semanti-cally meaningful perturbations of fluent text can flip a downstream classifier [ 2 , 13 , 16 ], and prompt-injection studies show the same phenomenon propagates across agentic LLM workflows [ 7, 15 ]. We empirically show below that a rushing Byzantine (one that observes the honest agents’ broadcasts before submitting its own) can tar-get the gap left by the honest mass on every single round of our 50-task real-agent benchmark, and that the de-facto naive baseline, confidence-weighted voting, then commits a verdict that disagrees with the honest mass on 12% of rounds. 
+
+The problem we address. Given 𝑛 LLM agents of which up to 𝑓 are Byzantine, a round of natural-language proposals, and a determinis-tic semantic encoder (e.g. a sentence-transformer style embedding model [ 8 , 27 ]), the protocol must decide what kind of finality the round supports and publish exactly one of three typed outcomes: (i) a semantic_commit : a quantised within-verdict embedding aggregate, its digest, the protocol parameters that produced it, and a 2𝑓 +1 distinct-signer quorum certificate; (ii) a verdict_commit : the certified candidate verdict (with a 
+
+2𝑓 +1 quorum and a margin of at least one over the runner-up) and a 2𝑓 +1 distinct-signer certificate over a verdict-only digest, with no semantic aggregate claimed; or (iii) an explicit abort with a typed reason. The protocol’s typed-decision logic reads only embedding-derived and verdict-level finality signals : verdict-group sizes and margins, within-verdict semantic admissibility (the within-verdict embed-ding ball of radius 𝜃 𝛼 must contain a 2𝑓 +1 subset), and certificate feasibility ( ≥ 2𝑓 +1 distinct valid signatures over the candidate digest). It does not consult honest, gold, evidence- truth, source-reliability, or external-judge signals. The empirical honest-reference validity (reported as invalid_hmaj for backward compatibility; see Definition 3.7) of committed rounds is reported in Section 6.2; it is not promised unconditionally. 
+
+Approach. We propose Hierarchical Certified Semantic Commit-ment (H-CSC), a finality-control protocol that operates on a de-livered set of structured agent proposals and produces a typed commit object. Each agent submits a proposal with a canonical verdict field, a confidence value, an evidence-id list, a rationale, and a claim text. The protocol is a four-stage pipeline plus a typed-decision step: (1) deterministic encoding of each proposal’s canon-ical text into a unit-norm semantic embedding; (2) grouping by verdict and selection of a candidate verdict group 𝐺 𝑣 ★ ; (3) extrac-tion of an admissible within-verdict semantic core (a 2𝑓 +1 subset of 𝐺 𝑣 ★ whose embeddings sit inside an angular ball of radius 𝜃 𝛼 ); (4) robust geometric-median aggregation [ 3, 21 , 26 ], lattice quanti-sation, and parameter-bound digest. The typed-decision step then produces one of three outcomes: a semantic_commit (the within-verdict semantic core is admissible and the protocol emits a 2𝑓 +1
+
+certificate over the embedding-backed digest), a verdict_commit 
+
+(the candidate verdict group has a 2𝑓 +1 quorum and a margin of at least one over the runner-up, and the protocol emits a 2𝑓 +1
+
+certificate over a verdict-only digest with no semantic aggregate), or an explicit abort with a typed reason (Section 5). The hierarchical typed-commit shape is the key conceptual move. A binary commit-or-abort framing forces the protocol to abort whenever the embedding cluster across the full delivered view is too dispersed to admit a single 2𝑓 +1 semantic core, even when the underlying verdicts agree by a wide margin. H-CSC instead recognises that the verdict and the embedding geometry are two distinct finality signals. When both are admissible, the protocol commits with embedding-backed provenance ( semantic_commit ); when only the verdict quorum is admissible, the protocol commits with a verdict-only digest ( verdict_commit ); when neither is admis-sible, the protocol aborts. Each of the three outcomes is certified under the same 2𝑓 +1 distinct-signer envelope; only the underlying digest changes. The protocol never commits a digest without a quo-rum certificate, and never claims a semantic aggregate when the within-verdict semantic core is not admissible. H-CSC is therefore not majority vote: a vote selects an answer; H-CSC certifies the level of finality the system is justified to claim. 
+
+Evaluation. We evaluate H-CSC on two complementary bench-marks. First, BCS_v1 is a controlled semantic-poisoning diagnostic built on engineered Wikipedia-anchor paraphrases plus curated GPT-generated Byzantine variants; it validates that the encoder separates honest and Byzantine paraphrases (CRSE pairwise per-trial AUC ≈ 0.99 ), that the protocol commits with low seman-tic deviation on the BFT-feasible byzantine-ratio buckets ( 0.31 ◦–
+
+2.04 ◦, sub-degree for byz_ratio ≥ 0.1), and that the implemen-tation guard aborts 100% of beyond-BFT diagnostic rounds. Sec-ond, MVR-50 is a real LLM-agent claim-verification benchmark built on Climate-FEVER (50 tasks, 10 agents, 𝑓 = 2), with honest agents emitting verdicts through five distinct prompt profiles and Byzantine agents emitting proposals through four primary attack Hierarchical Certified Semantic Commitment for Byzantine-Resilient LLM-Agent Collaboration 
+
+types under both static and rushing attack modes. On MVR-50, H-CSC commits 0.90 static / 0.92 rushing with invalid_hmaj = 0.02 
+
+/ 0.00 and valid_commit_coverage = 0.88 /0.92 . The protocol emits an embedding-backed semantic_commit on 74% / 72% of rounds and falls back to a verdict_commit on 16% / 20% . On the headline coverage and safety axes H-CSC is numerically close to the fair certificate-emitting verdict-only baseline (B3 
+
+certificate_wrapped_majority , 0.88 / 0.92 commit, 0.00 / 0.00 
+
+invalid_hmaj ): the point-estimate gaps are at most 0.02 in commit rate and 0.002 in valid-commit coverage, with H-CSC marginally higher on commit rate and B3 marginally lower on invalid_hmaj 
+
+(a one-task difference on the static side). H-CSC’s distinct contribu-tion is the typed-finality decision and the embedding-backed digest emitted on the 74% / 72% of rounds where the within-verdict seman-tic core is admissible. A strict-semantic configuration of the same framework (without verdict grouping or fallback, equivalent to the previous CSC formulation) commits only 0.54 / 0.48 of rounds; H-CSC reports a +0.36 / +0.44 commit-rate improvement at the same safety floor. Confidence-weighted voting, an always-commit naive aggregation baseline, reaches invalid_hmaj = 0.12 in both modes. 
+
+Scope and limitations. We highlight three scope boundaries here and defer the full list to Section 7. First, MVR-50 uses Climate-FEVER as a documented fallback dataset; gold validity is reported separately from honest-reference validity ( invalid_hmaj ; see Def-inition 3.7) because the dataset’s gold labels contain substantial label noise. Second, H-CSC is not an evidence-aware claim veri-fier: it consumes verdict-level statistics and within-verdict embed-ding geometry only, and does not inspect evidence-id provenance, source reliability, claim–evidence entailment, or external judge labels. Third, H-CSC’s headline coverage and safety on MVR-50 are numerically close to the certificate-wrapped majority baseline (B3); its distinct contribution is the typed semantic_commit prove-nance. H-CSC does not claim a coverage or safety floor unreachable without the embedding axis. The margin_1 verdict fallback is a cal-ibrated empirical operating point (deterministic honest-reference validity would require verdict_margin min > 𝑓 ; see Theorem 5.3). All remaining limitations (threshold calibration, topology demotion to the design-space appendix, logical signature simulator, cross-model and multi-encoder scope, ≥ 500 -task future work) are stated explicitly in Section 7. 
+
+Paper organisation. The remainder of the paper is organised as follows. Section 2 discusses related work. Section 3 formalises semantic proposals, the typed certified commitment object, and the finality-signal vector. Section 4 describes the H-CSC protocol and presents the HierarchicalCertifiedSemanticCommitmen-tRound algorithm. Section 5 states the correctness axes (agreement, semantic validity, verdict validity, safe abort, conditional commit-or-abort termination) and the theorems we prove. Section 6 reports both benchmarks. Section 7 states the limitations explicitly. Appen-dix C presents the topology design-space ablation as transparency. 
+
+Contributions. We make the following contributions. (1) A formal statement of finality control as a per-round protocol primitive for adversarial LLM-agent collaboration: the round’s outcome is a typed object ( semantic_commit , verdict_commit ,or abort ) decided from embedding-derived and verdict-level signals over a delivered set of structured proposals, with honest, gold, evidence-truth, source-reliability, and claim–evidence-entailment signals explicitly excluded from the protocol path. (2) The H-CSC protocol, a four-stage pipeline that groups proposals by verdict, extracts an admissible within-verdict semantic core, and emits a 2𝑓 +1-quorum-certified semantic_commit when the core is admissible, a 2𝑓 +1-quorum-certified verdict_commit 
+
+when only the verdict-level finality is supported, or an explicit 
+
+abort otherwise. The certificate envelope is identical across both commit types; the typed digest is what discriminates them. (3) A split correctness analysis covering digest-level agreement, semantic validity (for semantic_commit ), verdict validity (for 
+
+verdict_commit ), safe abort, and conditional commit-or-abort termination. The previous CSC’s single safety theorem becomes a typed disjunction: a round terminates with one of the three typed outcomes, and the admissibility precondition that selects the type is a deterministic function of the delivered view. (4) A two-benchmark evaluation against fair baselines: a con-trolled semantic-poisoning diagnostic (BCS_v1) and a real LLM-agent claim-verification benchmark (MVR-50, Climate-FEVER fallback) under paired static and rushing Byzan-tine attacks. H-CSC commits 0.90 /0.92 of MVR-50 rounds with invalid_hmaj = 0.02 /0.00 , recovering coverage by 
+
++0.36 /+ 0.44 over a strict-semantic configuration of the same framework. Against the fair certificate-emitting baseline B3 (certificate_wrapped_majority ), the headline coverage and safety point estimates lie within ≤ 0.02 in commit rate and 
+
+≤ 0.002 in valid-commit coverage; the distinct contribution attributable to the embedding axis is the semantic_commit out-come emitted on 74% /72% of rounds, which no verdict-only method can produce. 
+
+Scope. H-CSC is a finality-control primitive over embedding-derived and verdict-level signals. It is not an evidence-aware claim verifier: it does not consult evidence-id provenance, source reliabil-ity, claim–evidence entailment, stance, or any external judge. We do 
+
+not claim universal robustness, strict dominance over verdict-only baselines on commit rate, semantic truth, a universal threshold 𝜃 𝛼 ,threshold-signature instantiation, or that Climate-FEVER results transfer unchanged to SciFact. A Jaccard-graph topology gate is reported in Appendix C as a design-space ablation only. 
+
+## 2 Related Work 
+
+Our work is situated in the emerging regime where heterogeneous LLM agents collaborate in open environments, and the system must nevertheless commit to a single, auditable outcome. The closest threads of prior work address (i) multi-agent LLM collaboration and answer aggregation, (ii) security threats in agentic multi-LLM workflows, and (iii) Byzantine agreement / robust aggregation be-yond byte-identical values. We review them through the lens of what remains missing for protocol-grade semantic commit .
+
+Multi-agent LLM collaboration and aggregation. A growing body of work studies multi-agent LLM collaboration (e.g., debate, delib-eration, and committee-style workflows) as a mechanism to im-prove task performance and reliability [ 10 , 17 , 18 , 25 ]. In practice, H. Xu et al. 
+
+these systems frequently consolidate multiple stochastic outputs via voting or pooling to produce a single answer. Recent evaluation frameworks explicitly adopt majority vote / pooling over many LLM judgments, highlighting both the prevalence of aggregation and the operational impact of LLM non-determinism [ 30 ]. Con-currently, a line of work studies principled aggregation rules for combining multiple LLM outputs beyond naive majority voting, typically optimizing expected accuracy under statistical models of judge reliability [ 1]. These efforts, however, are not designed as distributed consensus protocols: they generally assume a trusted coordinator or benign participants and do not provide Byzantine safety/liveness-style guarantees for committing a single outcome in an open network. 
+
+Threats in agentic multi-LLM systems. As LLM collaboration becomes agentic and tool-integrated, adversarial participation becomes a first-order concern. Recent studies demonstrate that prompt injection can propagate across interconnected agents (LLM-to-LLM infection), enabling persistent compromise of a multi-agent workflow [ 15 ]. Surveys and systematizations further categorize threats in LLM-agent ecosystems, including cross-agent injection and protocol-layer vulnerabilities, and argue for layered defenses and verification in deployed agentic systems [ 7, 12 ]. These works motivate the need for protocol mechanisms that remain correct under adversarially crafted semantic artifacts; however, they focus on attack surfaces and mitigations at the agent/workflow level, rather than providing a consensus primitive that deterministically commits to a single semantic outcome under Byzantine faults. 
+
+Byzantine agreement and robust aggregation beyond exact equal-ity. Classical BFT protocols (e.g., PBFT, HotStuff) provide safety and liveness over byte-identical values, while relaxations such as approximate agreement address non-identical numeric vectors. In distributed learning, recent work emphasizes that robust aggrega-tion must be coupled with an agreement subroutine, and revisits multidimensional approximate agreement for geometric-median-based aggregation under Byzantine behavior [ 22 ]. Separately, initial attempts have begun to connect BFT-style mechanisms with multi-LLM collaboration, e.g., proposing blockchain-driven weighted BFT voting for multi-LLM networks [ 19 ]. More broadly, consensus-inspired formulations have been explored for robustness in com-municative multi-agent systems under communication attacks [ 20 ]. Nevertheless, these directions do not address the specific obstacle central to semantic commit : an LLM-agent round delivers stochastic natural-language proposals, and the protocol must decide what kind of finality the round supports rather than always producing one verdict. H-CSC differs by introducing a typed commit object 
+
+(semantic_commit / verdict_commit / abort ): each typed outcome carries the same 2𝑓 +1 certificate envelope but binds to a different underlying digest, so verifiers can distinguish embedding-backed agreements from verdict-only agreements and from typed safe aborts. Earlier formulations of this work explored topology-based filtering as the central mechanism; we now report that exploration in Appendix C as a design-space ablation only, because on every measured benchmark it produces commit/abort decisions either identical to the H-CSC main path or strictly more conservative without improving honest-reference validity. 
+
+## 3 System Model and Problem Formulation 
+
+We consider a distributed system consisting of a set of 𝑛 nodes 
+
+N = {1, . . . , 𝑛 }, where a subset B ⊂ N of size at most 𝑓 may be Byzantine. We assume 𝑛 ≥ 3𝑓 + 1, which is the tight bound for deterministic Byzantine agreement in partially synchronous sys-tems [ 11 , 14 ]. This bound is both necessary and sufficient: with fewer than 3𝑓 + 1 nodes, an adversary controlling 𝑓 Byzantine nodes can partition honest nodes into two groups that commit con-flicting values, violating safety [ 14 ]. The 3𝑓 + 1 threshold has been foundational since Lamport et al.’s seminal work on the Byzantine Generals Problem [ 14 ] and remains the standard fault tolerance limit for protocols requiring exact agreement under partial syn-chrony [11]. 
+
+## 3.1 Network and Communication Primitives 
+
+Network Model. We assume the standard partial synchrony model [ 11 ]. There exist an unknown Global Stabilization Time (GST) and an unknown delay bound Δ such that after GST, all mes-sages sent between honest nodes are delivered within time Δ. Nodes do not know GST nor Δ a priori and may use increasing timeouts. Nodes communicate via authenticated point-to-point channels and have access to a Public Key Infrastructure (PKI). 
+
+Reliable Broadcast (RBC). To prevent equivocation and to en-sure a consistent per-sender view of inputs, we assume a reliable broadcast primitive (e.g., Bracha’s RBC [ 4]). For each sender 𝑠 and message 𝑚 , denote by RBC_broadcast 𝑠 (𝑚 ) the broadcast operation and by RBC_deliver 𝑠 (𝑚 ) the delivery event. RBC satisfies: 
+
+• Validity. If 𝑠 is honest and RBC_broadcast 𝑠 (𝑚 ), then every honest node eventually RBC_deliver 𝑠 (𝑚 ).
+
+• Agreement (Consistency). If two honest nodes 
+
+RBC_deliver 𝑠 (𝑚 ) and RBC_deliver 𝑠 (𝑚 ′), then 𝑚 = 𝑚 ′.
+
+• Totality (Uniform delivery). If some honest node 
+
+RBC_deliver 𝑠 (𝑚 ), then every honest node eventually 
+
+RBC_deliver 𝑠 (𝑚 ).
+
+• Integrity. Every honest node delivers at most one message from sender 𝑠 , and any delivered message is authenticated as originating from 𝑠 .For each node 𝑖 and round 𝑟 , let 𝑉 𝑖 (𝑟 ) denote its delivered view —the set of messages RBC_deliver ed by 𝑖 from distinct senders in round 𝑟 . By RBC Agreement and Totality, in any round where all honest nodes complete RBC, they obtain an identical delivered view: 
+
+∀𝑖, 𝑗 ∈ H , 𝑉 𝑖 (𝑟 ) = 𝑉 𝑗 (𝑟 ) ≜ 𝑉 (𝑟 ).To avoid blocking on Byzantine senders, a node proceeds to the H-CSC local computation stages (Stages 1–5 of Algorithm 1) once it has collected at least 𝑛 − 𝑓 delivered inputs ( |𝑉 𝑖 (𝑟 )| ≥ 𝑛 − 𝑓 ), or aborts the round when its local timeout 𝑇 𝑟 expires. Our correctness analysis (§5) conditions on successful rounds : rounds in which all honest nodes complete RBC with |𝑉 (𝑟 )| ≥ 𝑛 − 𝑓 and enter the local computation stages with the identical delivered view 𝑉 (𝑟 ).Successful rounds are guaranteed to occur after GST when timeouts are sufficiently large (liveness analysis in §5.2). 
+
+## 3.2 Abstract Semantic Encoding 
+
+We abstract semantic representation via a pluggable deterministic shared encoder . Let X be the space of admissible texts and S𝑑 −1Hierarchical Certified Semantic Commitment for Byzantine-Resilient LLM-Agent Collaboration 
+
+the unit hypersphere in R𝑑 . We assume a deterministic function 
+
+𝐸 : X → S𝑑 −1 that is identically instantiated at all nodes (i.e., for any text 𝑥 ∈ X , all nodes compute the same embedding 𝐸 (𝑥 )). Let CanonText (𝜌 𝑖 ) ∈ X denote the deterministic canonical pro-posal text extracted from a structured proposal 𝜌 𝑖 . Node 𝑖 ’s round-𝑟 
+
+embedding is 
+
+𝑒 𝑖 := 𝐸 (CanonText (𝜌 𝑖 )) ∈ S𝑑 −1.
+
+The determinism and shared instantiation of 𝐸 are essential for exact agreement: without them, honest nodes could compute divergent embeddings for identical semantic content, violating the byte-level equality required for commitment (Section 5.3). In practice, 𝐸 can be instantiated by any fixed embedding model whose parameters are distributed out-of-band (e.g., via a trusted setup or content-addressable distribution). The protocol treats 𝐸 as a black-box primitive (see Fig. 2 for our empirical instantiation); the per-round admissibility predicate of Definition 3.5 is what binds embedding quality to commit feasibility, not a global property of 𝐸 .
+
+Metric. We use the angular distance on S𝑑 −1,
+
+𝑑 ∠ (u, v) := arccos (⟨ u, v⟩) ∈ [ 0, 𝜋 ],
+
+and note the sphere identity ∥u − v∥2 = 2 sin  𝑑 ∠ (u, v)/ 2 for con-verting thresholds when needed. The protocol treats E as a black-box primitive. Whether the em-beddings of an honest sub-quorum cluster sufficiently to admit a commit is a per-round question, captured by the admissibility predicate of Definition 3.5 below: a round is admissible iff a 2𝑓 +1
+
+subset of delivered embeddings sits inside an angular ball of radius 
+
+𝜃 𝛼 . The fraction of rounds satisfying the predicate is benchmark-and threshold-dependent and is measured empirically in Section 6 rather than assumed. When the predicate fails, the protocol’s in-tended behaviour is an explicit safe abort. 
+
+## 3.3 Adversary Model 
+
+We consider a Byzantine adversary that controls the set of faulty nodes B with |B| ≤ 𝑓 . We evaluate the protocol under two ad-versary modes: static , where Byzantine submissions are generated independently of the honest broadcasts in the same round, and rush-ing , where the Byzantine reads the round’s honest broadcasts before submitting (subject to the network and cryptographic constraints below). Rushing is the strict worst case for our analysis; both modes are evaluated paired in Section 6. The semantic-poisoning capability formalised in Definition 3.8 is independent of the timing mode. 
+
+Capabilities. Byzantine nodes may deviate arbitrarily from the protocol, including choosing arbitrary texts 𝑥 𝑏 ∈ X and coordinat-ing across corrupted nodes. We focus on semantic poisoning behav-ior, where the adversary crafts inputs that are intended to distort the collectively committed meaning while remaining embedding-proximal to honest inputs (i.e., difficult to filter using geometry alone). 
+
+Cryptographic and communication constraints. Nodes commu-nicate over authenticated point-to-point channels and signatures are unforgeable. RBC is used for disseminating round inputs. RBC does not prevent Byzantine senders from attempting equivocation, but it guarantees that honest nodes cannot end up with conflicting delivered values from the same sender (Agreement), nor can only a strict subset of honest nodes deliver a value from that sender (Totality/Uniform delivery). Thus, any successful round proceeds from a consistent delivered view. 
+
+## 3.4 Definitions 
+
+Definition 3.1 (Semantic proposal) . A semantic proposal is a pair 
+
+𝑧 𝑖 = (𝑠 𝑖 , 𝜌 𝑖 ) where 𝑠 𝑖 is a natural-language string emitted by agent 
+
+𝑖 and 𝜌 𝑖 is a structured object extracted from 𝑠 𝑖 (verdict, confidence, evidence-id list, rationale, claim text). A semantic proposal is the unit of agreement; agents do not agree on 𝑠 𝑖 directly but on a deterministic function of 𝜌 𝑖 .
+
+Definition 3.2 (Semantic view) . The semantic view delivered to the protocol in round 𝑟 is 𝑉 (𝑟 ) = {( 𝑖, 𝜌 𝑖 , e𝑖 ) : 𝑖 ∈ 𝐼 𝑟 }, where 𝐼 𝑟 ⊆ N 
+
+is the delivered index set with |𝐼 𝑟 | ≥ 𝑛 − 𝑓 (the successful round 
+
+condition established in §3.1), and e𝑖 = E ( CanonText (𝜌 𝑖 )) ∈ S𝑑 −1
+
+is the unit-norm semantic embedding of 𝜌 𝑖 under the determinis-tic encoder E and the CanonText map of §3.2. All downstream structures — verdict groups 𝐺 𝑣 (𝑟 ), semantic core b𝐶 , signer set Σsrc 
+
+— are subsets of 𝑉 (𝑟 ), and quorum thresholds always reference the global fault bound 2𝑓 +1 rather than |𝐼 𝑟 |. The protocol does not have access to the labels of which indices are Byzantine. 
+
+Definition 3.3 (Certified semantic commitment object (typed)) . A
+
+certified semantic commitment object for round 𝑟 is a typed value 
+
+O ∈ {O sem , Over , Oabort }
+
+where: 
+
+• O sem is a semantic_commit object with commit _type =
+
+semantic_commit , fields (ℎ★, 𝜋, Cert (ℎ★), b𝐶, ey, 𝑣 ★), where 
+
+b𝐶 ⊆ 𝐺 𝑣 ★ is a 2𝑓 +1-sized within-verdict admissi-ble core, ey = 𝑄 𝜂 (A ( b𝐶 )) is the quantised aggregate over the core, ℎ★ is the parameter-bound semantic-commit digest with explicit type-domain separator, ℎ★ =
+
+𝐻 ("semantic_commit" ∥ ey ∥ ℎ𝜋 ∥ 𝑟 ∥ 𝑣 ★), and Cert (ℎ★) is a 
+
+2𝑓 +1 distinct-signer certificate over ℎ★ drawn from b𝐶 .
+
+• O ver is a verdict_commit object with commit _type =
+
+verdict_commit , fields (ℎ★, 𝜋, Cert (ℎ★), 𝐺 𝑣 ★, 𝑣 ★), where 
+
+𝐺 𝑣 ★ ⊆ 𝑉 (𝑟 ) is the verdict group of size ≥ 2𝑓 +1. The di-gest binds a verdict-level payload to the parameters and round id: 
+
+ℎ★ = 𝐻  "verdict_commit" ∥ VerdictPayload ∥ ℎ𝜋 ∥ 𝑟 ,
+
+where VerdictPayload =
+
+ser (𝑣 ★, |𝐺 𝑣 ★ |, verdict_margin , 𝑛, 𝑓 , 𝑟 ). Cert (ℎ★) is a
+
+2𝑓 +1 distinct-signer certificate over ℎ★ drawn from 𝐺 𝑣 ★ . A 
+
+verdict_commit does not carry a semantic aggregate ey, and explicitly flags no _semantic _aggregate = true .
+
+• O abort is an abort outcome with commit _type = abort 
+
+and a typed reason from the closed set 
+
+{ verdict_below_quorum ,
+
+core_below_quorum ,
+
+admissibility_failed ,
+
+aggregation_failed ,
+
+insufficient_signers }H. Xu et al. 
+
+(the first three appear under the typed prefix 
+
+semantic_core_failed: when the semantic-path gate triggers them, and under the typed prefix 
+
+v2_both_paths_failed: when both the semantic and verdict-fallback gates fail in the same round, in which case the inner reason from the semantic-path attempt is appended verbatim). 
+
+Definition 3.4 (Committed-verdict projection) . Given a typed object O, the committed-verdict projection verdict (O) returns 𝑣 ★
+
+when O ∈ {O sem , Over } and is undefined when O = Oabort . For 
+
+semantic_commit , 𝑣 ★ is the verdict shared by every member of the within-verdict admissible core b𝐶 (the core is extracted within 𝐺 𝑣 ★
+
+by construction). For verdict_commit , 𝑣 ★ is the candidate verdict 
+
+arg max 𝑣 |𝐺 𝑣 | with deterministic tiebreak. The honest-reference and dataset-gold validity predicates of Definition 3.7 are evaluated on verdict (O) when defined. 
+
+Definition 3.5 (Admissible semantic round) . Round 𝑟 is admissible at radius 𝜃 𝛼 iff there exists a subset b𝐶 ⊆ 𝑉 (𝑟 ) with | b𝐶 | ≥ 2𝑓 +1
+
+and a centre node ℎ ∈ b𝐶 such that ∠(eℎ, e𝑗 ) ≤ 𝜃 𝛼 for every 𝑗 ∈ b𝐶 .The companion diameter predicate ¯𝜀 𝛼 requires ∠(e𝑗 , e𝑘 ) ≤ ¯𝜀 𝛼 for every pair in b𝐶 and is reported as a stricter sister condition. For the H-CSC main path, this predicate is evaluated on the candidate verdict group 𝐺 𝑣 ★ rather than the full delivered view; the semantic branch therefore requires b𝐶 ⊆ 𝐺 𝑣 ★ with | b𝐶 | ≥ 2𝑓 +1 and 𝑟 ★ ≤ 𝜃 𝛼 .For the strict-semantic CSC ablation (§4.9) the same predicate is evaluated on the full delivered view 𝑉 (𝑟 ).
+
+Remark 3.1 . Definition 3.5 is a per-round predicate , not a universal assumption about all real LLM-agent rounds. The admissible-round predicate is a commit precondition, not an empirical claim that all honest LLM agents naturally cluster. The set of rounds in which it holds is benchmark- and threshold-dependent (see Section 6). The protocol’s response when the predicate fails is an explicit safe abort, not an attempt to commit a smaller cluster. 
+
+Definition 3.6 (Typed commit, abort, and invalid commit) . Around outcome is one of 
+
+{semantic_commit , verdict_commit , abort }
+
+(Definition 3.3). For commit outcomes, the typed invalid commit rel-ative to a reference 𝑅 partitions into an invalid semantic commit (an 
+
+Osem whose verdict (O) differs from 𝑅 ’s verdict), an invalid verdict commit (the analogous case for Over ), and the combined rate (the union of the two). The empirical metrics InvalidCommit hmaj and 
+
+InvalidCommit gold aggregate the combined invalid commit rate against 𝑅 = majority H (𝑉 ) and 𝑅 = gold (𝑉 ) respectively (Defini-tion 3.7). Per-type breakdowns InvalidSemanticCommit hmaj and 
+
+InvalidVerdictCommit hmaj are reported separately when mean-ingful. Invalid abort is undefined. 
+
+Definition 3.7 (Dataset-gold and evidence-bounded honest-ref-erence validity) . Let gold (𝑉 ) be the dataset’s reference verdict for the round (when available), and let majority H (𝑉 ) be the 
+
+evidence-bounded honest-reference verdict : the deterministic top-of-honest verdict given only the visible evidence, with tie-break order support > refute > insufficient matching the protocol’s own largest_verdict rule. This is the honest plurality (not strict majority): for 𝑘 verdict classes ( 𝑘 = 3 here), the honest plurality coincides with the strict-majority verdict only when one honest class holds more than |H |/ 2 votes; otherwise it picks the hon-est top class under the same deterministic tie-break used by the protocol. We say a commit outcome is gold-valid iff its commit-ted verdict equals gold (𝑉 ), and honest-reference-valid iff its com-mitted verdict equals majority H (𝑉 ). We always report both; the two notions diverge whenever the gold label exceeds what a strict evidence-bounded reading supports. The empirical safety metric in Section 6.2 is named invalid_hmaj for backward compatibility with the H-CSC bench tooling; readers should interpret “hmaj” as “honest-reference (plurality)” rather than “strict majority”. 
+
+Remark 3.2 . majority H is defined over the honest set, which is unknown to the protocol. It is therefore an evaluation construct, not a protocol input, and is computed only offline against records labelled by an oracle. We report gold-validity and honest-reference-validity separately because (i) Climate-FEVER fallback labels can diverge from evidence-limited honest judgments, (ii) the protocol is not a semantic-truth oracle, and (iii) the core safety metric re-ported in Section 6.2 is the rate of invalid commits against the evidence-bounded honest-reference verdict. Conflating the two risks confusing dataset label noise (a property of the benchmark) with protocol failure (a property of the algorithm). 
+
+Definition 3.8 (Byzantine semantic poisoning) . Byzantine seman-tic poisoning is the production of a proposal 𝑧 𝑗 = (𝑠 𝑗 , 𝜌 𝑗 ) by an agent 
+
+𝑗 ∈ B that is (i) fluent and on-topic, (ii) lexically or embedding-proximal to the honest mass (e.g., angular distance to the honest centre below the median honest-honest distance), and (iii) adver-sarially distorted in at least one of two ways: 
+
+Mode A (verdict-level). The committed verdict 𝑧 𝑗 .𝑣 differs from the honest-reference verdict majority H (𝑉 ).
+
+Mode B (evidential, same-verdict). 𝑧 𝑗 .𝑣 matches the honest-reference verdict, but the supporting rationale 𝜌 𝑗 is ad-versarially fabricated (mismatched evidence ids, spurious causation, invented citations) so the proposal appears be-nign on the verdict axis while corrupting the evidence axis. We distinguish two adversary modes: static (the Byzantine does not observe honest broadcasts) and rushing (the Byzantine reads the round’s honest broadcasts before submitting). The primary safety metric invalid_hmaj (Definition 3.7) captures Mode A; Mode B falls outside the present protocol’s correctness signal and is treated as a representation-boundary limitation (§7). An evidence-aware finality-control extension that targets Mode B is noted as future work (§8). 
+
+Definition 3.9 (Finality-signal vector) . For a delivered view 𝑉 (𝑟 )
+
+with verdict groups {𝐺 𝑣 }𝑣 and within-verdict embeddings, the 
+
+finality-signal vector is 
+
+Ψ(𝑟 ) = (Ψverdict , Ψsemantic , Ψcert ),
+
+where Ψverdict = (top_count (𝑉 ), verdict_margin (𝑉 )) collects the largest verdict group’s size and the margin to the runner-up; 
+
+Ψsemantic = (| b𝐶 |, 𝑟 ★ 
+
+> 𝜃 𝛼
+
+( b𝐶 )) collects the within-verdict admissible-core size and the minimum admissibility radius; and Ψcert = |Σ| is the count of distinct valid signatures on the candidate digest. The H-CSC typed-decision logic (Section 4) is a deterministic function of Hierarchical Certified Semantic Commitment for Byzantine-Resilient LLM-Agent Collaboration 
+
+Ψ(𝑟 ). The protocol-side allowed signals are exactly the components of Ψ(𝑟 ); gold labels, honest/Byzantine identity labels, evidence-truth oracles, source-reliability scores, claim–evidence entailment, and external judge labels are forbidden as protocol inputs and are reserved for offline evaluation only. 
+
+Remark 3.3 . The structured proposal 𝜌 𝑖 contains a verdict, a con-fidence value, an evidence-id list, a rationale, and a claim text. H-CSC’s typed-decision step consumes only the verdict and the canonical proposal text (via the encoder E); the evidence-id list is part of the canonical text the encoder reads, but the protocol does 
+
+not perform evidence-aware reasoning over it, does not consult the confidence value, and does not invoke any external evidence-truth, source-reliability, claim–evidence-entailment, or judge mod-ule. A future evidence-aware finality-control paper would extend the Ψevidence component (currently empty) with provenance and entailment signals; that extension is explicitly out of scope for the present paper. 
+
+## 3.5 Goal 
+
+Given a delivered view 𝑉 (𝑟 ), an encoder E, a fault bound 𝑓 , and protocol parameters 
+
+𝜋 = (𝜃 𝛼 , ¯𝜀 𝛼 , A, 𝑄 𝜂 , candidate_rule ,
+
+fallback , core_method , topology_gate )
+
+with the H-CSC main-path values candidate_rule =
+
+largest_verdict , fallback = margin_1 , core_method =
+
+angular_component , and topology_gate = ⊥, the protocol must output exactly one typed object (Definition 3.3): a se-mantic_commit Osem when the within-verdict semantic core is admissible at radius 𝜃 𝛼 ; a verdict_commit Over when the candidate verdict group has size ≥ 2𝑓 +1 and verdict_margin ≥ 1
+
+but the semantic core is not admissible; or an abort Oabort with a typed reason from the closed set in that definition. The protocol must not commit a digest without a valid 2𝑓 +1 distinct-signer certificate. The protocol must not emit a semantic_commit when the within-verdict semantic core is not admissible. The protocol must not emit a verdict_commit when the candidate verdict group is below quorum or fails the margin condition. We give the precise correctness guarantees (agreement, semantic validity, verdict validity, safe abort, conditional commit-or-abort termination) in Section 5. 
+
+## 4 Hierarchical Certified Semantic Commitment Protocol 4.1 Overview 
+
+H-CSC is a finality-control protocol for adversarial LLM-agent collaboration. Figure 1 summarises the per-round control flow; Algorithm 1 gives the formal pseudocode. It operates on a sin-gle delivered view 𝑉 (𝑟 ) in round 𝑟 , where each agent 𝑖 con-tributes a structured proposal 𝑧 𝑖 = (𝑠 𝑖 , 𝜌 𝑖 ) with the canonical fields 
+
+(verdict , confidence , evidence ids , rationale , claim text ). The protocol reads the deterministic embedding e𝑖 = E ( CanonText (𝜌 𝑖 )) and emits one of three typed outcomes (Definition 3.3): a seman-tic_commit when both the verdict-level and the within-verdict embedding-level finality signals are admissible, a verdict_commit 
+
+when only the verdict-level signal is admissible, or an abort when neither is. The four-stage pipeline plus the typed-decision step is sum-marised in Algorithm 1. The protocol’s entire decision logic is a deterministic function of the finality-signal vector Ψ(𝑟 ) (Def-inition 3.9); it does not consult honest, gold, evidence-truth, source-reliability, or external-judge signals. The H-CSC main path uses 𝜃 𝛼 = 0.65 , candidate_rule = largest_verdict , fallback =
+
+margin_1 , and topology_gate = ⊥.1
+
+> 1The reference implementation of H-CSC is retained by the authors and is planned to accompany a future reproducibility package. It layers the verdict grouping and hierar-chical typed-decision step on top of the strict-semantic CSC primitives (admissibility predicate, quantiser, digest, certificate). Promoting the H-CSC typed-commit logic into a production-grade module remains future work.
+
+H. Xu et al. 
+
+Stage 1: Canonicalise & Encode 
+
+For each 𝑖 ∈ 𝐼 𝑟 : 𝜌 𝑖 ← Canonicalise (𝑧 𝑖 ); e𝑖 ← E ( CanonText (𝜌 𝑖 ) ) ; normalise to unit sphere. Output: 𝑉 (𝑟 ) = { ( 𝑖, 𝜌 𝑖 , e𝑖 ) : 𝑖 ∈ 𝐼 𝑟 }
+
+Stage 2: Verdict Grouping 
+
+Partition 𝑉 (𝑟 ) by verdict. 𝑣 ★ = arg max 𝑣 |𝐺 𝑣 (𝑟 ) | (tie-break: support > refute > insufficient ). 
+
+verdict_margin = |𝐺 𝑣 ★ | − max 𝑣 ≠𝑣 ★ |𝐺 𝑣 (𝑟 ) | 
+
+|𝐺 𝑣 ★ | ≥ 2𝑓 +1? abort 
+
+> verdict_below_quorum
+
+Stage 3a: Within-verdict semantic core 
+
+b𝐶 ← LargestAngularComponent (𝐺 𝑣 ★ , 𝜃 𝛼 )
+
+𝑟 ★ = min ℎ∈ b𝐶 max 𝑗 ∈ b𝐶 ∠ (eℎ, e𝑗 )
+
+| b𝐶 | ≥ 2𝑓 +1 ∧ 𝑟 ★ ≤ 𝜃 𝛼 ?
+
+Stage 3b: Verdict fallback 
+
+Reached only when Stage 3a fails. Check verdict_margin vs. margin min 
+
+(operating point: margin min = 1).  
+
+> verdict_margin
+
+≥ margin min ? abort 
+
+> v2_both_paths_failed
+
+Stage 4a: Aggregate + Quantise + Bind (semantic) 
+
+¯y = GeomMedian ( b𝐶 ); renormalise. ey = 𝑄 𝜂 ( ¯y)
+
+ℎ★ 
+
+> sem
+
+= 𝐻 ("semantic_commit" ∥ ey ∥ ℎ𝜋 ∥ 𝑟 ∥ 𝑣 ★ )
+
+Stage 4b: Verdict payload + Bind 
+
+VerdictPayload = ser (𝑣 ★, |𝐺 𝑣 ★ |, verdict_margin , 𝑛, 𝑓 , 𝑟 )
+
+ℎ★ 
+
+> ver
+
+= 𝐻 ("verdict_commit" ∥ VerdictPayload ∥ ℎ𝜋 ∥ 𝑟 )
+
+no _semantic _aggregate = true 
+
+Stage 5: Quorum Certificate 
+
+Collect 2𝑓 +1 distinct valid signatures on ℎ★ (source: b𝐶 for semantic path, 𝐺 𝑣 ★ for verdict path). If |Σ| < 2𝑓 +1 =⇒ abort: insufficient_signers .
+
+> semantic_commit object
+
+(ℎ★
+
+> sem
+
+, 𝜋, Cert (ℎ★ 
+
+> sem
+
+),
+
+b𝐶, ey, 𝑣 ★ )
+
+> verdict_commit object
+
+(ℎ★
+
+> ver
+
+, 𝜋, Cert (ℎ★ 
+
+> ver
+
+), 𝐺 𝑣 ★ , 𝑣 ★ );
+
+no _semantic _aggregate = true   
+
+> abort with typed reason
+
+∈{verdict_below_quorum, core_below_quorum, admissibility_failed, aggregation_failed, insufficient_signers, v2_both_paths_failed:* }
+
+> NO
+> YES
+> YES
+> NO
+> YES
+> NO
+
+■ protocol stage ■ decision predicate ■ semantic_commit path ■ verdict_commit path ■ typed abort 
+
+Figure 1: H-CSC per-round protocol flow. Left column: always-attempted semantic-commit primary path (digest ℎ★
+
+sem ). Right column: verdict-fallback, reached when the semantic-admissibility predicate at 𝜃 𝛼 fails (digest ℎ★
+
+ver with no _semantic _aggregate =
+
+true ). If both gates fail the protocol emits a typed abort ; Stage 5 binds the chosen digest with a 2𝑓 +1 distinct-signer certificate. Formal pseudocode: Algorithm 1. Hierarchical Certified Semantic Commitment for Byzantine-Resilient LLM-Agent Collaboration 
+
+## 4.2 Proposal canonicalisation and encoding 
+
+A proposal 𝑧 𝑖 = (𝑠 𝑖 , 𝜌 𝑖 ) is built per agent. The structured part 𝜌 𝑖 has the canonical fields 
+
+(verdict , confidence , evidence ids , rationale , claim text ). The en-coder E maps 𝜌 𝑖 to a unit-norm embedding via a deterministic canonicalisation of 𝜌 𝑖 followed by a transformer-based sentence encoder [ 8, 27 ]; we use CRSE (a Byzantine-robust trained encoder) by default and document the encoder identity in the protocol parameters 𝜋 so that two honest signers reach byte-identical embeddings. Importantly, the encoder reads only the canonical proposal text (a deterministic serialisation of the structured fields); the evidence-id list is part of that serialisation but is not consulted by the protocol’s typed-decision step (Remark 3.3). 
+
+## 4.3 Verdict grouping 
+
+The protocol partitions 𝑉 (𝑟 ) into verdict groups {𝐺 𝑣 }𝑣 with 𝐺 𝑣 =
+
+{𝑖 ∈ 𝑉 (𝑟 ) : 𝜌 𝑖 .verdict = 𝑣 }. The candidate verdict group is selected by the candidate_rule parameter, fixed to largest_verdict for the H-CSC main path: 𝑣 ★ = arg max 𝑣 |𝐺 𝑣 | with deterministic tiebreak by the fixed priority support > refute > insufficient (applied only on exact ties). The candidate group’s verdict_margin is the difference between the largest and the second-largest group counts. If |𝐺 𝑣 ★ | < 2𝑓 +1 the protocol immediately emits Oabort with typed reason verdict_below_quorum and halts. 
+
+## 4.4 Within-verdict semantic finality 
+
+Within 𝐺 𝑣 ★ , the protocol runs the angular_component core ex-traction at radius 𝜃 𝛼 : the largest connected component of the angular- threshold graph {( 𝑖, 𝑗 ) : ∠(e𝑖 , e𝑗 ) ≤ 𝜃 𝛼 }. If the largest component has size < 2𝑓 +1, the within- verdict semantic core check fails. Otherwise, the admissibility predicate of Definition 3.5 is evaluated on the selected component: there must exist a centre node ℎ ∈ b𝐶 such that ∠(eℎ, e𝑗 ) ≤ 𝜃 𝛼 for every 𝑗 ∈ b𝐶 . If the predi-cate fails, the within-verdict semantic core check fails. The H-CSC default uses 𝜃 𝛼 = 0.65 rad ( ≈ 37 .2◦), wider than the strict-semantic CSC’s 𝜃 𝛼 = 0.55 rad to accommodate honest agents that agree on the verdict but use different phrasings within the rationale. 
+
+## 4.5 Hierarchical typed-decision step 
+
+The typed-decision step combines the verdict-level and embedding-level signals: (1) Verdict-quorum gate. If |𝐺 𝑣 ★ | < 2𝑓 +1, output Oabort 
+
+with reason verdict_below_quorum (already triggered in the verdict-grouping subsection above). (2) Semantic-path attempt. If the within-verdict seman-tic core is admissible (size ≥ 2𝑓 +1 and the radius predi-cate passes), proceed to the semantic-commit construction (§4.6). (3) Verdict-fallback gate. Otherwise, if verdict_margin ≥ 1
+
+(the margin_1 fallback condition, fixed in the H-CSC main path), proceed to the verdict-commit construction. (4) Both paths failed. Otherwise, output Oabort with a typed reason recording which gates failed. The fallback condition margin ≥ 1 is a calibrated empirical operating point, not a deterministic honest-reference guarantee: with 𝑛 = 10 , 𝑓 = 2, and top_count (𝑉 ) ≥ 2𝑓 +1 = 5, margin ≥ 1
+
+selects a unique top verdict group and empirically recovers coverage on real-LLM rounds whose honest agents agree at the verdict level but disperse at the rationale level. Deterministic honest-reference validity would require verdict_margin min > 𝑓 instead, as proven in Theorem 5.3 (Section 5). We retain margin_1 as the operating point because (i) it preserves coverage on rounds the deterministic 
+
+𝑚 > 𝑓 condition would abort, and (ii) the empirical invalid_hmaj 
+
+rate at 𝑚 = 1 stays at or below 0.04 across all MVR-50 and MVR-100 benchmarks (Section 6.2). 
+
+## 4.6 Aggregation, quantisation, and digest binding 
+
+Semantic path. The protocol aggregates the selected within-verdict core b𝐶 by Euclidean geometric median [3, 26, 28]: 
+
+y★ = arg min 
+
+> y
+
+∑︁ 𝑖 ∈ b𝐶 
+
+∥y − e𝑖 ∥2,
+
+solved iteratively to within numerical tolerance and re- normalised to the unit sphere. The aggregate y★ is quantised by 𝑄 𝜂 to a deter-ministic lattice point ey = 𝑄 𝜂 (y★). The semantic digest is 
+
+ℎ★ 
+
+> sem
+
+= 𝐻   "semantic_commit" ∥ ey ∥ ℎ𝜋 ∥ 𝑟 ∥ 𝑣 ★ ,
+
+where ℎ𝜋 is the parameter digest binding the parameter tuple 𝜋 and the leading byte string "semantic_commit" is an explicit domain separator that prevents cross-type digest collision with the verdict branch below. 
+
+Verdict path. The protocol assembles a verdict-only payload 
+
+VerdictPayload (𝑣 ★, |𝐺 𝑣 ★ |, verdict_margin , 𝑛, 𝑓 , 𝑟 ) as a canonical serialisation. The verdict digest is 
+
+ℎ★ 
+
+> ver
+
+= 𝐻   "verdict_commit" ∥ VerdictPayload ∥ ℎ𝜋 ∥ 𝑟 .
+
+A verdict_commit explicitly does not carry an embedding aggre-gate ey; the no _semantic _aggregate = true flag is present on the commit object. 
+
+## 4.7 Quorum certificate 
+
+For both commit types, the protocol collects a certificate Cert (ℎ★) =
+
+{𝜎 𝑗 } of 2𝑓 +1 distinct signers drawn from the relevant signer set. For the semantic path, signers may be any 2𝑓 +1 distinct valid sign-ers from b𝐶 (the within-verdict admissible core). For the verdict path, signers may be any 2𝑓 +1 distinct valid signers from 𝐺 𝑣 ★ (the candidate verdict group); the protocol does not restrict the signer set to the first 2𝑓 +1 agents by id, so commit liveness does not de-pend on Byzantine cooperation when Σsrc contains at least 2𝑓 +1
+
+honest agents (Theorem 5.5). Each 𝜎 𝑗 is an authenticator over the appropriate digest under agent 𝑗 ’s identity. We use a logical signa-ture simulator that preserves per-signer uniqueness and the 2𝑓 +1
+
+distinct-signer threshold; production threshold-signature schemes (e.g. BLS, FROST) are a standard substitution and are out of scope for this paper. If fewer than 2𝑓 +1 distinct signatures arrive, the pro-tocol aborts with typed reason insufficient_signers regardless of which path produced the candidate digest. H. Xu et al. 
+
+Algorithm 1 Hierarchical Certified Semantic Commitment Round 
+
+Input: Delivered structured proposals { ( 𝑖, 𝑧 𝑖 ) : 𝑖 ∈ 𝐼 𝑟 } with 𝑧 𝑖 = (𝑠 𝑖 , 𝜌 𝑖 ) and 𝐼 𝑟 ⊆ N , |𝐼 𝑟 | ≥ 𝑛 − 𝑓 (the successful-round delivered index set established by RBC, §3.1); encoder 
+
+E; fault bound 𝑓 with 𝑛 ≥ 3𝑓 +1; admissibility radius 𝜃 𝛼 ; diameter sister threshold ¯𝜀 𝛼 ; candidate rule largest_verdict ; fallback condition margin_1 ; robust aggregator A;quantizer 𝑄 𝜂 with step 𝜂 ; round id 𝑟 ; parameter digest ℎ𝜋 .
+
+Output: A typed commit object: Osem , Over , or Oabort with a typed reason. 1: ⊲ Stage 1: validate, canonicalise, encode. 
+
+2: for 𝑖 ∈ 𝐼 𝑟 do 
+
+3: 𝜌 𝑖 ← Canonicalise (𝑧 𝑖 ) ⊲ verdict, confidence, evidence ids, rationale, claim 
+
+4: e𝑖 ← E ( CanonText (𝜌 𝑖 ) ) 
+
+5: e𝑖 ← e𝑖 /∥ e𝑖 ∥2
+
+6: end for 
+
+7: 𝑉 (𝑟 ) ← { ( 𝑖, 𝜌 𝑖 , e𝑖 ) : 𝑖 ∈ 𝐼 𝑟 }
+
+8: ⊲ Stage 2: group by verdict and select candidate. 
+
+9: {𝐺 𝑣 }𝑣 ← partition 𝑉 (𝑟 ) by 𝜌 𝑖 .verdict 
+
+10: 𝑣 ★ ← arg max 𝑣 |𝐺 𝑣 | ⊲ tiebreak: support > refute > insufficient 
+
+11: top_count ← | 𝐺 𝑣 ★ |
+
+12: verdict_margin ← top_count − max 𝑣 ≠𝑣 ★ |𝐺 𝑣 |
+
+13: if top_count < 2𝑓 +1 then 
+
+14: return abort (verdict_below_quorum , top_count , 2𝑓 +1)
+
+15: end if 
+
+16: ⊲ Stage 3: within-verdict semantic core extraction. 
+
+17: b𝐶 ← LargestAngularComponent  𝐺 𝑣 ★, 𝜃 𝛼 
+
+
+
+18: semantic_path_ok ← ( b𝐶 ≠ ∅) ∧ ( | b𝐶 | ≥ 2𝑓 +1)
+
+19: if semantic_path_ok then 
+
+20: 𝑟 ★ ← min ℎ∈ b𝐶 max 𝑗 ∈ b𝐶 ∠ (eℎ, e𝑗 )
+
+21: if 𝑟 ★ > 𝜃 𝛼 then 
+
+22: semantic_path_ok ← false 
+
+23: semantic_fail_reason ← admissibility_failed 
+
+24: end if 
+
+25: else 
+
+26: semantic_fail_reason ← core_below_quorum 
+
+27: end if 
+
+28: if semantic_path_ok then 
+
+29: ⊲ Stage 4a: aggregate, quantise, semantic digest. 
+
+30: y★ ← A ( { e𝑖 : 𝑖 ∈ b𝐶 } ) 
+
+31: if y★ is degenerate (zero norm or numerical failure) then 
+
+32: return abort (aggregation_failed )
+
+33: end if 
+
+34: y★ ← y★/∥ y★ ∥2
+
+35: ey ← 𝑄 𝜂 (y★ )
+
+36: ℎ★ ← 𝐻  "semantic_commit" ∥ ey ∥ ℎ𝜋 ∥ 𝑟 ∥ 𝑣 ★
+
+37: commit_type ← semantic_commit 
+
+38: Σsrc ← b𝐶 
+
+39: else 
+
+40: if verdict_margin ≥ 1 then 
+
+41: ⊲ Stage 4b: verdict-fallback path. 
+
+42: VerdictPayload ← canonical-serialise (𝑣 ★, top_count , verdict_margin , 𝑛, 𝑓 , 𝑟 )
+
+43: ℎ★ ← 𝐻  "verdict_commit" ∥ VerdictPayload ∥ ℎ𝜋 ∥ 𝑟 
+
+44: ey ← ⊥ ⊲ no semantic aggregate 45: commit_type ← verdict_commit 
+
+46: Σsrc ← 𝐺 𝑣 ★ ⊲ any 2𝑓 +1 valid signatures suffice 47: else 
+
+48: return abort (v2_both_paths_failed:semantic_core_failed: semantic_fail_reason )
+
+49: end if 
+
+50: end if 
+
+51: ⊲ Stage 5: collect quorum certificate. 
+
+52: Σ ← { 𝜎 𝑗 : 𝑗 ∈ Σsrc , 𝜎 𝑗 valid on ℎ★ }
+
+53: if |Σ| < 2𝑓 +1 then 
+
+54: return abort (insufficient_signers , |Σ|, 2𝑓 +1)
+
+55: end if 
+
+56: Cert (ℎ★ ) ← Σ
+
+57: if commit_type = semantic_commit then 
+
+58: return Osem  ℎ★, 𝜋, Cert (ℎ★ ), b𝐶, ey, 𝑣 ★
+
+59: else 
+
+60: return Over  ℎ★, 𝜋, Cert (ℎ★ ), 𝐺 𝑣 ★ , 𝑣 ★
+
+61: end if 
+
+## 4.8 Commit/abort decision 
+
+The per-round decision is a typed value (Definition 3.3): a se-mantic_commit object, a verdict_commit object, or an abort ob-ject with one of the closed-set typed reasons. The protocol does Hierarchical Certified Semantic Commitment for Byzantine-Resilient LLM-Agent Collaboration Local Text Input  Certified Robust Semantic Encoder  
+
+> Tokenizer
+> Embedding
+> Semantic Transformer
+> Encoder
+> Add & Norm
+> Feed
+> Forward
+> Add & Norm
+> Multi-Head
+> Attention
+> Pooling
+> (Mean/CLS)
+> Projection Head
+> L2
+> Normalization
+> Robustness Statistics
+> Certification
+> Angular
+> Deviation
+> Linear+GELU
+> Layer Norm
+> Linear
+> (Projection)
+
+## ... 
+
+> Node 1
+> Node 2
+> Node 3
+> Node
+> Text Norm
+> BPE
+> Tokenizer
+> Embedding
+> Lookup
+> Pos. Encoding
+> Honest Text
+> Honest Text
+> Honest Text
+
+## ... 
+
+> Byzantine Text
+> Byzantine Attacks:
+> Honest
+> Byzantine
+> CRSE Embedding
+
+Figure 2: Instantiation of the encoder primitive (CRSE). The contrastive training objective minimises intra-honest distance and maximises the honest–Byzantine angular margin, producing an embedding space in which an honest sub-quorum typically satisfies the admissibility predicate of Definition 3.5; empirical rates are reported in Section 6. 
+
+not produce a “soft” commit, a partial commit, or a commit on a verdict group below 2𝑓 +1. Two honest verifiers that recom-pute the typed-decision step from the published commit object agree on the same typed outcome and the same digest (Theo-rem 5.1). The semantic_commit branch is strictly stronger than the verdict_commit branch: a semantic_commit carries both an embedding-backed aggregate and a verdict-bound digest, while a verdict_commit carries only a verdict-level payload digest with the explicit no _semantic _aggregate = true flag. Downstream con-sumers that require an embedding-backed semantic representation must check the commit _type field on the returned object before treating it as a semantic representation. 
+
+## 4.9 Relationship to the conservative CSC variant 
+
+The previous CSC formulation ( candidate_rule disabled, fallback =
+
+⊥) is a strict-semantic configuration of the same framework: the angular-component core is computed over the entire delivered view 
+
+𝑉 (𝑟 ) rather than within 𝐺 𝑣 ★ , and the protocol aborts whenever the global core fails. We retain the CSC configuration as a conservative ablation; the empirical comparison is reported in Section 6.2. The H-CSC main path’s two deviations from CSC are: (i) the within-verdict scoping of the semantic core, and (ii) the verdict-level fallback. Both deviations are deterministic, do not change the certificate envelope, and respect the same closed-set abort discipline. 
+
+## 4.10 Why H-CSC is not majority vote 
+
+H-CSC differs from majority_vote and from 
+
+confidence_weighted_vote on three axes. First, certifi-cate emission : every H-CSC commit (semantic or verdict) carries a 2𝑓 +1 distinct-signer certificate; the verdict-only baselines do not. Second, typed finality : the H-CSC commit object distinguishes semantic_commit from verdict_commit , providing an embedding-backed digest on rounds where the within-verdict semantic core is admissible. Third, safety floor under fragile margins : H-CSC requires |𝐺 𝑣 ★ | ≥ 2𝑓 +1 AND verdict_margin ≥ 1
+
+for the verdict path; majority_vote commits regardless. The fair certificate-emitting baseline against H-CSC is therefore not majority_vote but B3 ( certificate_wrapped_majority ), which emits the same certificate envelope. Section 6.2 reports the B3 comparison explicitly: on the headline coverage and safety axes H-CSC is numerically close to B3 (point-estimate gaps ≤ 0.02 
+
+in commit rate and ≤ 0.002 in valid-commit coverage), and the contribution attributable to the embedding axis is the typed 
+
+semantic_commit outcome on 74% / 72% of rounds. 
+
+## 4.11 Topology as a design-space option 
+
+For completeness, the implementation accepts an optional topology gate topology_gate ∈ {⊥ , jaccard , jaccard_kcore }. The H-CSC main path uses topology_gate = ⊥. We report the Jaccard variant in Appendix C as a design-space ablation only; on every measured benchmark and at every 𝜃 𝛼 in our sensitivity sweep, the topology gate produces commit/abort decisions identical to the H-CSC main path or aborts more without improving honest-reference validity. Topology is not part of the H-CSC contribution. 
+
+## 5 Correctness Analysis 
+
+We split correctness into five axes: Agreement , Semantic validity , Ver-dict validity , Safe abort , and Conditional commit-or-abort termination .The split mirrors the agreement / validity / termination decomposi-tion standard in classical Byzantine agreement [ 5, 9, 14 , 29 ], with the additional safe-abort and typed-validity axes that the hierarchi-cal commit object of Definition 3.3 requires. The semantic_commit 
+
+and verdict_commit outcomes admit distinct sufficient conditions for honest-reference validity, and the termination guarantee is now a disjunction over the three typed outcomes rather than a binary commit/abort claim. H. Xu et al. 
+
+## 5.1 Assumptions 
+
+Assumption 5.1 (Authenticated channels and honest sign-once). The assumption has two clauses, both required by Theo-rem 5.1 and Lemma 5.2. 
+
+Authenticated channels. Every honest agent’s signature is un-forgeable. Two distinct signatures from the same agent on distinct digests are detectable. 
+
+Honest sign-once. In each round 𝑟 , an honest agent signs at most one typed digest. Before signing it recomputes Algorithm 1 locally on its delivered view 𝑉 (𝑟 ) and signs only the unique digest 𝐷 ★ (𝑟 ) returned by the deterministic H-CSC decision rule; any conflicting digest for the same round is rejected without signing. 
+
+Assumption 5.2 (Partial synchrony). There is a global stabili-sation time after which message delivery is bounded; before that time, message order and timing are adversarial. This assumption is used only for Termination. 
+
+Assumption 5.3 (Deterministic encoder and serialisation). 
+
+E is deterministic: two honest agents that compute E ( 𝜌 ) for the same canonical proposal text produce identical e. The canonicalisation of 
+
+𝜌 is byte-deterministic in the structured fields. The quantiser 𝑄 𝜂 is a fixed-point lattice round. 
+
+Assumption 5.4 (Admissible round (per-type)). A round is 
+
+semantic-admissible at radius 𝜃 𝛼 iff the candidate verdict group 𝐺 𝑣 ★
+
+contains a 2𝑓 +1 within-verdict admissible core (Definition 3.5). A round is verdict-admissible iff |𝐺 𝑣 ★ | ≥ 2𝑓 +1 and verdict_margin ≥ 1.The semantic-validity and termination guarantees below are condi-tional on the corresponding admissibility predicate; the safe-abort theorem makes no admissibility conditioning. 
+
+## 5.2 Lemmas 
+
+Lemma 5.1 (Deterministic typed digest consistency) . Given As-sumption 5.3 and a fixed parameter tuple 𝜋 , two honest signers that select the same candidate verdict group 𝐺 𝑣 ★ and the same within-verdict core b𝐶 (when the semantic path triggers) compute identical 
+
+ey = 𝑄 𝜂 (A ( b𝐶 )) and identical ℎ★
+
+> sem
+
+. Two honest signers that select the same 𝐺 𝑣 ★ and the same verdict-fallback payload (when the verdict path triggers) compute identical ℎ★
+
+> ver
+
+.
+
+Proof sketch. For the semantic path: determinism of E and the canonical proposal text imply identical e𝑖 for 𝑖 ∈ b𝐶 ; the ver-dict grouping is a deterministic partition of 𝑉 (𝑟 ); the angular-component extraction with deterministic tiebreak yields identical 
+
+b𝐶 ; A on the same multiset is deterministic to within numerical tolerance; 𝑄 𝜂 collapses sub-𝜂 differences; 𝐻 is deterministic on byte input; the round id 𝑟 and committed verdict 𝑣 ★ are equal at both signers. For the verdict path: the verdict payload is a canonical serialisation of (𝑣 ★, |𝐺 𝑣 ★ |, verdict_margin , 𝑛, 𝑓 , 𝑟 ), which is identical at both signers; the rest follows by ℎ𝜋 and 𝐻 determinism. □
+
+Lemma 5.2 (Quorum certificate uniqueness) . Under Assumption 5.1, no certificate Cert (ℎ★) of size ≥ 2𝑓 +1 can carry two valid signatures from the same agent. In particular, Cert (ℎ★) witnesses at least 𝑓 +1
+
+honest signers. 
+
+Proof sketch. The certificate verifier counts at most one sig-nature per signer identity: per-signer uniqueness in Σ is enforced by the runner. A Byzantine identity may sign multiple distinct di-gests with its own key (signature unforgeability rules out others 
+
+forging that identity, not the identity itself equivocating), but each such identity contributes at most one counted signature to any single certificate. Honest identities satisfy the sign-once rule of Assumption 5.1 and produce a signature on at most one digest per round. With |Σ| ≥ 2𝑓 +1 distinct identities and at most 𝑓 Byzantine identities, the pigeonhole principle gives at least (2𝑓 +1) − 𝑓 = 𝑓 +1
+
+honest signatures on the bound digest. This is identical for seman-tic_commit and verdict_commit certificates. □
+
+## 5.3 Theorems 
+
+Theorem 5.1 (Typed digest-level agreement) . Under Assump-tions 5.1 and 5.3, in a successful round as defined in §3.1 (all honest nodes complete RBC with the identical delivered view 𝑉 (𝑟 ) over 𝐼 𝑟 ), if the protocol publishes typed commit objects O𝑖 and O𝑗 at two honest verifiers in round 𝑟 , then both objects share the same commit _type 
+
+and the same digest ℎ★, and both certificates bind 2𝑓 +1 distinct signer identities to ℎ★.
+
+Proof sketch. The argument does not require quorum-intersection between Σ𝑖 and Σ𝑗 (which can be empty for 𝑛 > 3𝑓 +1,including the experimental 𝑛 = 10 , 𝑓 = 2). Instead: RBC delivers an identical view 𝑉 (𝑟 ) to every honest node; H-CSC’s typed decision on 𝑉 (𝑟 ) and the frozen parameter tuple 𝜋 is deterministic, hence produces a canonical typed digest 𝐷 ★ (𝑟 ) per round; an honest agent in round 𝑟 signs at most one digest, namely 𝐷 ★ (𝑟 ) (Stage 5 signing rule). Each of Σ𝑖 , Σ𝑗 contains at least (2𝑓 +1) − 𝑓 = 𝑓 +1 honest signers, and every honest signer in either set signed 𝐷 ★ (𝑟 ). Signa-ture unforgeability (Assumption 5.1) and the typed-digest domain separators (§4.6) together force ℎ★ 
+
+> 𝑖
+
+= ℎ★ 
+
+> 𝑗
+
+= 𝐷 ★ (𝑟 ) and matching 
+
+commit _type . The remainder follows from Lemmas 5.1 and 5.2. Detailed proof in Appendix B. □
+
+Remark 5.1 . By the same deterministic-decision argument, two honest nodes in a successful round also agree on the abort out-come and the typed reason code when both abort: the canonical typed digest 𝐷 ★ (𝑟 ) is ⊥ for abort, and the typed reason code is deterministic in (𝑉 (𝑟 ), 𝜋, 𝑟 ). The mixed case (one honest commits, another aborts in the same successful round) cannot arise: both honest nodes execute identical Algorithm 1 on identical (𝑉 (𝑟 ), 𝜋, 𝑟 ),so their commit-or-abort decisions are identical, and a 2𝑓 +1 certifi-cate can only be assembled when the local protocol returns a typed commit. 
+
+Theorem 5.2 (Semantic validity under semantic-admissible round) .
+
+Under Assumption 5.4 (semantic- admissible variant), if the protocol publishes a semantic_commit object Osem in round 𝑟 with selected core b𝐶 ⊆ 𝐺 𝑣 ★ , then for any honest centre cH ∈ b𝐶 ∩ H ,
+
+∠(y★, cH ) ≤ diam ∠ ( b𝐶 ) ≤ 2𝜃 𝛼 .
+
+The committed verdict verdict (O sem ) = 𝑣 ★ is the verdict held by every member of b𝐶 , and | b𝐶 ∩ H | ≥ 𝑓 +1.
+
+Proof sketch. The within-verdict admissibility predicate guar-antees a centre node ℎ ∈ b𝐶 with ∠(eℎ, e𝑗 ) ≤ 𝜃 𝛼 for all 𝑗 ∈ b𝐶 ,Hierarchical Certified Semantic Commitment for Byzantine-Resilient LLM-Agent Collaboration 
+
+hence diam ∠ ( b𝐶 ) ≤ 2𝜃 𝛼 . The Euclidean geometric median of points inside an angular ball of radius 𝜃 𝛼 lies inside the same ball after re-normalisation. | b𝐶 | ≥ 2𝑓 +1 and |B| ≤ 𝑓 give | b𝐶 ∩ H | ≥ 𝑓 +1 ≥ 1.Every member of b𝐶 shares the verdict 𝑣 ★ by construction (the core is extracted within 𝐺 𝑣 ★ ). Detailed proof in Appendix B. □
+
+Remark 5.2 . Theorem 5.2 is a relative bound: it bounds the deviation of the semantic commit from honest centres inside the selected core. It does not state that the commit matches an external ground truth. The 2𝜃 𝛼 ceiling is a worst-case admissibility bound , not a tight em-pirical error bound; at the H-CSC main-path operating point 𝜃 𝛼 =
+
+0.65 rad ( ≈ 37 .2◦) this yields a ceiling of ≈ 74 .5◦, while the empirical SCE values reported in Section 6.1–6.2 are substantially smaller. The honest-reference validity rate InvalidSemanticCommit hmaj 
+
+is reported empirically in Section 6.2; the dataset-gold validity rate 
+
+InvalidSemanticCommit gold is reported as a separate diagnostic. 
+
+Theorem 5.3 (Verdict-commit finality under verdict-admissible round) . Under Assumption 5.4 (verdict- admissible variant) with mar-gin parameter verdict_margin min > 𝑓 , if the protocol publishes a ver-dict_commit object Over in round 𝑟 with verdict group 𝐺 𝑣 ★ ⊆ 𝑉 (𝑟 ),then 𝑣 ★ is the honest-reference verdict majority H (𝑉 ) of Defini-tion 3.7 (honest plurality with the largest_verdict tie-break). For the empirically calibrated operating point verdict_margin min = 1
+
+used in our MVR-50 / MVR-100 evaluation, the conclusion is not de-terministic: honest-reference validity is reported as an empirical rate (Section 6.2). 
+
+Proof sketch. Let |𝐺 𝑣 ★ | ≥ 2𝑓 +1 and let the runner-up verdict group have size ≤ | 𝐺 𝑣 ★ | − 𝑚 where 𝑚 = verdict_margin min . Among at most 𝑓 Byzantine agents in 𝑉 (𝑟 ), the worst-case allocation places all 𝑓 in 𝐺 𝑣 ★ (lowering its honest count by 𝑓 ) and none in the runner-up (leaving its honest count intact). The honest-only count of 𝑣 ★
+
+is then |𝐺 𝑣 ★ | − 𝑓 and the honest-only count of any runner-up is at most |𝐺 𝑣 ★ | − 𝑚 . For 𝑣 ★ to be the honest-reference (plurality) ver-dict deterministically we therefore require |𝐺 𝑣 ★ | − 𝑓 > |𝐺 𝑣 ★ | − 𝑚 ,equivalently 𝑚 > 𝑓 . For the operating point 𝑚 = 1 this inequality fails and the conclusion is not deterministic; margin_1 is retained as the calibrated empirical operating point because (i) it preserves coverage on real-LLM rounds whose honest agents disagree at the rationale level but agree at the verdict level, and (ii) the empirical 
+
+invalid_hmaj rate at 𝑚 = 1 stays at or below 0.04 across all bench-marks (Sections 6.2–6.3). The proof is the one-step pigeon-hole argument above; the appendix does not repeat it. □
+
+Remark 5.3 . Verdict_commit certifies a 2𝑓 +1 quorum on the delivered-view candidate verdict, together with a typed finality signal Ψ(𝑟 ) that the within-verdict semantic cluster did not pass the 𝜃 𝛼 admissibility check. It is therefore a strictly weaker finality guarantee than semantic_commit : it does not bound the angular distance from a semantic aggregate to any honest centre, and, at the calibrated operating point verdict_margin min = 1, does not de-terministically guarantee honest-reference validity (Theorem 5.3). Downstream consumers that require an embedding-backed seman-tic representation or a deterministic honest-reference guarantee must (a) check the commit _type field and (b) re-run the proto-col with verdict_margin min > 𝑓 if deterministic verdict validity is required for their use case. 
+
+Theorem 5.4 (Safe abort under no-admissibility or insufficient certificate) . If the round is neither semantic-admissible nor verdict-admissible, or if fewer than 2𝑓 +1 distinct signatures arrive on the candidate digest, the protocol publishes Oabort with a typed rea-son from the closed set of Definition 3.3. In particular, the protocol 
+
+never publishes a semantic_commit when the within-verdict seman-tic core is not admissible, and never publishes a verdict_commit when 
+
+|𝐺 𝑣 ★ | < 2𝑓 +1 or verdict_margin < 1.
+
+Proof sketch. The proof is by inspection of the control flow of Algorithm 1. Each abort branch returns Oabort with the corre-sponding typed reason before any commit object is constructed. The set of exit points is closed: the algorithm returns either a se-mantic_commit , a verdict_commit , or an abort value; no other return point exists. Detailed proof in Appendix B. □
+
+Theorem 5.5 (Conditional commit-or-abort termination under synchrony) . Under Assumptions 5.1, 5.2, and 5.3, after the global stabilisation time the protocol terminates with one of the three typed outcomes within one round of communication. Concretely: 
+
+• if the round is semantic-admissible (Assumption 5.4, semantic variant) and at least 2𝑓 +1 honest agents are present in b𝐶 , the protocol terminates with Osem ;
+
+• else if the round is verdict-admissible (verdict variant) and at least 2𝑓 +1 honest agents are present in 𝐺 𝑣 ★ , the protocol terminates with Over ;
+
+• else the protocol terminates with Oabort 
+
+(insufficient_signers or one of the path-failure typed reasons). The protocol does not rely on Byzantine cooperation for liveness: 
+
+insufficient_signers is a valid termination outcome. 
+
+Proof sketch. Stages 1–4 are local computations and do not block. Stage 5 collects valid signatures over ℎ★. Honest signers in Σsrc broadcast their signatures over authenticated channels; af-ter global stabilisation [ 11 ] each broadcast is delivered within the bounded delay. If the admissibility predicate holds and Σsrc contains at least 2𝑓 +1 honest agents, the protocol collects ≥ 2𝑓 +1 signa-tures within one round and publishes the corresponding typed commit. Otherwise the protocol exits via insufficient_signers or one of the path-failure abort branches. In all cases termination is within one round of communication after GST. Detailed proof in Appendix B. □
+
+Remark 5.4 . Theorem 5.5 corrects a potential overclaim in the pre-vious CSC formulation, where commit termination was conditional only on a coherent honest quorum. Under H-CSC, commit termi-nation requires ≥ 2𝑓 +1 honest signers in the relevant signer set; if the signer set has fewer honest agents, the protocol may termi-nate via insufficient_signers rather than commit . This is the correct safety / liveness trade-off: commit liveness is conditional on a sufficient honest signing quorum, not on Byzantine cooperation. 
+
+## 5.4 Representation boundary 
+
+The four theorems above are conditional on the encoder E being able to separate honest from Byzantine proposals at least to within the within-verdict admissibility radius 𝜃 𝛼 .H. Xu et al. 
+
+Lemma 5.3 (Representation boundary) . Suppose there exists an honest proposal 𝜌 ℎ and a Byzantine proposal 𝜌 𝑏 with 𝜌 ℎ .verdict =
+
+𝜌 𝑏 .verdict and ∠(E ( 𝜌 ℎ ), E ( 𝜌 𝑏 )) = 0. Then no deterministic embedding-only commitment protocol that operates only on E can distinguish 𝜌 ℎ from 𝜌 𝑏 on the within-verdict admissibility predicate; any such protocol must either (i) admit 𝜌 𝑏 to the selected core, or (ii) abort. 
+
+Proof. Both proposals produce identical embeddings; the pro-tocol cannot distinguish them on any function of the embeddings. The within-verdict admissibility predicate is such a function. □
+
+Remark 5.5 . Lemma 5.3 explains why H-CSC does not fully elim-inate the B4-style on-topic-hallucination failure mode reported in Section 6.2: a Byzantine proposal with the same verdict and a near-identical embedding to honest text cannot be distinguished by the embedding filter. The defence in such cases is the verdict-fallback path’s margin condition (which requires the runner-up to be strictly smaller) plus the typed safe-abort branch when the margin condition also fails. 
+
+## 5.5 What we do not prove 
+
+We do not prove a closed-form bound on the angular distance from 
+
+y★ to a ground-truth reference. We prove only the relative bound of Theorem 5.2 for the semantic_commit path; the empirical SCE numbers in Section 6 are the corresponding observation. We do 
+
+not prove robustness against an adversary that manipulates E’s weights, an adversary that colludes across rounds, or an adversary that violates Assumption 5.1. We do not prove that H-CSC strictly dominates fair verdict-only baselines on commit rate or invalid-commit rate. A task-level bootstrap analysis ( 10 000 resamples, seed 42 ; see Appendix D) confirms that the H-CSC and B3 certificate_wrapped_majority 
+
+95% CIs overlap on every headline axis (commit rate, invalid_hmaj ,valid-commit coverage, byz_infiltration ); on rushing mode the CIs are identical. On static invalid_hmaj , B3’s CI is [0.000 , 0.000 ]
+
+and H-CSC’s is [0.000 , 0.060 ], making B3 uniformly safer in the bootstrap sense by a single task. H-CSC’s contribution over B3 is therefore not a coverage or safety improvement but the typed 
+
+semantic_commit outcome and its embedding-backed digest, which B3 cannot produce by construction. We do not prove evidence-aware safety properties (evidence-id provenance soundness, source-reliability guarantees, claim– evidence entailment correctness). H-CSC’s correctness is silent on these axes; they are out of scope for the present paper (Remark 3.3). 
+
+## 6 Evaluation 
+
+We evaluate H-CSC on two complementary benchmarks. BCS_v1 
+
+(§6.1) is a controlled semantic-poisoning diagnostic on Wikipedia-anchored paraphrases; it probes encoder separability and the safe-abort branch of Theorem 5.4. MVR-50 (§6.2) is a real LLM-agent claim-verification benchmark on Climate-FEVER (a documented fallback for SciFact), with proposals paired across static and rush-ing Byzantine attack modes. §6.4 reports the coverage-recovery comparison between H-CSC and the strict-semantic configuration of the same framework. §6.5 reports the semantic_commit / ver-dict_commit split, which is the contribution attributable to the embedding axis. §6.6 reports threshold and fallback sensitivity; §6.7 reports the topology design-space ablation. Both benchmarks must be reported; neither replaces the other : BCS_v1 isolates en-coder behaviour against an attack distribution we fully control, while MVR-50 measures protocol behaviour against stochastic LLM proposals. 
+
+## 6.1 Controlled Semantic-Poisoning Benchmark on BCS_v1 
+
+Purpose and scope. BCS_v1 is a controlled diagnostic, not a real-agent benchmark. Honest proposals are paraphrases of the same Wikipedia anchor; Byzantine proposals are curated GPT-generated semantic poisons [ 2, 13 , 23 ] that target the anchor’s verdict. We use BCS_v1 to validate (a) encoder separability under a fully-controlled attack distribution, and (b) the protocol’s behaviour in the beyond-BFT regime where 𝑛 < 3𝑓 +1. BCS_v1 does not validate real het-erogeneous LLM-agent collaboration; that is the role of MVR-50 below. 
+
+Setup. 𝑛 ∈ { 30 , 50 } across 120 episodes spanning byz_ratio ∈{0.0, 0.1, 0.2, 0.3, 0.4, 0.5} at 20 trials per bucket. Encoder: CRSE. Aggregator: Euclidean geometric median. Core methods compared: 
+
+angular_component , corresponding to the strict-semantic CSC 
+
+ablation of the H-CSC framework (§4.9), and all_nodes (no-filter baseline). The pairwise per-trial AUC of CRSE on BCS_v1 is 0.9946 ±
+
+0.0148 across 100 trials, recorded as a representation diagnostic. 
+
+Results. Table 1 reports per-bucket commit/abort statistics and the angular distance from the committed aggregate to the honest reference centre (SCE, in degrees). On the four BFT-feasible buck-ets ( {0.0, 0.1, 0.2, 0.3}, 𝑛 = 50 ), the certified pipeline commits with sub-degree SCE on three of the four buckets ( {0.81 ◦, 0.56 ◦, 0.31 ◦ } at 
+
+{0.1, 0.2, 0.3}); the 2.04 ◦ value at byz_ratio 0.0 is a per-trial geomet-ric median against an honest-only reference under no Byzantines and serves as the diagnostic floor. The two beyond-BFT buckets ({0.4, 0.5}, 𝑛 = 30 < 3𝑓 +1) fall outside the system-model assump-tion 𝑛 ≥ 3𝑓 +1 under which Theorem 5.4 is stated; we report them as implementation-guard diagnostics. The protocol’s admissibility check refuses to construct a 2𝑓 +1 core when fewer than 2𝑓 +1 hon-est agents can possibly exist, so the implementation aborts 100% of trials in both buckets. The non-zero invalid-commit rate at byz_ratio 
+
+∈ { 0.0, 0.1} (0.10 and 0.05 respectively, not in the table) is a method-ology artefact of the per-trial geometric- median-vs-honest-centre reference, not a protocol failure: the protocol commits the right embedding, but its angular distance to the per-trial honest reference exceeds a numerical tolerance on a small fraction of trials. 
+
+## 6.2 Real LLM-Agent Benchmark on MVR-50 
+
+Setup. MVR-50 (Multi-LLM Verifier on Real-agent benchmark, 50 tasks) consists of 50 claim-verification tasks drawn from the documented Climate-FEVER fallback dataset; the schema and load-ers are dataset-agnostic, and SciFact instantiation is future work. Each task runs with 𝑛 = 10 agents and 𝑓 = 2. Honest agents emit proposals through 5 prompt profiles ( evidence_focused , skeptical ,
+
+concise , uncertainty_aware , domain_specialist ); Byzantine agents emit proposals through 4 attack types ( B1 polarity_flip, B2 evi-dence_omission, B3 false_causality, B4 on_topic_hallucination), Hierarchical Certified Semantic Commitment for Byzantine-Resilient LLM-Agent Collaboration 
+
+Table 1: BCS_v1 commitment results per byz_ratio (20 tri-als/bucket; CRSE encoder; geometric-median aggregator). 
+
+strict-semantic CSC is the angular-component ablation of H-CSC (§4.9); all_nodes is the no-filter baseline. SCE: angular distance from committed aggregate to honest reference cen-tre (deg). Beyond-BFT buckets ( 𝑛 = 30 < 3𝑓 +1) are diagnostic-only (§6.1).                                     
+
+> strict-semantic CSC all_nodes
+> byz_ratio 𝑛 commit SCE ◦commit SCE ◦
+> 0.0 50 1.00 2.04 1.00 0.00 0.1 50 1.00 0.81 1.00 0.93 0.2 50 1.00 0.56 1.00 1.85 0.3 50 0.80 0.31 0.80 3.60 0.4 30 0.00 –0.00 –0.5 30 0.00 –0.00 –
+
+drawn from the textual adversarial-attack literature [2, 13, 16, 23], balanced 25 /25 /25 /25 across the 100 Byzantine slots. We pair every Byzantine slot across two attack modes: static (no honest broad-casts) and rushing (with honest broadcasts). Total LLM calls: 400 
+
+honest proposals, 100 static and 100 rushing Byzantine proposals, generated with gpt-4o-mini [24 ] under task-aware schema valida-tion. Encoding 𝜌 𝑖 uses a canonical proposal-text serialisation. The H-CSC main path uses 𝜃 𝛼 = 0.65 rad and fallback = margin_1 .
+
+Methods compared. majority_vote (verdict-only baseline; no embedding, no certificate; the multi-agent-debate-style aggrega-tion typified by [ 6, 10 , 18 ]); confidence_weighted_vote (CWV; verdicts weighted by self-reported confidence); all_nodes_gm (geo-metric median over the unfiltered view, no certificate [ 3, 26 , 28 ]); 
+
+angular_threshold_gm (filter + GM, no admissibility check, no certificate); B3 cert. + majority (certificate-wrapped majority with margin_min = 1, the fair certificate-emitting verdict-only baseline); H-CSC (this paper); and CSC strict-semantic (the con-servative configuration of the same framework with 𝜃 𝛼 = 0.55 and no fallback, reported here as an ablation; see §6.4). 
+
+Two validity notions, reported side by side. Per Definition 3.7, we report dataset-gold validity (committed verdict = Climate-FEVER claim_label) and evidence-bounded honest-reference validity 
+
+(committed verdict = honest-plurality verdict the honest agents would produce given only the visible evidence, under the same 
+
+largest_verdict tie-break the protocol uses; see Definition 3.7) 
+
+separately . The two diverge on 14 /50 tasks ( 28% ) by construction: Climate-FEVER’s gold label sometimes exceeds what an evidence-bounded reading of the honest agents’ proposals supports. Con-flating the two would risk attributing dataset label noise to the algorithm. We treat invalid_hmaj as the central protocol-side safety metric ; invalid_gold is reported as a separate diagnostic. The protocol is not a semantic-truth oracle. 
+
+Headline numbers. Table 2 reports the full per-method, per-mode point estimates; Table 3 reports 95% task-level non-parametric boot-strap confidence intervals on the headline axes ( 10 000 resamples, seed 42; full table in Appendix D). Figure 3 visualises the commit-rate / invalid_hmaj trade-off for all six methods with the same CIs. H-CSC commits 0.90 static / 0.92 rushing of MVR-50 rounds with invalid_hmaj = 0.02 /0.00 and valid_commit_coverage 
+
+= 0.88 /0.92 . The semantic_commit share is 0.74 /0.72 ; the ver-dict_commit share is 0.16 /0.20 ; abort fires on 0.10 /0.08 of rounds. 
+
+Comparison against the fair certificate baseline. B3 
+
+certificate_wrapped_majority (with margin_min = 1)commits 0.88 /0.92 with invalid_hmaj = 0.00 /0.00 and 
+
+valid_commit_coverage = 0.88 /0.92 . On every headline axis the H-CSC and B3 95% CIs overlap, and on rushing mode the CIs are bit-for-bit identical (Table 3); on static invalid_hmaj B3’s CI is degenerate at [0.000 , 0.000 ] while H-CSC’s is [0.000 , 0.060 ],so B3 is uniformly safer in the bootstrap sense by a single task (one MVR-50 task on which H-CSC emits an invalid verdict_commit that B3’s tighter margin condition would not). H-CSC’s contribution over B3 is therefore not a coverage or safety improvement on the headline axes; it is the typed semantic_commit outcome on 74% /72% of rounds, supplying an embedding-backed digest that the verdict-only B3 baseline cannot produce by construction. Against confidence-weighted voting and other naive aggregators. 
+
+confidence_weighted_vote commits all 50 tasks in both modes but reaches invalid_hmaj = 0.12 (95% CI [0.04 , 0.22 ]) under both modes — the lower CI bound of CWV ( 0.04 ) exceeds H-CSC’s point estimate ( 0.02 ), and the CIs overlap only in a 0.02 -wide region at H-CSC’s upper CI bound. majority_vote commits 0.90 /0.94 at 
+
+invalid_hmaj = 0.00 /0.00 but emits no certificate at all and lacks the structural guarantees of Theorems 5.1–5.4. 
+
+Against abstaining-majority and margin-majority baselines. 
+
+B1 (abstaining_majority ) commits 0.94 /0.94 but reaches 
+
+invalid_hmaj = 0.06 /0.02 , with CIs [0.00 , 0.14 ] static and 
+
+[0.00 , 0.06 ] rushing; the static- mode CI overlaps H-CSC’s 
+
+[0.00 , 0.06 ] but B1’s point estimate is 3× H-CSC’s safety rate. B2 (margin_majority , margin_min =1) is the verdict-only stripped sib-ling of B3: it ties B3 on invalid_hmaj (0.00 /0.00 ) and on commit rate ( 0.88 /0.92 ) but emits no certificate. Across B1–B3 the six boot-strap CIs in commit_rate and invalid_hmaj all overlap H-CSC’s; at this scale, no certificate- emitting verdict-only baseline is statistically separated from H-CSC on the headline axes. The contribution H-CSC adds over the entire B1–B3 cluster is the typed semantic-commit provenance that none of them can produce. 
+
+Distinction from multi-agent debate / aggregation. The closest LLM-side prior is multi-agent debate and aggregation [ 1, 6, 10 , 18 ], which combines stochastic LLM outputs through soft-aggregation or learned-judge mechanisms. None of these works targets a Byzantine-tolerant commit primitive: they assume a benign coordi-nator, do not emit a 2𝑓 +1 certificate, do not provide a safe-abort branch when the round is too dispersed, and do not separate the underlying finality of an answer from its surface verdict. H-CSC’s typed commit object turns “does the agent crowd agree?” from a soft-aggregation question into a typed, verifier-checkable finality decision. 
+
+Paired absorption. On 48 /50 tasks both attack modes are jointly safe under H-CSC; on 44 /50 tasks H-CSC absorbs the rushing transi-tion identically (commits or aborts the same way under both modes, the certified_absorbs_attack paired class). The rushing mode H. Xu et al. 
+
+Table 2: MVR-50 main results ( 𝑛 = 10 , 𝑓 = 2, 50 Climate-FEVER tasks; H-CSC parameters in §6.2). inv_gold /inv_hmaj : the two validity-mismatch rates (Definition 3.7; lower better). byz_infil : mean Byzantine fraction in the selected core. cert? : emits a 
+
+2𝑓 +1-quorum certificate.                                                                                                        
+
+> static rushing
+> method commit inv_gold inv_hmaj byz_infil commit inv_gold inv_hmaj byz_infil cert?
+> majority_vote 0.90 0.22 0.00 0.054 0.94 0.24 0.00 0.000 no
+> confidence_weighted_vote 1.00 0.28 0.12 0.083 1.00 0.28 0.12 0.023 no
+> all_nodes_gm 1.00 0.28 0.04 0.200 1.00 0.26 0.06 0.200 no
+> angular_threshold_gm 1.00 0.28 0.08 0.035 1.00 0.28 0.08 0.006 no
+> B1 abstaining_majority 0.94 0.24 0.06 0.111 0.94 0.24 0.02 0.011 yes
+> B2 margin_majority (m=1) 0.88 0.20 0.00 0.090 0.92 0.22 0.00 0.000 yes
+> B3 cert. + majority 0.88 0.20 0.00 0.088 0.92 0.22 0.00 0.000 yes
+> V1 verdict-cond. sem. 0.82 0.22 0.02 0.034 0.80 0.22 0.00 0.000 yes
+> H-CSC (this paper) 0.90 0.22 0.02 0.069 0.92 0.22 0.00 0.000 yes
+> CSC strict-semantic (B0) 0.54 0.16 0.02 0.021 0.48 0.12 0.02 0.006 yes
+
+Table 3: Bootstrap 95% CIs on the headline MVR-50 metrics (10 000 task-level resamples, seed 42). Comparison narrative in §6.2.                                                                                                        
+
+> method / mode metric point 95% CI
+> H-CSC static commit_rate 0.90 [0.80 ,0.98 ]
+> H-CSC rushing commit_rate 0.92 [0.84 ,0.98 ]
+> B3 static commit_rate 0.88 [0.78 ,0.96 ]
+> B3 rushing commit_rate 0.92 [0.84 ,0.98 ]
+> B2 static commit_rate 0.88 [0.78 ,0.96 ]
+> B2 rushing commit_rate 0.92 [0.84 ,0.98 ]
+> B1 static commit_rate 0.94 [0.86 ,1.00 ]
+> B1 rushing commit_rate 0.94 [0.86 ,1.00 ]
+> CSC static commit_rate 0.54 [0.40 ,0.68 ]
+> CSC rushing commit_rate 0.48 [0.34 ,0.62 ]
+> H-CSC static inv_hmaj 0.02 [0.00 ,0.06 ]
+> H-CSC rushing inv_hmaj 0.00 [0.00 ,0.00 ]
+> B3 static inv_hmaj 0.00 [0.00 ,0.00 ]
+> B3 rushing inv_hmaj 0.00 [0.00 ,0.00 ]
+> B2 static inv_hmaj 0.00 [0.00 ,0.00 ]
+> B2 rushing inv_hmaj 0.00 [0.00 ,0.00 ]
+> B1 static inv_hmaj 0.06 [0.00 ,0.14 ]
+> B1 rushing inv_hmaj 0.02 [0.00 ,0.06 ]
+> CWV static inv_hmaj 0.12 [0.04 ,0.22 ]
+> CWV rushing inv_hmaj 0.12 [0.04 ,0.22 ]
+
+never causes an honest-reference-invalid commit under H-CSC. Under the strict-semantic CSC the absorption count is 23 /50 .
+
+Scale caveat. MVR-100 is a real-agent scale chosen to tighten the bootstrap CIs while remaining within a workable per-model API budget (the cross-model robustness check in §6.3 runs the same MVR-100 task base through four LLMs). Resolving sub-0.02 
+
+headline gaps between H-CSC and B3 would require 𝑛 ≈ 500 tasks at the present CI width, beyond the present paper’s scope. SciFact instantiation is explicit future work; multi-model heterogeneity within a single round (mixing distinct vendor agents in the same protocol round) is also future work, distinct from the cross-model 
+
+between-run replication reported in §6.3 below. 
+
+## 6.3 Cross-Model Robustness 
+
+Purpose. The MVR-50 main benchmark (§6.2) uses a single un-derlying agent LLM ( gpt-4o-mini ) at the 50-task scale. To probe whether the H-CSC contribution is sensitive to the specific stochas-tic behaviour of one model, this subsection adds an MVR-100 cross-model robustness check: we re-run the entire generation pipeline at 100 Climate-FEVER tasks (800 honest + 200 static-Byzantine + 200 rushing-Byzantine proposals per LLM) under four different agent LLMs spanning two vendors and two model-size regimes, and re-execute the H-CSC protocol plus baselines on each set of proposals. This is an additional robustness check on top of the MVR-50 main result, not a replacement for it. 
+
+Setup. The same 100 Climate-FEVER tasks, the same prompt templates, the same encoder (CRSE), and the same protocol pa-rameters (𝜃 𝛼 = 0.65 , fallback = margin_1 ) are used in ev-ery cross-model run. Only the agent LLM changes. The four models are gpt-4o-mini (OpenAI baseline, small), gpt-4o (Ope-nAI flagship, isolating model size from cross-vendor effects), 
+
+claude-sonnet-4-5 (Anthropic, cross-vendor closed-source), and 
+
+llama-3.3-70b-instruct (Meta via OpenRouter, open-source). Each model uses the same sampling parameters ( 𝑇 = 0.3 for honest, 
+
+𝑇 = 0.7 for Byzantine, max_tokens = 1024 ). Cache-key construc-tion includes (model_provider, model_name) so the four runs are cleanly disjoint. 
+
+Result — H-CSC headline numbers stay robust across models. Ta-ble 4 reports the headline H-CSC numbers on each of the four LLMs. The commit rate is in [0.92 , 0.97 ] across all four models on both static and rushing modes, and invalid_hmaj is in [0.00 , 0.03 ]. The 
+
+semantic_commit share is ≥ 0.68 on every (model, mode) cell — the embedding-backed digest is emitted on a majority of rounds for every LLM tested. 
+
+Interpretation. Two observations from Table 4. First , the safety floor (invalid_hmaj ) is preserved across all four models and both attack modes — the H-CSC typed-decision logic produces an honest-reference-invalid commit on at most 0.03 of rounds at the point estimate, with 95% task-level bootstrap CI upper bounds bounded by 0.07 in the worst case ( llama-3.3-70b static), regardless of Hierarchical Certified Semantic Commitment for Byzantine-Resilient LLM-Agent Collaboration 0.4 0.6 0.8 1.0 
+
+> B1
+> B2
+> CSC (B0)
+> V1
+> B3
+> H-CSC
+
+static            
+
+> commit rate
+> 0.000 0.025 0.050 0.075
+> invalid_hmaj
+> 0.4 0.6 0.8 1.0
+> valid_commit_hmaj
+> 0.00 0.05 0.10
+> byz_infiltration
+> 0.4 0.6 0.8 1.0
+> B1
+> B2
+> CSC (B0)
+> V1
+> B3
+> H-CSC
+
+rushing                
+
+> 0.000 0.025 0.050 0.075 0.4 0.6 0.8 1.0 0.00 0.05 0.10
+> Dashed grey line marks the H-CSC point estimate; shaded edge marks the safety floor on lower-is-better axes; bars show 95% task-level bootstrap CIs.
+> H-CSC B3 V1 CSC (B0) B2 B1
+
+Figure 3: MVR-50 strip plot for the six certificate-emitting methods (H-CSC, B3, V1, B0, B2, B1): one method ×mode per row, one metric per column. Bars are 95% task-level bootstrap CIs ( 10 000 resamples, seed 42 ). Naive baselines (no certificate) omitted; see Table 2. Table 4: H-CSC headline numbers under four agent LLMs on the same MVR-100 task base ( 95% task-level bootstrap CIs; 𝑛 tasks = 100 , 10 000 resamples, seed 42). inv_hmaj : honest-reference-invalid commit rate (Definition 3.7). sem_share :fraction of commits emitting semantic_commit . Protocol pa-rameters and tasks are identical across rows; only the agent LLM changes. Per-model schema_valid rates in the note be-low.                                                                    
+
+> agent LLM mode commit [95% CI] inv_hmaj [95% CI] sem_share
+> gpt-4o-mini static 0.93 [0.88 ,0.98 ]0.00 [0.00 ,0.00 ]0.82 rushing 0.93 [0.87 ,0.97 ]0.01 [0.00 ,0.03 ]0.79
+> gpt-4o static 0.96 [0.92 ,0.99 ]0.00 [0.00 ,0.00 ]0.81 rushing 0.95 [0.90 ,0.99 ]0.01 [0.00 ,0.03 ]0.80
+> claude-sonnet-4-5 static 0.92 [0.86 ,0.97 ]0.01 [0.00 ,0.03 ]0.85 rushing 0.95 [0.90 ,0.99 ]0.01 [0.00 ,0.03 ]0.88
+> llama-3.3-70b static 0.97 [0.93 ,1.00 ]0.03 [0.00 ,0.07 ]0.71 rushing 0.93 [0.88 ,0.98 ]0.01 [0.00 ,0.03 ]0.68
+> First-pass schema_valid (honest proposals,
+
+𝑛 honest = 800 per model): gpt-4o-mini 
+
+99 .8% (rounded to 100% in the table), gpt-4o 100% , claude-sonnet-4-5 100% , 
+
+> llama-3.3-70b
+
+98 .4% (13 of 800 honest proposals failed JSON schema on first attempt; the remaining honest agents still met the 2𝑓 +1 quorum and the protocol committed a valid typed object on those rounds). 
+
+underlying agent LLM. This is the property we care most about: the protocol’s safety guarantee is a deterministic function of the finality-signal vector Ψ(𝑟 ) (Definition 3.9), not of the agent LLM’s specific generation distribution. Second , the commit rate varies modestly across models ( ≤ 0.05 absolute), tracking the underlying LLM’s tendency to produce evidence-consistent proposals. Open-source 
+
+llama-3.3-70b shows a slightly lower first-pass schema-validity rate ( 98% vs. 100% for closed-source models); affected rounds still meet the 2𝑓 +1 quorum on the remaining honest proposals and commit a valid typed object. 
+
+What this section does not claim. This is a between-run cross-model evaluation: each run uses a single homogeneous agent pop-ulation. The within-round heterogeneous setting — where agents from different vendors participate in the same round and must reach consensus across vendor-specific generation styles — is a strictly harder problem and is left as future work. The benchmark schema and the protocol both already accept heterogeneous agent populations; only the agent-generation pipeline would need a small change (per-agent model_provider ). 
+
+## 6.4 Coverage Recovery vs Strict-Semantic CSC 
+
+Headline lift. The strict-semantic CSC configuration of the same framework ( 𝜃 𝛼 = 0.55 , no fallback) commits 0.54 /0.48 with 
+
+invalid_hmaj = 0.02 /0.02 . The H-CSC main path recovers cover-age by +0.36 static / +0.44 rushing while preserving the ≤ 0.04 
+
+safety floor. The valid_commit_coverage lift is +0.353 /+ 0.450 ,attributable to two changes: (i) verdict-conditioned extraction of the semantic core (so honest agents that agree on the verdict but use different rationale phrasings remain in a single core), and (ii) the verdict-level fallback (which absorbs rounds where the within-verdict embedding cluster remains too dispersed for a 2𝑓 +1 seman-tic core). The bootstrap CIs (Table 3) confirm the lift is statistically robust: H-CSC’s commit-rate CIs [0.80 , 0.98 ]/[ 0.84 , 0.98 ] are en-tirely disjoint from strict-semantic CSC’s [0.40 , 0.68 ]/[ 0.34 , 0.62 ].
+
+Paired classification. H-CSC absorbs 44 /50 tasks across attack modes (commits or aborts identically under both static and rush-ing); the strict-semantic CSC absorbs only 23 /50 . The improvement comes from H-CSC’s verdict-fallback path on rounds where hon-est agents agree at the verdict level but disperse at the semantic-rationale level — exactly the pattern that strict-semantic CSC must abort on. 
+
+## 6.5 Commit-Type Analysis 
+
+The H-CSC contribution over verdict-only baselines is the typed commit object. Out of every 100 H-CSC commits, approximately 
+
+82 are semantic_commit (static) or ∼ 78 rushing, carrying an embedding-backed digest, and ∼ 18 /22 are verdict_commit , car-rying a verdict-only digest with no _semantic _aggregate = true .H. Xu et al. 
+
+Table 5: Commit-type split per method on MVR-50. 
+
+sem_share /ver_share : fraction of commits emitting a seman-tic_commit /verdict_commit digest. H-CSC is the only proto-col that emits both types. 
+
+method mode commit sem_share ver_share 
+
+H-CSC static 0.90 0.822 0.178 
+
+H-CSC rushing 0.92 0.783 0.217 
+
+CSC strict-semantic static 0.54 1.000 0.000 
+
+CSC strict-semantic rushing 0.48 1.000 0.000 
+
+B3 cert. + majority static 0.88 0.000 1.000 
+
+B3 cert. + majority rushing 0.92 0.000 1.000 
+
+B3 emits zero semantic_commit ; the strict-semantic CSC emits zero 
+
+verdict_commit . H-CSC is the only protocol on the comparison set that emits both commit types. 
+
+Table 5 reports the commit-type split per method (full data in Appendix D). 
+
+## 6.6 Strict-Semantic CSC Threshold Sensitivity (Ablation) 
+
+This subsection is a sensitivity analysis of the strict-semantic CSC 
+
+ablation (§4.9), not of the H-CSC main path ( 𝜃 𝛼 = 0.65 , margin_1 
+
+fallback). A 𝜃 𝛼 × fallback sensitivity sweep on H-CSC at MVR-100 scale is future work. For the strict-semantic ablation we sweep 𝜃 𝛼 ∈{0.25 , 0.35 , 0.45 , 0.55 , 0.65 , 0.75 , 0.85 , 1.00 } rad ( ≈ 14 ◦–57 ◦) on the 20-task pilot under both attack modes for the certified main path and the Jaccard-gate variant (8 grid points × 2 modes × 2 methods 
+
+× 20 tasks = 640 trials). Three operating regions are clear from Table 6 (only the certified main path is shown for compactness; the Jaccard variant follows the same regime boundaries). 
+
+• Too strict (𝜃 𝛼 ≤ 0.45 , ≤ 26 ◦): commit rate ∈ [ 0, 0.15 ] (i.e., the protocol aborts at least 85% of rounds at this grid point) and is unusable. 
+
+• Stable (𝜃 𝛼 = 0.55 , ≈ 31 .5◦): the unique grid point that si-multaneously achieves commit ≥ 0.65 , invalid_hmaj = 0,and byz_infiltration ≤ 0.04 under both modes. 
+
+• Too loose (𝜃 𝛼 ≥ 0.65 ): commit rate climbs toward 1.00 but rushing-side invalid_hmaj ≥ 0.05 , and Byzantine infiltra-tion grows monotonically with 𝜃 𝛼 to 0.123 (static) and 0.142 
+
+(rushing) at 𝜃 𝛼 = 1.00 .The plateau width was measured on the 20-task pilot; at MVR-50 scale the same 𝜃 𝛼 = 0.55 produces the (commit ≈ 0.5,
+
+invalid_hmaj = 0.02 ) pair reported in §6.2. Re-running the sweep at MVR-50 scale is future work. We do not claim a universal 𝜃 𝛼 .
+
+## 6.7 Topology as a Design-Space Ablation 
+
+We compare strict-semantic CSC (which uses topology_gate =
+
+⊥) against cert. + jaccard_gate (which adds a Jaccard support-overlap gate over evidence-id sets) on every benchmark; Table 7 summarises the headline rows. On the chosen 𝜃 𝛼 = 0.55 and on ev-ery measured benchmark, the topology gate produces commit/abort decisions identical to the main path (BCS_v1) or aborts more without reducing invalid_hmaj (MVR-50 static) or aborts more while shav-ing an additional 0.02 off invalid_hmaj (MVR-50 rushing only). 
+
+Table 6: Threshold sensitivity on the 20-task pi-lot, strict-semantic CSC only. Displayed grid 
+
+𝜃 𝛼 ∈ {0.45 , 0.55 , 0.65 , 0.85 , 1.00 } (full 8-point grid in Ap-pendix D). The stable region at 𝜃 𝛼 = 0.55 is narrow ( ≈ 6◦)and benchmark-specific; per-deployment recalibration is required.                                                                    
+
+> 𝜃 𝛼 (rad) / deg mode commit inv_gold inv_hmaj byz_infil regime 0.45 / 25.78 static 0.15 0.10 0.00 0.00 strict 0.45 / 25.78 rushing 0.15 0.10 0.00 0.00 strict
+> 0.55 / 31.51 static 0.65 0.20 0.00 0.04 stable 0.55 / 31.51 rushing 0.65 0.20 0.00 0.02 stable
+> 0.65 / 37.24 static 0.95 0.35 0.00 0.07 loose 0.65 / 37.24 rushing 1.00 0.40 0.05 0.04 loose 0.85 / 48.70 static 1.00 0.40 0.05 0.09 loose 0.85 / 48.70 rushing 1.00 0.40 0.05 0.08 loose 1.00 / 57.30 static 1.00 0.40 0.05 0.12 loose 1.00 / 57.30 rushing 1.00 0.40 0.05 0.14 loose
+
+Table 7: Topology design-space ablation: main path (topology_gate = ⊥) vs. Jaccard-graph variant (topology_gate = jaccard ). Δ columns are gate − main. Full ablation in Appendix C.                   
+
+> benchmark / mode Δcommit Δinv_hmaj Δbyz_infil verdict MVR-50 / static −0.10 +0.00 −0.008 aborts more; no commit-rate gain MVR-50 / rushing −0.08 −0.02 −0.006 aborts more; 0.02
+> inv_hmaj reduc-tion BCS_v1 / static 0.00 0.00 0.000 no decision change
+
+Outside the chosen 𝜃 𝛼 the gate aborts strictly more (Table 6). We therefore demote topology to a design-space transparency artefact and defer the full analysis to Appendix C; topology is not part of the main contribution and is not required for the safety / agreement / safe-abort / termination guarantees of §5. 
+
+## 7 Limitations and Threats to Validity 
+
+We state the limitations of the work explicitly, in the order in which a sceptical reader is most likely to raise them. 
+
+1. Climate-FEVER fallback rather than SciFact. The MVR-50 benchmark uses Climate-FEVER as the documented fallback dataset; raw SciFact files are not part of our current experimental pipeline. Climate-FEVER’s gold “claim_label” is a community judgment that exceeds what a strict evidence-bound reading of the visible evidence supports on 14 of 50 tasks ( 28% ). This is the principal reason we report evidence-bounded honest-reference validity (invalid_hmaj ;see Definition 3.7) alongside dataset-gold validity: the former is the protocol-side correctness signal; the latter is a dataset-quality diagnostic. The schema and loaders are dataset-agnostic; SciFact instantiation requires only the raw files and is future work. 
+
+2. Benchmark scale. We evaluate at two complementary scales: MVR-50 ( 50 tasks × 10 agents × 2 attack modes, single LLM) as the calibration benchmark, and MVR-100 ( 100 tasks × 10 agents ×
+
+2 attack modes, four LLMs) as the cross-model robustness bench-mark (§6.3). Strong-scale evaluation at ≥ 500 tasks and within-round Hierarchical Certified Semantic Commitment for Byzantine-Resilient LLM-Agent Collaboration 
+
+multi-vendor heterogeneity (agents from different vendors partici-pating in the same round) remain future work. The bootstrap CIs reported in §6.2–§6.3 capture per-task variance but not per-seed variance. 
+
+3. Between-run cross-model, not within-round heterogeneity. The cross-model evaluation in §6.3 covers four LLMs ( gpt-4o-mini ,
+
+gpt-4o , claude-sonnet-4-5 , llama-3.3-70b-instruct ) but each round uses a single homogeneous agent population. The encoder is a single trained CRSE checkpoint built on sentence-transformer-style backbones [8, 27]. Within-round vendor hetero-geneity (e.g., mixing OpenAI and Anthropic agents in the same round) and encoder-class generalisation are explicit follow-ups; the schema and protocol both already accept heterogeneous agent populations, so this is an experiment-pipeline limitation rather than a protocol limitation. 
+
+4. 𝜃 𝛼 = 0.65 (H-CSC main path) and 𝜃 𝛼 = 0.55 (strict-semantic ablation) are both calibrated, not universal. The H-CSC main path uses 𝜃 𝛼 = 0.65 rad with the margin_1 verdict fallback, calibrated on the MVR-50 20-task pilot to recover coverage on rounds whose honest agents agree at the verdict level but disperse at the rationale level. The strict-semantic CSC ablation uses 𝜃 𝛼 = 0.55 rad with no fallback; its sensitivity analysis (§6.6) identifies a ≈ 6◦-wide stable plateau on the 20-task pilot but is specific to that ablation, not to the H-CSC main path. We do not claim either threshold is universal; both are deployment- time calibration targets, and §6.6 reports the operating regions explicitly. A full 𝜃 𝛼 × fallback sensitivity sweep on H-CSC at MVR-100 scale is future work. 
+
+5. Two validity notions can diverge. Definition 3.7 separates dataset-gold validity from evidence-bounded honest-reference va-lidity (the invalid_hmaj metric retains its bench-tooling name but “hmaj” denotes the honest plurality with deterministic tie-break, not strict majority; see Definition 3.7). The two diverge whenever the honest plurality verdict cannot match the gold label given only the visible evidence. The protocol cannot be held responsible for divergences driven by dataset label noise. We do not claim, and will not claim, that gold-validity numbers characterise protocol correctness. 
+
+6. Representation boundary (Lemma 5.3). If two proposals embed to identical points in the encoder’s representation, the protocol cannot distinguish them on any function of the embeddings, in-cluding the admissibility predicate. The defence in such cases is not the embedding filter but the safe-abort branch. Empirically this manifests as B4 (on-topic hallucination) cases where Byzan-tine specifics are fabricated but lexically and semantically close to honest output; on a subset of MVR-50 tasks the honest cluster is borderline-admissible at 𝜃 𝛼 = 0.55 and the protocol aborts rather than committing a poisoned digest. 
+
+7. Topology is not an accuracy-improving main contribution. An earlier formulation of this work made Jaccard graph and 𝑘 -core peeling the central filtering mechanism. Corrected experiments (Sections 6.1, 6.2, 6.6, and 6.7) show that on every measured bench-mark the topology gate produces commit/abort decisions identical to the main path at the operating point and aborts more than the main path elsewhere. We retain topology in Appendix C as a design-space transparency artefact only. We make no main-path claim that depends on topology. 
+
+8. Some Byzantine generations hallucinated evidence ids. 3 of the 
+
+100 rushing Byzantine records on MVR-50 cited an evidence_id 
+
+not present in the parent task, despite the prompt’s explicit instruc-tion not to. A strict-validation audit traced these records through the commitment evaluation and confirmed that the certified pipeline aborted both affected tasks under both attack modes; the artefacts therefore do not change any §6.2 conclusion. The runner-side vali-dation has been hardened post-hoc to catch this at write time. 
+
+9. Logical certificate, not threshold-signature cryptography. The implementation uses a logical signature simulator that preserves per-signer uniqueness and the 2𝑓 +1 distinct-signer threshold. Pro-duction threshold-signature schemes (e.g. BLS, FROST, threshold ECDSA) are a standard substitution. We do not implement, evalu-ate, or analyse cryptographic primitives; the security claim of §5 is about the protocol’s logical structure, not about its cryptographic instantiation. 
+
+Out-of-scope. We do not address white-box adversaries with model-weight access, cross-task collusion, multi-round delibera-tion protocols where agents iterate on each other’s proposals, or protocol-level reductions of the certified commitment object to downstream consumers. These are explicit future work. 
+
+## 8 Conclusion 
+
+We introduced Hierarchical Certified Semantic Commitment (H-CSC), a finality-control protocol for Byzantine-resilient LLM-agent collaboration. Rather than collapsing the per-round decision into a single commit/abort axis, H-CSC produces a typed commit object: a semantic_commit when the within-verdict embedding cluster is admissible at radius 𝜃 𝛼 , a verdict_commit when the verdict-level quorum and margin are admissible but the embedding cluster is too dispersed, or an explicit abort with a typed reason. Both com-mit types are certified under the same 2𝑓 +1 distinct-signer enve-lope; the distinction lies in whether the underlying digest binds an embedding-backed quantised aggregate or only a verdict-level payload (Algorithm 1). We evaluated H-CSC on two complementary benchmarks. The BCS_v1 controlled diagnostic (§6.1) shows that the implementation guard aborts 100% of beyond-BFT diagnostic rounds, while commit-ted BFT-feasible buckets exhibit low angular deviation ( 0.31 ◦–2.04 ◦,sub-degree for byz_ratio ≥ 0.1; the 2.04 ◦ no-Byzantine value is the diagnostic floor). The MVR-50 real LLM-agent benchmark (§6.2) places the protocol under paired static and rushing Byzantine attack modes against six aggregation baselines. H-CSC commits 0.90 /0.92 
+
+of MVR-50 rounds with invalid_hmaj = 0.02 /0.00 , recovering cov-erage by +0.36 /+ 0.44 over a strict-semantic configuration of the same framework (§6.4) while preserving the ≤ 0.04 safety floor. A task-level bootstrap analysis ( 10 000 resamples) shows H-CSC’s 95% 
+
+CIs overlap the fair certificate-emitting verdict-only baseline B3 on every headline axis (commit rate, invalid_hmaj , valid-commit coverage); on rushing mode the CIs are identical. B3 is uniformly safer than H-CSC on static invalid_hmaj by a single MVR-50 task. H. Xu et al. 
+
+H-CSC’s contribution attributable to the embedding axis is there-fore not raw coverage or safety, but the typed semantic_commit 
+
+outcome on 74% /72% of rounds (§6.5): H-CSC is the only protocol on the comparison set that emits an embedding-backed digest when the within-verdict cluster is admissible and a verdict-only digest when it is not, under the same certificate envelope. The hierarchical typed-commit shape makes the trade-off explicit rather than hiding it behind a binary commit/abort. Topology-based filtering (Jaccard support-overlap graph plus 
+
+𝑘 -core peeling), central to an earlier formulation of this work, pro-duces commit/abort decisions identical to the H-CSC main path at the chosen operating point on every measured benchmark and is reported in Appendix C as a design-space transparency artefact rather than a main-path mechanism. Several directions are immediate. Strong-scale real-agent evalua-tion at ≥ 500 tasks with multiple random seeds, within-round multi-vendor heterogeneity (the cross-model check in §6.3 is between-run), SciFact instantiation once raw files are available, multi-encoder generalisation, adaptive per-deployment threshold and fallback calibration (the V3 adaptive variant from the design-space sweep remains a future-work refinement), and integration of pro-duction threshold-signature primitives (e.g. BLS, FROST) in place of the logical signature simulator are all out-of-scope for this paper but enabled by the same protocol interface. Extending H-CSC’s typed commit object to a multi-round state-machine replication framework that preserves typed semantic validity across rounds is a further open problem. Finally, an evidence-aware finality-control extension that adds provenance, source-reliability, and claim–evidence-entailment signals into the Ψevidence component of the finality-signal vector is a natural follow-up paper; the present paper deliberately leaves H-CSC’s evidence axis empty so that the embedding-derived and verdict-level finality contributions can be measured cleanly. Hierarchical Certified Semantic Commitment for Byzantine-Resilient LLM-Agent Collaboration 
+
+## Appendix A Notation 
+
+Table 8 lists the notation used throughout the main text and the appendix. Quantities relevant to the protocol path are listed first; quantities relevant to evaluation follow. 
+
+Table 8: Notation used throughout. Quantities relevant to the protocol path are listed first; quantities relevant to evaluation follow. 
+
+Symbol Meaning 
+
+N = {1, . . . , 𝑛 } set of agents in the round; 𝑛 is total node count 
+
+𝑓 declared Byzantine fault bound; at most 𝑓 agents may be Byzantine; required quorum is 2𝑓 +1
+
+H ⊆ N honest agents (unknown to the protocol) 
+
+B ⊆ N Byzantine agents (unknown); H ⊔ B = N
+
+𝑥 𝑖 natural-language proposal of agent 𝑖 𝑧 𝑖 structured proposal object built from 𝑥 𝑖 (verdict, confidence, evidence ids, rationale, claim) 
+
+E deterministic semantic encoder 
+
+e𝑖 = E ( CanonText (𝜌 𝑖 ) ) unit-norm semantic embedding of the canonical proposal text 
+
+𝐼 𝑟 delivered index set at round 𝑟 ; 𝐼 𝑟 ⊆ N , |𝐼 𝑟 | ≥ 𝑛 − 𝑓 (successful-round RBC predicate) 
+
+𝑉 (𝑟 ) delivered semantic view at round 𝑟 : { ( 𝑖, 𝜌 𝑖 , e𝑖 ) : 𝑖 ∈ 𝐼 𝑟 }
+
+𝑧 𝑖 .𝑣 verdict component of 𝑧 𝑖 ; 𝑣 ∈ V (typed verdict vocabulary) 
+
+𝐺 𝑣 (𝑟 ) verdict group for 𝑣 at round 𝑟 : {𝑖 ∈ 𝑉 (𝑟 ) : 𝑧 𝑖 .𝑣 = 𝑣 }
+
+𝑣 ★ H-CSC candidate verdict: arg max 𝑣 |𝐺 𝑣 (𝑟 ) | with deterministic tie-break ( largest_verdict )
+
+verdict_margin |𝐺 𝑣 ★ | − max 𝑣 ≠𝑣 ★ |𝐺 𝑣 (𝑟 ) | 
+
+b𝐶 within-verdict semantic core on the semantic branch; b𝐶 ⊆ 𝐺 𝑣 ★ , | b𝐶 | ≥ 2𝑓 +1
+
+𝜃 𝛼 angular radius threshold of the semantic admissibility predicate (H-CSC main path: 0.65 rad) 
+
+¯𝜀 𝛼 angular diameter sister-predicate (reported only) 
+
+Ψ(𝑟 ) finality-signal vector (Definition 3.9): pre-certificate components ( | 𝐺 𝑣 ★ |, verdict_margin , | b𝐶 |, 𝑟 ★ ) plus the post-Stage-5 certificate-size component |Σ|A robust aggregator (Euclidean geometric median by default) 
+
+y★ aggregate semantic object on the semantic branch: y★ = A ( b𝐶 )
+
+𝜂, 𝑄 𝜂 (·) quantization step and lattice quantizer 
+
+𝜋 frozen protocol parameters: (𝜃 𝛼 , ¯𝜀 𝛼 , A, 𝑄 𝜂 , candidate_rule , fallback , verdict_margin min , topology_gate = ⊥) 
+
+ℎ𝜋 parameter digest binding 𝜋 to a commit 
+
+ℎ★ 
+
+> sem
+
+semantic-commit digest: 𝐻 ("semantic_commit" ∥ 𝑄 𝜂 (y★ ) ∥ ℎ𝜋 ∥ 𝑟 ∥ 𝑣 ★ ), with leading byte-string domain separator binding verdict + quantised aggregate 
+
+ℎ★ 
+
+> ver
+
+verdict-commit digest: 𝐻 ("verdict_commit" ∥ VerdictPayload (𝑣 ★ ) ∥ ℎ𝜋 ∥ 𝑟 ), with matching domain separator; no embedding aggregate 
+
+Cert (ℎ★ ) quorum certificate over ℎ★, requiring 2𝑓 +1 distinct signers 
+
+commit _type typed per-round outcome: semantic_commit , verdict_commit , or abort 
+
+majority H (𝑉 ) evidence-bounded honest-reference verdict (honest plurality with largest_verdict tie-break; see Definition 3.7); computed offline for evaluation only 
+
+gold (𝑉 ) dataset gold label, when available 
+
+SCE (y★, H) angular distance from y★ to the honest-only reference centre (degrees) 
+
+InvalidCommit gold , InvalidCommit hmaj two validity-mismatch metrics; reported separately 
+
+## B Additional Proof Details 
+
+This appendix gives proof details for the five-axis correctness results stated in Section 5 (Agreement, Semantic validity, Verdict validity, Safe abort, Conditional commit-or-abort termination). The conventions match the main text: 𝑛 agents indexed by N = {1, . . . , 𝑛 } with 
+
+|B| ≤ 𝑓 and 𝑛 ≥ 3𝑓 +1; embeddings e𝑖 = E ( CanonText (𝜌 𝑖 )) on S𝑑 −1; admissibility radius 𝜃 𝛼 ; lattice quantiser 𝑄 𝜂 . Lemmas 5.1, 5.2, and 5.3 are restated for completeness, but the proof bodies given in Section 5 are not duplicated; we instead provide auxiliary lemmas and detailed arguments for theorems whose §5 statements were proof sketches. The proof details below match the H-CSC control flow of Algorithm 1: Stage 1 builds the delivered view, Stage 2 partitions 𝑉 (𝑟 ) into verdict groups, Stage 3 either (a) extracts a within-verdict semantic core for a candidate verdict 𝑣 ★ and runs the admissibility predicate at radius 𝜃 𝛼 , or (b) falls back to the verdict-only path when the semantic predicate fails but the verdict-admissibility predicate holds. Stages 4–5 aggregate, quantise, bind the typed digest, and collect a 2𝑓 +1 distinct-signer certificate. Lemma 5.1 applies uniformly to both semantic and verdict digests; Lemma 5.2 applies uniformly to either typed certificate object; the semantic-validity argument below applies to the 
+
+semantic_commit branch only, while the verdict-validity argument is fully developed in Section 5 (Theorem 5.3) and not repeated here. 
+
+## B.1 Auxiliary Geometric Lemmas 
+
+Lemma B.1 (Sphere identity and threshold conversion) . For any u, v ∈ S𝑑 −1,
+
+∥u − v∥2 = 2 sin 
+
+ 12 𝑑 ∠ (u, v)
+
+
+
+,
+
+where 𝑑 ∠ (u, v) = arccos (⟨ u, v⟩) ∈ [ 0, 𝜋 ]. Hence 𝑑 ∠ (u, v) ≤ 𝜃 iff ∥u − v∥2 ≤ 2 sin (𝜃 /2).H. Xu et al. 
+
+Lemma B.2 (Convex-hull range bound via diameter) . Let 𝑃 ⊂ R𝑑 be finite and let diam (𝑃 ) := max x,y∈𝑃 ∥x − y∥2. Then for any fixed p ∈ 𝑃 
+
+and any z ∈ conv (𝑃 ),
+
+∥z − p∥2 ≤ diam (𝑃 ).
+
+Proof. Write z = Í𝑡 𝜆 𝑡 x𝑡 with x𝑡 ∈ 𝑃 , 𝜆 𝑡 ≥ 0, Í𝑡 𝜆 𝑡 = 1. Triangle inequality and the definition of diameter give ∥z−p∥2 ≤ Í𝑡 𝜆 𝑡 ∥x𝑡 −p∥2 ≤
+
+Í𝑡 𝜆 𝑡 diam (𝑃 ) = diam (𝑃 ). □
+
+## B.2 Proof Detail for Lemma 5.1 
+
+Proof detail. Let 𝑖 and 𝑗 be two honest signers that select the same core b𝐶 ⊆ 𝑉 (𝑟 ) and run the four-stage pipeline of Algorithm 1 on the same input. We chase the four stages and show that each produces byte-identical output at 𝑖 and 𝑗 , from which ℎ★ equality follows. Stage 1 (encode). Determinism of E together with the byte-deterministic canonicalisation of 𝜌 𝑘 (Assumption 5.3) implies that the embedding of every agent in the delivered view is identical at the two signers; in particular e𝑘 is the same byte string at 𝑖 and 𝑗 for every 𝑘 ∈ b𝐶 .Stage 3 (aggregate). The robust aggregator A is a deterministic function of its multiset input (it converges to within a documented numerical tolerance and ties are broken canonically). Two honest signers that feed the same multiset {e𝑘 : 𝑘 ∈ b𝐶 } to A therefore obtain the same y★.Stage 4 (quantise + digest). The lattice quantiser 𝑄 𝜂 is a fixed-point round with deterministic tie-breaking, so the same y★ produces the same 
+
+𝑄 𝜂 (y★) at both signers. The parameter digest ℎ𝜋 depends only on the frozen parameter tuple 𝜋 (identical at both signers by hypothesis) and the round identifier 𝑟 (identical by construction). The collision-resistant hash 𝐻 is deterministic on its byte input, so the typed digest — whether 
+
+ℎ★ 
+
+> sem
+
+= 𝐻 ("semantic_commit" ∥ 𝑄 𝜂 (y★) ∥ ℎ𝜋 ∥ 𝑟 ∥ 𝑣 ★) on the semantic branch or ℎ★ 
+
+> ver
+
+= 𝐻 ("verdict_commit" ∥ VerdictPayload ∥ ℎ𝜋 ∥ 𝑟 )
+
+on the verdict branch (§4.6) — is identical at 𝑖 and 𝑗 . □
+
+## B.3 Proof Detail for Lemma 5.2 
+
+Proof detail. The certificate Cert (ℎ★) is constructed as a set Σ ⊆ {( id 𝑘 , 𝜎 𝑘 )} of pairs. The verifier counts at most one signature per signer identity: the runner enforces per-identity uniqueness when assembling Σ, and any duplicate (id 𝑘 , ·) entry is discarded. A Byzantine identity may itself sign more than one distinct digest with its own key — signature unforgeability (Assumption 5.1) only rules out others 
+
+forging that identity, not the identity equivocating — but each such identity contributes at most one counted signature to any one certificate. Honest identities satisfy the sign-once rule of Assumption 5.1 and produce a signature on at most one digest per round. With |Σ| ≥ 2𝑓 +1
+
+distinct identities and at most 𝑓 Byzantine identities, the pigeonhole principle gives |{ id 𝑘 ∈ Σ : id 𝑘 ∈ H }| ≥ 𝑓 +1. □
+
+## B.4 Proof of Theorem 5.1 (Digest-level Agreement) 
+
+Proof detail. Suppose two honest verifiers 𝑖 and 𝑗 each accept a commit object in round 𝑟 . Let ℎ★ 
+
+> 𝑖
+
+and ℎ★ 
+
+> 𝑗
+
+denote the two committed digests, with certificates of size at least 2𝑓 +1 on each. We show ℎ★ 
+
+> 𝑖
+
+= ℎ★ 
+
+> 𝑗
+
+.The argument does not rely on quorum-intersection between Σ𝑖 and Σ𝑗 : under our system model 𝑛 ≥ 3𝑓 +1 (rather than 𝑛 = 3𝑓 +1 exactly), the bound |Σ𝑖 ∩ Σ𝑗 | ≥ ( 2𝑓 +1) + ( 2𝑓 +1) − 𝑛 can be as small as 0 (as it is for the experimental setting 𝑛 = 10 , 𝑓 = 2). Instead we use deterministic decision on a shared delivered view plus the honest sign-once rule, which give a unique committable digest that any valid certificate must bind. 
+
+(i) Identical delivered view. A successful round delivers, by the RBC properties and the successful-round condition stated in §3.1 (identical delivered view across all honest nodes once each has collected |𝑉 𝑖 (𝑟 )| ≥ 𝑛 − 𝑓 inputs), the same delivered index set 𝐼 𝑟 and the same delivered structured proposals {( 𝑖, 𝑧 𝑖 ) : 𝑖 ∈ 𝐼 𝑟 } to every honest node. 
+
+(ii) Deterministic typed decision. The H-CSC pipeline of Algorithm 1, run on a fixed delivered view 𝑉 (𝑟 ) and a fixed frozen parameter tuple 𝜋 (with deterministic tie-break and a deterministic aggregator), is a deterministic function: it outputs at most one typed candidate digest per round. Concretely, let 𝐷 ★ (𝑟 ) = HCSC (𝑉 (𝑟 ), 𝜋, 𝑟 ) denote that canonical typed digest (either ℎ★ 
+
+> sem
+
+or ℎ★
+
+> ver
+
+, or ⊥ on a typed abort). 
+
+(iii) Honest sign-once rule. An honest agent in round 𝑟 signs at most one digest — the protocol’s own 𝐷 ★ (𝑟 ) — and ignores any other digest presented for signing (Stage 5 rule). 
+
+(iv) Any valid certificate must contain at least 𝑓 +1 honest signatures. A certificate of size 2𝑓 +1 drawn from a verdict group 𝐺 𝑣 ★
+
+(verdict path) or within-verdict core b𝐶 (semantic path) contains at least (2𝑓 +1) − 𝑓 = 𝑓 +1 honest signers, since at most 𝑓 identities are Byzantine in N .
+
+(v) Conclusion. Both Σ𝑖 and Σ𝑗 contain at least 𝑓 +1 honest signers; by (iii) every honest signer in either set signed 𝐷 ★ (𝑟 ). Hence both ℎ★
+
+> 𝑖
+
+and ℎ★ 
+
+> 𝑗
+
+contain valid honest signatures on 𝐷 ★ (𝑟 ). By signature unforgeability (Assumption 5.1), the honest signatures on ℎ★ 
+
+> 𝑖
+
+are signatures on the unique digest each honest agent actually signed. Therefore ℎ★ 
+
+> 𝑖
+
+= ℎ★ 
+
+> 𝑗
+
+= 𝐷 ★ (𝑟 ). The conclusion holds without invoking any quorum intersection between Σ𝑖 and Σ𝑗 .Because 𝐷 ★ (𝑟 ) is one of the typed digests ℎ★ 
+
+> sem
+
+or ℎ★ 
+
+> ver
+
+defined in §4.6, equality of digests also implies equality of the typed payload: in the semantic case the committed (𝑄 𝜂 (y★), 𝜋, 𝑟, 𝑣 ★) tuple is identical at 𝑖 and 𝑗 ; in the verdict case the (VerdictPayload , 𝜋, 𝑟 ) tuple is identical, with no quantised aggregate attached. The explicit domain separators in the digest construction prevent a cross-type collision under collision-resistance of 𝐻 , so commit _type matches as well. Hierarchical Certified Semantic Commitment for Byzantine-Resilient LLM-Agent Collaboration 
+
+The argument is independent of the admissibility predicate of Definition 3.5: agreement holds on any round in which two commits exist at all. The admissibility predicate is the precondition for a commit existing in the first place; safe abort under non-admissibility (Theorem 5.4) takes care of the no-commit case. □
+
+## B.5 Proof of Theorem 5.2 (Semantic Validity Under Admissible Core) 
+
+Proof detail. By Assumption 5.4, the round is admissible at radius 𝜃 𝛼 , so by Definition 3.5 there exists a centre ℎ ∈ b𝐶 with 𝑑 ∠ (eℎ, e𝑗 ) ≤ 𝜃 𝛼 
+
+for every 𝑗 ∈ b𝐶 . Triangle inequality on the unit sphere yields 𝑑 ∠ (e𝑗 , e𝑘 ) ≤ 2𝜃 𝛼 for all 𝑗, 𝑘 ∈ b𝐶 , i.e. diam ∠ ( b𝐶 ) ≤ 2𝜃 𝛼 .Let cH be any honest centre in b𝐶 ∩ H (since | b𝐶 | ≥ 2𝑓 +1 and |B| ≤ 𝑓 , | b𝐶 ∩ H | ≥ 𝑓 +1 ≥ 1). The Euclidean geometric median y★ of 
+
+{e𝑗 : 𝑗 ∈ b𝐶 } lies in the convex hull of {e𝑗 : 𝑗 ∈ b𝐶 } (a standard property of the GM that holds for any aggregator returning a convex-combination point); applying Lemma B.2 to 𝑃 = {e𝑗 : 𝑗 ∈ b𝐶 } and p = cH gives ∥y★ − cH ∥2 ≤ diam ( b𝐶 ). Since cH ∈ b𝐶 and the diameter on 
+
+S𝑑 −1 is bounded by 2 sin (𝜃 𝛼 ) (Lemma B.1 with 𝜃 = 2𝜃 𝛼 ), the Euclidean bound translates to the angular bound 𝑑 ∠ (y★, cH ) ≤ diam ∠ ( b𝐶 ) ≤ 2𝜃 𝛼 
+
+after re-normalisation of y★ to the unit sphere. The committed digest’s underlying aggregate is therefore within 2𝜃 𝛼 of cH . The bound is relative to honest centres inside the selected core; it does not bound the distance to an external ground-truth reference. The empirical SCE numbers reported in Section 6.1 are the corresponding observation under specific encoder and aggregator choices. □
+
+## B.6 Proof of Theorem 5.4 (Safe Abort Under Non-admissibility or Insufficient Certificate) 
+
+Proof detail. The proof is by direct inspection of the control flow of Algorithm 1. We trace each abort branch of the H-CSC pipeline in order; in every case the algorithm returns abort before any commit object is constructed. Stage 2 (verdict grouping) partitions 𝑉 (𝑟 ) into verdict groups {𝐺 𝑣 }𝑣 ∈ V and selects 𝑣 ★ deterministically via the largest_verdict tie-broken rule (Section 6.2); if no verdict reaches |𝐺 𝑣 | ≥ 2𝑓 +1 the algorithm returns abort (verdict_below_quorum ). Stage 3a extracts the largest angular-threshold component b𝐶 ← LargestAngularComponent (𝐺 𝑣 ★, 𝜃 𝛼 ); the semantic branch is unavailable and control passes to Stage 3b if either | b𝐶 | < 2𝑓 +1 or the radius predicate 𝑟 ★ ← min ℎ∈ b𝐶 max 𝑗 ∈ b𝐶 ∠(eℎ, e𝑗 ) exceeds 𝜃 𝛼 . Stage 3b is taken iff Stage 3a returned no admissible core. The Stage 2 gate has already guaranteed |𝐺 𝑣 ★ | ≥ 2𝑓 +1 (otherwise the round would have aborted with 
+
+verdict_below_quorum ), so Stage 3b’s remaining check is the margin predicate verdict_margin ≥ verdict_margin min ; if it fails the algorithm returns abort (v2_both_paths_failed:semantic_core_failed: semantic_fail_reason ), matching Algorithm 1. Stage 4 (semantic branch only) computes y★ ← A ({ e𝑖 : 𝑖 ∈ b𝐶 }) and returns abort (aggregation_failed ) on a degenerate result (zero norm or numerical failure). Stage 5 collects valid signatures on the candidate typed digest ℎ★ — either ℎ★ 
+
+> sem
+
+= 𝐻 ("semantic_commit" ∥ 𝑄 𝜂 (y★) ∥ ℎ𝜋 ∥ 𝑟 ∥ 𝑣 ★) on the semantic branch or ℎ★ 
+
+> ver
+
+= 𝐻 ("verdict_commit" ∥ VerdictPayload (𝑣 ★) ∥ ℎ𝜋 ∥ 𝑟 ) on the verdict branch (§4.6); if fewer than 2𝑓 +1 distinct signatures arrive within Δ after GST it returns abort (insufficient_signers , |Σ|, 2𝑓 +1).These branches are exhaustive: the algorithm returns either commit (ℎ★, 𝜋, Cert (ℎ★), b𝐶, commit _type ) on the semantic or verdict success path, or one of the four typed abort values. The control flow never publishes a semantic_commit when Stage 3a’s admissibility check fails (Stage 3a guards), never publishes a verdict_commit when the verdict-admissibility predicate fails (Stage 3b guards), and never publishes either commit type when fewer than 2𝑓 +1 distinct signatures arrive (Stage 5 guards combined with Lemma 5.2). □
+
+## B.7 Proof of Theorem 5.5 (Conditional Termination Under Admissible Round and Synchrony) 
+
+Proof detail. We prove two complementary statements. (Unconditional termination) The protocol always terminates with either commit 
+
+or abort within one round of communication after GST. Stages 1–4 of Algorithm 1 are local computations on the delivered view 𝑉 (𝑟 ) and do not block. Stage 5 collects valid signatures over the candidate typed digest ℎ★ within the bounded delay Δ guaranteed by Assumption 5.2; if fewer than 2𝑓 +1 distinct valid signatures arrive, the algorithm returns abort (insufficient_signers ). The protocol therefore exits via 
+
+commit or a typed abort in finite time and makes no liveness assumption on Byzantine behaviour. 
+
+(Conditional commit liveness) A round terminates with commit if the relevant signer set Σsrc used at Stage 5 contains at least 2𝑓 +1 honest agents. This is the strict reading of Theorem 5.5 and is strictly stronger than Assumption 5.4 (which only requires a 2𝑓 +1 admissible core, possibly mixed with Byzantines). The reason the stronger condition is needed is that liveness cannot depend on Byzantine signatures: an adversary may withhold any subset of its signatures, so only honest agents in Σsrc are guaranteed to produce a valid signature within Δ
+
+after GST. Under Assumption 5.1 (authenticated channels) and Assumption 5.2 (partial synchrony), the at-least-2𝑓 +1 honest agents in Σsrc 
+
+broadcast and have their signatures delivered within Δ after GST, so |Σ| ≥ 2𝑓 +1 without any Byzantine contribution. The semantic branch and the verdict branch differ only in which set is taken as Σsrc . On the semantic branch Σsrc = b𝐶 (the within-verdict admissible core selected at Stage 3a) and the commit-liveness condition is: b𝐶 contains at least 2𝑓 +1 honest agents. On the verdict branch 
+
+Σsrc = 𝐺 𝑣 ★ (the entire candidate verdict group; any 2𝑓 +1 distinct valid signatures suffice) and the commit-liveness condition is: 𝐺 𝑣 ★ contains at least 2𝑓 +1 honest agents. In both cases the condition matches the authors’ reference implementation, which is planned to accompany a future reproducibility package, and matches Theorem 5.5’s strengthened admissibility statement. Together with the unconditional termination clause this gives commit-or-abort termination within one round after GST, with commit reached when the honest count in Σsrc meets the quorum and a typed abort otherwise. The conclusion that Byzantine signatures are not required for liveness matches Theorem 5.5’s strengthened-admissibility statement in the main text. □H. Xu et al. 
+
+## B.8 Discussion: Lemma 5.3 (Representation Boundary) 
+
+The proof of Lemma 5.3 given in Section 5 is direct (two proposals with identical embeddings cannot be distinguished by any function of the embeddings) and does not require additional details. We include here only an extension that connects the lemma to the empirical B4 (on-topic-hallucination) failure mode reported in Sections 6.2 and 6.7. If a Byzantine proposal 𝜌 𝑏 is engineered so that ∠(E ( 𝜌 ℎ ), E ( 𝜌 𝑏 )) is small but nonzero, the admissibility predicate may either admit 𝜌 𝑏 to the selected core (Stage 2 of Algorithm 1) or push the round across the predicate’s threshold and trigger abort (admissibility_failed ). In the empirical MVR-50 evaluation, the latter outcome dominates: Byzantine embeddings that approach an honest cluster’s boundary produce 
+
+abort , not commit. The defence in such cases is the typed safe-abort branch combined with a tighter encoder, not the embedding filter itself. Strengthening representation quality (better encoder training, content-aware features beyond the embedding) is therefore the natural axis of future improvement. 
+
+## C Topology Design-Space Analysis 
+
+The original PODC submission of this work made a Jaccard support-overlap graph and 𝑘 -core peeling the central filtering mechanism for Byzantine agents. After the post-PODC audit, the topology mechanism is retained in the codebase as a design-space option but is not part of the main protocol path. We describe the original motivation, the corrected finding, and the disposition here for transparency. 
+
+## C.1 Original motivation 
+
+Two sources of intuition motivated the topology mechanism. First, two honest agents that base their proposals on overlapping evidence cite overlapping evidence_id sets, while a Byzantine agent that fabricates citations does not. Building a Jaccard graph 𝐺 𝐽 = (𝑉 , 𝐸 ) with edges 
+
+(𝑖, 𝑗 ) ∈ 𝐸 iff 
+
+|𝜌 𝑖 .evidence_ids ∩ 𝜌 𝑗 .evidence_ids ||𝜌 𝑖 .evidence_ids ∪ 𝜌 𝑗 .evidence_ids | ≥ 𝜏 𝐽 
+
+should therefore tend to keep honest agents in a single dense component while pushing Byzantines to isolated nodes or disconnected fringes. Second, 𝑘 -core peeling of 𝐺 𝐽 at 𝑘 = 𝑓 +1 should remove fringe Byzantines while preserving the honest core. 
+
+## C.2 Corrected experimental finding 
+
+The post-PODC audit ran the topology mechanism alongside the main path on every benchmark. The summary observation, in three parts, is reported in Table 7; the underlying topology design-space outputs are recorded in the authors’ internal audit logs, which are planned to accompany a future reproducibility package. (1) No commit/abort decision change at the operating point. On BCS_v1 across 120 episodes, on the 20-task pilot across both attack modes, on MVR-50 across both attack modes, and at every 𝜃 𝛼 in the threshold sensitivity sweep, the topology gate produces commit/abort decisions identical to the main path on every task / every grid point. The selected core size shrinks slightly (the gate trims a small number of nodes), but the round-level decision does not change. (2) Topology aborts more in the loose region. For 𝜃 𝛼 ≥ 0.65 on the 20-task pilot, the topology gate aborts 5–20 percentage points more rounds than the main path, achieving “safety by extra aborts”. This does not reduce invalid_hmaj below the main path’s in any measured cell except a single MVR-50 cell where the gate lowers invalid_hmaj from 0.02 to 0.00 at the cost of an extra 4 aborts. (3) 𝑘 -core peeling is empirically a no-op. The post-PODC audit reported zero Hard-bin Byzantines on BCS_v1 — Byzantines that are admitted by the angular filter but excluded by the 𝑘 -core filter — under the published threshold settings. We therefore removed 
+
+𝑘 -core from the main protocol path (decision-log entry D-11 ). 
+
+## C.3 Disposition 
+
+The topology mechanism is retained in the reference implementation behind a parameter flag with values in {None , jaccard , jaccard_kcore }.The main path of this paper uses topology_gate=None . Once a future reproducibility package is made available, the design-space ablation can be reproduced by setting topology_gate="jaccard" and re-running the commitment evaluation scripts; the corresponding CSVs are regenerated by the paper-assets pipeline included in that package. 
+
+## C.4 What this appendix is not 
+
+This appendix is not a competing main-path proposal. It does not support claims of the form “topology is necessary”, “topology improves accuracy”, or “topology is a safety gate that catches what the angular filter misses”. The corrected finding is the opposite: at the chosen operating point, the topology gate is decision-redundant with the main path; outside the operating point, it trades commit rate for extra aborts without improving honest-reference validity. We report the design-space ablation here for transparency; the corrected-decision rationale is recorded in the authors’ internal decision log, which is planned to accompany a future reproducibility package. 
+
+## D Additional Experimental and Implementation Details 
+
+This appendix collects implementation specifics, an audit note, and a supplementary table that did not fit the §6 main-text budget. Hierarchical Certified Semantic Commitment for Byzantine-Resilient LLM-Agent Collaboration 
+
+## D.1 CRSE Training Configuration 
+
+The Certified Robust Semantic Encoder (CRSE) is fine-tuned from the publicly-released intfloat/e5-base sentence encoder. 
+
+• Contrastive loss: a supervised contrastive objective with an annealed temperature schedule (start 𝜏 ≈ 0.20 , target 𝜏 ≈ 0.12 ); the exact schedule and the per-stage 𝜏 values are recorded in the authors’ training configuration, which is planned to accompany a future reproducibility package. 
+
+• Hard negatives: GPT-4o-generated semantic poisons (see §D.2), plus a per-anchor Byzantine-quota cap to prevent over-representation of any one attack instance. 
+
+• Optimisation: AdamW with a small base learning rate ( 5 × 10 −6 at the projector and sub-10 −5 at the backbone, with a Byzantine-introduction schedule that further reduces the backbone rate in later stages), batch size 32 .
+
+• Infrastructure: a single training device (Apple Silicon / MPS backend) for the trained checkpoint; AMP / mixed precision is config-gated. The encoder checkpoint used in Section 6 is the single trained CRSE used in all reported evaluations; the authoritative training hyperparameters are recorded in our experiment logs, and the resolved per-run config is written alongside each experiment’s outputs. The training configuration and checkpoint are retained by the authors and are planned to accompany a future reproducibility package. Multi-encoder ablation is future work. 
+
+## D.2 Semantic Attack Generation Prompts 
+
+We use GPT-4o (for BCS_v1) and gpt-4o-mini (for MVR-50) to generate Byzantine proposals. The system prompt below is the canonical version used for the four primary attack types B1–B4 reported in Section 6.2. System Prompt for Semantic Attacker                         
+
+> Role: You are a Semantic Byzantine Adversary. Your goal is to generate a “poisoned” version of the input text based on a specific Attack Strategy ID .
+> General Constraints:
+> •High similarity: Maximise lexical overlap (cosine similarity >0.9). Use the same sentence structure and entities where possible.
+> •Length: Keep output length within ±5% of the original.
+> •Stealth: The output must read fluently and appear authoritative.
+> Attack Strategy Definitions:
+> •B1: Polarity flip. Invert the truth value or stance of the central claim (e.g. “X increases Y” →“X reduces Y”).
+> •B2: Evidence omission. Selectively remove qualifiers, conditions, or limitations (e.g. delete “in most cases”) to make the claim appear absolute or biased.
+> •B3: Fake causality. Distort the causal structure. Convert correlations into direct causal statements or introduce spurious causal links between existing entities without changing the topic.
+> •B4: On-topic hallucination. Fabricate specific, verifiable details (dates, numbers, institution names) that support the topic but are factually unsupported by the original text.
+> Example (Strategy B1): Input: “The encryption protocol guarantees forward secrecy.”
+> Output: “The encryption protocol fails to guarantee forward secrecy.”
+
+## D.3 Bootstrap Confidence Intervals 
+
+The MVR-50 confidence intervals reported in Tables 2, 3 and Section 6.2 are computed by task-level non-parametric bootstrap with 10 000 
+
+resamples and seed 42 . Each bootstrap sample is obtained by sampling 50 tasks (with replacement) from the original 50 -task list and recomputing the per-method, per-mode metric on the resampled task set; the reported 95% interval is the 2.5th– 97 .5th percentile of the metric distribution. The bootstrap is reproducible CPU-only; the script and CI report are retained by the authors and are planned to accompany a future reproducibility package. 
+
+## D.4 Strict-Validation Audit and Evidence-ID Hallucination 
+
+A strict-validation audit applied a task-aware schema check to every Byzantine record at write time, after the discovery that the original lenient validator did not catch evidence_id fields hallucinated by the LLM. The audit found 3 of 100 rushing Byzantine records on MVR-50 that cited an evidence_id not present in the parent task (none in the static-attack set). All 3 records were traced through the commitment evaluation: in each case the certified pipeline aborted the affected task under both attack modes (the certified_absorbs_attack paired class), so the hallucinations did not change any commit-level result. The runner-side validator was hardened post-hoc to reject any record citing a nonexistent evidence_id at write time; the authors’ internal audit log records the affected record IDs and is planned to accompany a future reproducibility package. H. Xu et al. 
+
+## D.5 Logical Certificate, Not Threshold-Signature Cryptography 
+
+The certificate Cert (ℎ★) in Algorithm 1 is implemented by a logical signature simulator that preserves per-signer uniqueness and the 2𝑓 +1
+
+distinct-signer threshold. We do not implement, evaluate, or analyse production threshold-signature primitives; production schemes (e.g. BLS, FROST, threshold ECDSA) are a standard substitution that does not change the protocol logic but does change the signature payload size and verification cost. Cryptographic performance benchmarking is explicit future work. Hierarchical Certified Semantic Commitment for Byzantine-Resilient LLM-Agent Collaboration 
+
+## References 
+
+[1] Rui Ai, Yuqi Pan, David Simchi-Levi, Milind Tambe, and Haifeng Xu. 2025. Beyond Majority Voting: LLM Aggregation by Leveraging Higher-Order Information. arXiv preprint arXiv:2510.01499 (2025). [2] Moustafa Alzantot, Yash Sharma, Ahmed Elgohary, Bo-Jhang Ho, Mani Srivastava, and Kai-Wei Chang. 2018. Generating Natural Language Adversarial Examples. In Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing (EMNLP) . 2890–2896. [3] Peva Blanchard, El Mahdi El Mhamdi, Rachid Guerraoui, and Julien Stainer. 2017. Machine Learning with Adversaries: Byzantine Tolerant Gradient Descent. In Advances in Neural Information Processing Systems (NeurIPS) , Vol. 30. 119–129. [4] Gabriel Bracha. 1987. Asynchronous Byzantine agreement protocols. Information and Computation 75, 2 (1987), 130–143. [5] Miguel Castro and Barbara Liskov. 1999. Practical Byzantine Fault Tolerance. In Proceedings of the 3rd Symposium on Operating Systems Design and Implementation (OSDI) .173–186. [6] Justin Chih-Yao Chen, Swarnadeep Swaminathan, Maria Singh, Vikram Mohanty, Alex Peridis, Oishi Olaleye, Jason Ruan, and Kyra Zhang. 2024. Reconcile: Round-Table Conference for Consensus Generation. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (ACL) .[7] Shrestha Datta, Shahriar Kabir Nahin, Anshuman Chhabra, and Prasant Mohapatra. 2025. Agentic AI Security: Threats, Defenses, Evaluation, and Open Challenges. arXiv preprint arXiv:2510.23883 (2025). [8] Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova. 2019. BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding. In Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics (NAACL) . 4171–4186. [9] Danny Dolev, Nancy A Lynch, Shlomit S Pinter, Eugene W Stark, and William E Weihl. 1986. Reaching Approximate Agreement in the Presence of Faults. Journal of the ACM (JACM) 33, 3 (1986), 499–516. [10] Yilun Du, Shuang Li, Antonio Torralba, Joshua B Tenenbaum, and Igor Mordatch. 2023. Improving Factuality and Reasoning in Language Models through Multiagent Debate. In International Conference on Machine Learning (ICML) . PMLR, 8559–8573. [11] Cynthia Dwork, Nancy Lynch, and Larry Stockmeyer. 1988. Consensus in the Presence of Partial Synchrony. J. ACM 35, 2 (1988), 288–323. [12] Mohamed Amine Ferrag, Norbert Tihanyi, Djallel Hamouda, Leandros Maglaras, Abderrahmane Lakas, and Merouane Debbah. 2026. From Prompt Injections to Protocol Exploits: Threats in LLM-Powered AI Agents Workflows. ICT Express 12, 2 (2026), 353–383. [13] Di Jin, Zhijing Jin, Joey Tianyi Zhou, and Peter Szolovits. 2020. Is BERT Really Robust? A Strong Baseline for Natural Language Attack on Text Classification and Entailment. In Proceedings of the AAAI Conference on Artificial Intelligence (AAAI) , Vol. 34. 8018–8025. [14] Leslie Lamport, Robert Shostak, and Marshall Pease. 1982. The Byzantine generals problem. ACM Transactions on Programming Languages and Systems (TOPLAS) 4, 3 (1982), 382–401. [15] Donghyun Lee and Mo Tiwari. 2024. Prompt Infection: LLM-to-LLM Prompt Injection within Multi-Agent Systems. arXiv preprint arXiv:2410.07283 (2024). [16] Linyang Li, Ruotian Ma, Qipeng Guo, Xiangyang Xue, and Xipeng Qiu. 2020. BERT-ATTACK: Adversarial Attack Against BERT Using BERT. In Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP) . 6193–6202. [17] Yunxuan Li, Yibing Du, Eugene Ie, et al . 2024. Improving Multi-Agent Debate with Sparse Communication Topology. In Findings of the Association for Computational Linguistics: EMNLP 2024 . 1–18. [18] Tian Liang, Zhiwei He, Wenxiang Jiao, Xing Bai, Rui Wang, Zhaopeng Wang, and Shuming Shi. 2023. Encouraging Divergent Thinking in Large Language Models through Multi-Agent Debate. arXiv preprint arXiv:2305.19118 (2023). [19] Haoxiang Luo, Gang Sun, Yinqiu Liu, and Dongcheng Zhao. 2025. A Weighted Byzantine Fault Tolerance Consensus Driven Trusted Multiple Large Language Models Network. 
+
+arXiv preprint arXiv:2505.05103 (2025). [20] Yihuan Mao et al . 2024. IBGP: Imperfect Byzantine Generals Problem for Zero-Shot Robustness in Communicative Multi-Agent Systems. arXiv preprint arXiv:2410.16237 (2024). [21] Hammurabi Mendes and Maurice Herlihy. 2013. Multidimensional Approximate Agreement in Byzantine Asynchronous Systems. In Proceedings of the 45th Annual ACM Symposium on Theory of Computing (STOC) . 391–400. [22] Tijana Milentijević, Mélanie Cambus, Darya Melnyk, and Stefan Schmid. 2025. Approximate Agreement Algorithms for Byzantine Collaborative Learning. arXiv preprint arXiv:2504.01504 (2025). [23] John X. Morris, Eli Lifland, Jin Yong Yoo, Jake Grigsby, Di Jin, and Yanjun Qi. 2020. TextAttack: A Framework for Adversarial Attacks, Data Augmentation, and Adversarial Training in NLP. In Proceedings of EMNLP 2020: System Demonstrations .[24] OpenAI. 2024. GPT-4o System Card. https://openai.com/index/gpt-4o-system-card/. [25] Joon Sung Park, Joseph C O’Keefe, Cai O’Brien, Micheal Baker, Maneesh Tanaka, and Percy Liang. 2023. Generative Agents: Interactive Simulacra of Human Behavior. In 
+
+Proceedings of the 36th Annual ACM Symposium on User Interface Software and Technology (UIST) . 1–22. [26] Krishna Pillutla, Sham M. Kakade, and Zaid Harchaoui. 2022. Robust Aggregation for Federated Learning. IEEE Transactions on Signal Processing 70 (2022), 1142–1154. [27] Nils Reimers and Iryna Gurevych. 2019. Sentence-BERT: Sentence Embeddings using Siamese BERT-Networks. In Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing (EMNLP) . 3982–3992. [28] Dong Yin, Yudong Chen, Ramchandran Kannan, and Peter Bartlett. 2018. Byzantine-Robust Distributed Learning: Towards Optimal Statistical Rates. In International Conference on Machine Learning (ICML) . 5650–5659. [29] Maofan Yin, Dahlia Malkhi, Michael K Reiter, Guy Golan Gueta, and Ittai Abraham. 2019. HotStuff: BFT Consensus in the Lens of Blockchain. In Proceedings of the 2019 ACM Symposium on Principles of Distributed Computing (PODC) . 31–40. [30] Justin Zhao, Flor Miriam Plaza-del Arco, and Amanda Cercas Curry. 2025. Language Model Council: Democratically Benchmarking Foundation Models on Highly Subjective Tasks. In Proceedings of NAACL 2025 (Long Papers) .

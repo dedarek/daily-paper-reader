@@ -1,0 +1,1343 @@
+Title: Defense Against Prompt Inversion Attacks: An Information-Theoretic Approach for LLM Collaborative Inference
+
+URL Source: https://arxiv.org/pdf/2606.11592v1
+
+Published Time: Thu, 11 Jun 2026 00:26:49 GMT
+
+Number of Pages: 33
+
+Markdown Content:
+# Defense Against Prompt Inversion Attacks: An Information-Theoretic Approach for LLM Collaborative Inference 
+
+Sayedeh Leila Noorbakhsh Hossein Khalili Nader Sehatbakhsh 
+
+University of California, Los Angeles 
+
+{lnoorbakhsh, hkhalili, nsehat}@ucla.edu 
+
+## Abstract 
+
+Collaborative edge-cloud inference enables resource-constrained devices to lever-age large language models (LLMs) by offloading partial computation to cloud servers. However, transmitting intermediate activations exposes sensitive user prompts to prompt inversion attacks , where an adversary reconstructs the original input from shared representations. Existing defenses rely largely on heuristic perturbations or empirical tuning, offering limited theoretical understanding of privacy leakage and its interaction with utility and latency constraints. We propose an information-theoretic defense framework for prompt inversion in collaborative LLM inference. Our approach learns privacy-preserving representations by ex-plicitly minimizing the mutual information between intermediate activations and the input prompt while maintaining task utility under computational constraints. We derive theoretical guarantees on prompt reconstruction error, characterize fundamental privacy–utility tradeoffs, and establish token-level accuracy bounds for downstream inference. We then propose a novel defense based on privacy adapters implemented via low-dimensional information bottlenecks. Extensive experiments across multiple settings demonstrate that our method achieves superior privacy–utility–latency tradeoffs compared to existing defenses (up to 35% reduc-tion in attack success), providing a principled foundation for private and efficient collaborative LLM inference. 
+
+## 1 Introduction 
+
+Large Language Models (LLMs) have demonstrated remarkable capabilities across natural language processing tasks, but their substantial computational and memory requirements pose significant chal-lenges for deployment on resource-constrained platforms such as mobile devices, IoT, and embedded edge systems [Sheng et al., 2023, Qu et al., 2025a, Liu et al., 2024]. Collaborative inference [Borzunov et al., 2023, Wang et al., 2024, Kang et al., 2017, Zhang et al., 2024a, Miao et al., 2025] addresses this by executing initial layers on-device and offloading intermediate activations to a cloud server for completion—but this exposes substantial information about the input prompt. Adversaries can mount 
+
+prompt inversion attacks using learned classifiers [Luo et al., 2025] or constrained optimization [Qu et al., 2025b] to reconstruct sensitive user inputs. Dong et al. [2025] show that token identity persists through all transformer layers, making the defense problem fundamentally challenging [Lu et al., 2024, Chien et al., 2023]. Existing defenses against prompt inversion rely largely on heuristics: noise injection [Mai et al., 2023], dimensionality reduction [Dong et al., 2025], ad hoc architectural modifications [Chen et al., 2024], which can empirically reduce reconstruction accuracy but lack principled guarantees and offer little insight into the inherent privacy-utility tradeoff. We instead take an information-theoretic approach: we model privacy leakage as the mutual information between the prompt and transmitted 
+
+> Preprint.
+> arXiv:2606.11592v1 [cs.CR] 10 Jun 2026
+
+activations, and formulate the defense as a minimax optimization in which the defender minimizes leakage while a learned adversary maximizes reconstruction, subject to a utility constraint on next-token prediction. We achieve this objective via privacy adapters : lightweight information-bottleneck modules inserted between frozen transformer layers on the device side that compress activations through a low-dimensional subspace. Crucially, existing residual perturbation defenses provably cannot reduce mutual information; instead, our bottleneck design forces lossy compression and enables genuine privacy-utility tradeoffs. A second insight motivates our evaluation: privacy protection in collaborative LLM inference need not be uniform. We introduce a sensitive token analysis that separately evaluates the attacker’s recovery of domain-specific tokens (medical terms, legal entities, identifiers) versus common structural tokens (stop words, punctuation). Privacy adapters disproportionately protect sensitive tokens, reducing their recovery by up to 35 percentage points relative to common tokens, while preserving structural information for downstream processing. The practical implication is significant: an attacker who recovers “What information do we have for [PROTECTED] with [PROTECTED]?” learns far less than one who recovers the full query. While prior information-theoretic privacy work has targeted classification settings [Jaiswal et al., 2020, Osia et al., 2020, Singh et al., 2021, 2023, Noorbakhsh et al., 2024, Zhang et al., 2025], to the best of our knowledge, this is the first information-theoretic privacy defense for collaborative LLM inference under prompt inversion attacks. A key challenge in our setting is token identity — the very information we aim to protect — is also essential to the generative task itself. Our framework navigates this tension through our novel privacy adapters controlled by two complementary factors: the tradeoff parameter λ and the bottleneck dimension r.We validate the approach on LLaMA-2-7B/13B and Mistral-7B across three domains (medical, legal, airline reviews), against both classification-based [Luo et al., 2025] and optimization-based [Qu et al., 2025b] attacks. Our method reduces the attack success rate by more than 30% while incurring only 
+
+<9% latency overhead. Figure 1 shows the system. 
+
+Contributions. 
+
+• An information-theoretic minimax framework for prompt inversion defense, with a learned adversary that directly estimates mutual information via cross-entropy, closing the theory-implementation gap left by prior surrogate-loss approaches. • We present Privacy adapters : information-bottleneck modules that compress activations through a low-dimensional subspace, supported by theoretical bounds on reconstruction error as a function of bottleneck dimension and a formal proof that injective residual-style defenses (covering LoRA-style adapters and learned perturbations) cannot reduce MI. • A sensitive token analysis methodology that distinguishes domain-specific from structural token recovery, providing a more meaningful privacy measure than uniform token accuracy. • Comprehensive experiments across three LLMs, three domains, and three attack strategies, showing 15–35% reductions in sensitive token recovery with <9% latency overhead. 
+
+## 2 Problem Setup 
+
+2.1 System Model 
+
+We consider a two-party collaborative inference framework [Qu et al., 2025a] with a trusted resource-constrained client and an untrusted cloud server . The client executes the embedding layer E and the first k transformer layers {T1, . . . , T k}, augmented with privacy adapters {G1, . . . , G k} that transform activations before transmission. The cloud executes the remaining layers {Tk+1 , . . . , T L}
+
+followed by the language modeling head WLM ∈ R|V|× d (the overview of this system is shown in Figure 1). Notation is summarized in Appendix A (Table 4). 
+
+Inference workflow. Given an input prompt x = [ x1, . . . , x n] ∈ X n, the client interleaves transformer layers with privacy adapters: 
+
+h(0) = E(x), h(i) = Gi(Ti(h(i−1) )) for i = 1 , . . . , k, (1) 2Client Device (Trusted) 
+
+> Prompt
+> T1
+> G1
+> T2
+> Gk
+> Z
+> Cloud (Untrusted)
+> F2
+> F2: Layers k+1 to L
+> Xn+1
+> Utility: Response to Client
+
+…      
+
+> F1
+> F1F2
+> Ours: Adapters (Trainable )Frozen Layers Adversary (PIA)
+> LLM
+> Prompt
+> Prompt Response
+
+Figure 1: Privacy-adapter–based collaborative inference. Lightweight trainable adapters are inserted between frozen transformer layers on the client to suppress prompt leakage before offloading inter-mediate activations ( Z) to the cloud. The adapters are optimized via a minimax objective balancing privacy protection and downstream utility under resource constraints. where Gi : Rn×d → Rn×d is an information-bottleneck module compressing activations through a low-dimensional subspace of dimension r ≪ d (full architecture in Section 3). Crucially, Gi
+
+applies no residual connection —the output replaces, rather than perturbs, the layer activation.This is information-theoretically necessary: for deterministic additive perturbations δ in the typical regime of LoRA-style adapters and learned residuals (i.e., satisfying L < 1 Lipschitz), I(h+δ(h); x) = I(h; x)
+
+since the mapping h 7 → h + δ(h) is injective (formalized in Theorem 4.2). The bottleneck forces lossy compression, enabling genuine MI reduction. The protected activation A = h(k) ∈ Rn×d is transmitted to the cloud, which produces P (y | A) = softmax (WLM · TL(· · · Tk+1 (A))) .
+
+2.2 Threat Model Adversary. We assume an honest-but-curious cloud server attempting to reconstruct the user’s prompt from the protected activation A (using privacy adapters discussed above). Such prompts may contain sensitive content—medical queries, legal proceedings, personal communications, proprietary documents. The adversary operates under the strongest white-box setting: full access to A, all cloud parameters {Tk+1 , . . . , T L, W LM }, and complete knowledge of the privacy adapter weights 
+
+{G1, . . . , G k}. The adversary may train auxiliary reconstruction models, including state-of-the-art classification-based [Luo et al., 2025] and optimization-based [Qu et al., 2025b] prompt inversion attacks, to minimize token-level reconstruction error. 
+
+Defense goal. We seek privacy adapters {G1, . . . , G k} that simultaneously (i) minimize informa-tion leakage I(A; x), formalized as a minimax game with a learned adversary qΨ (Section 3); (ii) 
+
+preserve next-token prediction utility, measured by perplexity; and (iii) respect client-side latency and parameter budgets ( ≪ 1% of model parameters). 
+
+## 3 Method: Privacy-Preserving Collaborative Inference 
+
+3.1 Formalizing Defense Objectives Privacy via mutual information minimization. Let A = ( Gk ◦ Tk ◦ · · · ◦ G1 ◦ T1)( E(x)) denote the protected activation transmitted to the cloud. We seek to minimize the mutual information between 
+
+A and the input prompt x:
+
+min  
+
+> {Gi}
+
+I (A; x) . (2) Small MI implies that even an optimal adversary cannot reliably reconstruct x from A [Noorbakhsh et al., 2024, Arevalo et al., 2024]. Since I (A; x) is intractable, we use the variational upper bound vCLUB [Cheng et al., 2020] (Lemma B.4; statement and proof in Appendix B.2) and parameterize the variational distribution as a per-position token classifier qΨ(x|A) = Qnj=1 qΨ(xj |Aj ), consistent 3with the threat model of Luo et al. [2025]. Tightening this bound is equivalent to training Ψ to minimize a per-position cross-entropy loss (Appendix B.4), yielding the minimax formulation: 
+
+min  
+
+> {Gi}
+
+max  
+
+> Ψ
+
+Ep(x)
+
+
+
+> n
+
+X
+
+> j=1
+
+log qΨ(xj | Aj )
+
+ . (3) Unlike cosine-similarity surrogates, this learned-adversary formulation requires no distributional assumptions on A, has unambiguous gradient direction, and adapts to the current adapter state during training. By the chain rule of mutual information (Lemma B.7, Appendix B.5), I (A; x) ≤Pnj=1 I (A; xj ), so the per-position objective targets a valid upper bound on the joint MI; reducing 
+
+P 
+
+> j
+
+I (Aj ; xj ) in turn directly tightens the success bound for per-position attackers [Luo et al., 2025, Qu et al., 2025b] via Theorem B.18 (see Remark B.6). 
+
+Utility via lower bound on I (A; y). Let y = xn+1 . Maximizing I (A; y) retains predictive information for next-token prediction. Using the variational lower bound (Lemma B.5, Appendix B.3) and noting that pLM is the fixed output distribution of the frozen cloud, the utility objective reduces to: 
+
+min  
+
+> {Gi}
+
+LNTP (A) := Ep(x)[− log pLM (xn+1 | TL(· · · Tk+1 (A)))] . (4) Crucially, LNTP is computed by forwarding A through all frozen cloud layers and the LM head, ensuring that adapters learn representations compatible with the downstream pipeline rather than merely mimicking original activations. 
+
+Latency constraint. For real-time deployment on resource-constrained devices, we impose 
+
+C({Gi}ki=1 ) ≤ Cmax , where C measures adapter-induced overhead. Table 5 (Appendix C.1) summa-rizes the system constraints. 
+
+Combined objective. Combining privacy, utility, and latency yields: 
+
+min  
+
+> {Gi}
+
+max  
+
+> Ψ
+
+λ ·
+
+−Ep(x)
+
+
+
+> n
+
+X
+
+> j=1
+
+log qΨ(xj | Aj )
+
+ + (1 − λ) · L NTP (A), (5) where λ ∈ [0 , 1] controls the privacy-utility tradeoff, subject to the latency constraint above. 
+
+3.2 Privacy Adapter Architecture 
+
+We realize {Gi} as lightweight modules inserted after each device-side transformer layer. All pre-trained transformer layers remain frozen, avoiding expensive fine-tuning while preserving pre-trained knowledge. 
+
+Information bottleneck, no residual. Each adapter Gi implements a compression-expansion through a low-dimensional subspace, without a residual connection: 
+
+Gi(h) = LN 
+
+
+
+W (i) 
+
+> up
+
+· σ
+
+
+
+LN 
+
+
+
+W (i) 
+
+> down
+
+· h
+
+ 
+
+, (6) where W (i) 
+
+> down
+
+∈ Rr×d, W (i) 
+
+> up
+
+∈ Rd×r , σ is GELU, and r ≪ d is the bottleneck dimension. Unlike LoRA-style adapters [Hu et al., 2022] that compute h + Gi(h), our design replaces the activation: 
+
+h(i) = Gi(Ti(h(i−1) )) .The absence of a residual is essential. For deterministic perturbations δ(h) in the operating regime of standard residual defenses (LoRA-style adapters with small initialization, learned additive perturba-tions with bounded weights), the mapping h 7 → h + δ(h) is injective, so I(h + δ(h); x) = I(h; x)
+
+by the data processing inequality (Theorem 4.2). Thus, such residual-based defenses cannot reduce MI—a sufficiently powerful attacker recovers the original h and extracts token identity. We verify this empirically in Section 6: residual adapters yield >85% token recovery under a fresh attacker. In contrast, the bottleneck W (i) 
+
+> down
+
+: Rd → Rr with r ≪ d enforces lossy compression, with r as an explicit knob on information capacity. 4Parameter efficiency. The adapters introduce only 2·k ·r ·d trainable parameters, typically < 0.3% 
+
+of the full model. For LLaMA-2-7B with k = 4 , r = 512 , this is ∼17M parameters out of 6.7B. Interleaving adapters across k device layers enables layer-wise selective suppression of token identity. 
+
+3.3 Optimization 
+
+We optimize Eq. (5) via alternating updates (Algorithm 1, Appendix 1): (i) Adversary step (S
+
+steps): update Ψ to minimize per-position cross-entropy on defended activations, tightening the MI upper bound; (ii) Adapter step (1 step): with Ψ frozen, update {Gi} to minimize the combined privacy-utility loss. All transformer layers Ti remain frozen throughout. 
+
+## 4 Theoretical Analysis 
+
+We provide theoretical guarantees on three key questions: (i) does minimizing I(A; x) provably limit reconstruction? (ii) why must the architecture avoid residual connections? and (iii) how does the bottleneck dimension control privacy at the token level? Full statements, additional results (bottleneck MI bound, utility–privacy tradeoff, token-level accuracy), and all proofs are deferred to Appendix B. 
+
+Privacy guarantee via Fano’s inequality. Let AP IA = {A : Rn×d → X n} denote the set of all prompt inversion attacks. Applying Fano’s inequality [Cover and Thomas, 2006] to the Markov chain 
+
+x → A → ˆx yields a universal upper bound on adversary success. 
+
+Theorem 4.1 (Privacy Leakage Bound) . For a random prompt x with protected activation A =(Gk ◦ Tk ◦ · · · ◦ G1 ◦ T1)( E(x)) and any attack A ∈ A P IA ,
+
+P [A(A) = x] ≤ I (x; A) + 1 log |X n| . (7) 
+
+Proof. See Appendix B.6. □
+
+This bound is universal: it holds for any attack, including both classification-based [Luo et al., 2025] and optimization-based [Qu et al., 2025b] approaches. Reducing the per-position MI P 
+
+> j
+
+I(Aj ; xj )
+
+via our minimax objective tightens the bound for per-position attackers (Theorem B.18) and, via Lemma B.7, also constrains the joint I(A; x) through the chain-rule inequality.. A token-level analog (Theorem B.18 in Appendix B.11) gives E[Acc token ] ≤ 1
+
+> n
+
+P  
+
+> iI(A;xi)+1 log |V|
+
+, which provides the basis for our sensitive vs. common token analysis below. 
+
+Why residual connections cannot provide privacy. A central architectural choice in our design is the absence of a residual connection in Gi. The following result shows that this is not an empirical preference but a theoretical necessity: residual-style defenses in the regime of standard adapter constructions fail to reduce mutual information. 
+
+Theorem 4.2 (Residual MI Invariance under Injectivity) . Let δ : Rd → Rd be deterministic and let 
+
+ϕ(h) = h + δ(h). If ϕ is injective, then 
+
+I(h + δ(h); x) = I(h; x). (8) 
+
+A sufficient condition is that δ is L-Lipschitz with L < 1, in which case ϕ is a bi-Lipschitz homeomor-phism on Rd. Proof and counterexamples in Appendix B.8. 
+
+The injectivity hypothesis covers residual defenses deployed in practice—LoRA-style adapters, learned additive perturbations with bounded weights, and similar constructions satisfy L < 1
+
+Lipschitz and fall under Theorem 4.2. This explains a key empirical finding (Section 6): residual adapters drop the training adversary to ∼50% accuracy via co-adaptation, but a fresh attacker recovers 
+
+>85% token accuracy on the same protected activations—the information was never removed, only hidden from one adversary. Stochastic perturbations δ ⊥ h can reduce MI (Remark B.13) but introduce inference-time non-determinism. Our bottleneck Gi, non-injective by construction (Rd → Rr , r ≪ d), achieves MI reduction deterministically. 5Bottleneck dimension controls leakage. The bottleneck dimension r provides an explicit, dif-ferentiable knob on information capacity. By the data processing inequality applied to the chain 
+
+xj → h(k) 
+
+> j
+
+→ z(k) 
+
+> j
+
+→ Aj , where z(k) 
+
+> j
+
+∈ Rr is the bottleneck representation, 
+
+I(Aj ; xj ) ≤ H(z(k) 
+
+> j
+
+) ≤ r · log(2 B/ϵ ), (9) for activations bounded in [−B, B ]r at precision ϵ. Combined with Theorem 4.1, this gives 
+
+P[A(A)= x] ≤ (nr log(2 B/ϵ )+1) / log |X n|, formalizing that smaller r yields stronger privacy. The full statement (Theorem B.10) and corollary appear in Appendix B. 
+
+Utility–privacy tradeoff and selective protection. Two further consequences follow from the same information-theoretic framework and are formalized in the appendix. First, the chain x → A → y
+
+with y = xn+1 implies I(A; y) ≤ I(A; x) (Theorem B.16, Appendix B.10): utility cannot exceed privacy leakage, so λ and r together navigate a hard frontier rather than an arbitrary tuning surface. Second, applying the token-level bound separately to sensitive positions S and common positions C
+
+yields: 
+
+Corollary 4.3 (Selective Privacy Protection) . E[Acc sensitive ] ≤ 1
+
+> |S|
+
+P  
+
+> i∈S
+> I(A;xi)+1 log |V|
+
+. If the bottleneck disproportionately reduces I(A; xi) for high-entropy (rare, sensitive) tokens relative to low-entropy (common) tokens, then E[Acc sensitive ] ≪ E[Acc common ].
+
+The intuition: low-entropy tokens (“the,” “is”) occupy a small region of activation space and are cheaply representable through the bottleneck; high-entropy tokens (unique words such as “Gangrene,” “SSRI”, etc.) require many more bits to distinguish. When r is limited, the adapter preferentially preserves common tokens (which also support syntactic coherence) and discards rare sensitive ones—the empirical pattern we report in Section 6. 
+
+## 5 Implementation 
+
+We implement the framework in PyTorch 2.0 with HuggingFace Transformers (v4.35), using FP16 for the frozen backbone and FP32 for adapters and the adversary. We evaluate three LLMs: Mistral-7B-v0.1 [Jiang et al., 2023], LLaMA-2-7B [Touvron et al., 2023], and LLaMA-2-13B [Touvron et al., 2023]. Code will be released upon publication. Full hyperparameters, the training algorithm, and complexity analysis appear in Appendix C. 
+
+Adapter and adversary. Each adapter Gi follows the bottleneck design of Eq. (6) , with an output LayerNorm to stabilize activation magnitudes for downstream frozen layers. We fix k=4 
+
+adapter layers and sweep r ∈ { 256 , 512 , 1024 } and λ ∈ { 0.1, 0.5, 0.9} as the two privacy-utility knobs. The adversary qΨ is a 4-layer MLP with hidden dimensions [d, 2d, 2d, |V| ] and dropout 0.1,performing per-position token classification. For LLaMA-2-7B, qΨ has ∼181M parameters—an order of magnitude larger than the adapters ( ∼17M)—so the adversary is never the bottleneck and any residual token information would be detected. 
+
+Training. Each step alternates (i) S=3 adversary updates on stop-gradient activations to tighten the MI upper bound, and (ii) one adapter update on the combined privacy-utility loss 
+
+Ltotal = λ ·   − CE (qΨ(A), x ) + (1 − λ) · L NTP (A), (10) where LNTP (A) = CE (TL(· · · Tk+1 (A)) <n , x 2: n) is computed by forwarding A through the entire 
+
+frozen cloud pipeline. This ensures adapters learn representations compatible with downstream processing rather than merely matching original activations in some metric space. Multiple adversary steps per adapter step ( S=3 ) follow standard adversarial training practice [Goodfellow et al., 2014, Arjovsky et al., 2017]. Algorithm 1 (Appendix C.3) details the procedure. 
+
+Direct MI estimation. The privacy loss tightens a variational bound on the per-position MI P 
+
+> j
+
+I (Aj ; xj ), which by Theorem B.18 controls the success of position-wise attackers [Luo et al., 2025, Qu et al., 2025b]; the optimal per-position adversary satisfies qΨ∗ (xj |Aj ) = p(xj |Aj ), at which the bound is tight, and the adapter then maximizes cross-entropy to drive it down (see Remark B.6). 66 Experimental Evaluation 
+
+6.1 Experimental Setup Datasets, models, and hardware. We evaluate on three datasets containing sensitive textual content: Medical (clinical notes from MedAlpaca with conditions, drugs, and symptoms), Skytrax 
+
+(airline reviews with travel details and flight numbers), and Legal (ECHR case documents with names and personal circumstances). We use three pre-trained LLMs of increasing scale, as described above, all split at k=4 with frozen cloud layers. Training uses two RTX 4090 GPUs; latency is measured on a Jetson Orin Nano (8 GB) representing a realistic edge client. 
+
+Attacks and metrics. We evaluate against three prompt inversion attacks. Luo et al. [2025] train a 4-layer MLP token classifier ( ∼181M parameters) on intermediate activations under a black-box threat model where the adversary has no knowledge of the model components or any deployed defense. Qu et al. [2025b] use a constrained-optimization approach that searches for continuous embeddings matching the target activation, then discretizes to tokens. Ours adopts the same 4-layer MLP architecture and cross-entropy training objective as Luo et al., but operates under the white-box threat model defined in Section 2.2: the adversary has full knowledge of the privacy adapter weights {G1, . . . , G k} and trains directly on activations sampled from the deployed defended model, following Kerckhoffs’s principle that defense evaluation should not assume secrecy of its parameters. This represents the strongest classification-based adversary realizable in our setting. Crucially, all three attacks are trained from scratch on protected activations ( fresh attacker ), not the co-adapted training adversary, so we evaluate against the strongest possible adversary for each defense configuration. We report (i) overall token accuracy ( ↓), (ii) sensitive token accuracy ( ↓), (iii) common token accuracy, and (iv) perplexity ( ↓ for utility). Common tokens are the 118 most frequent stop words, punctuation, and structural words; sensitive tokens are the remainder. The privacy gap =common − sensitive accuracy quantifies selective protection. 
+
+6.2 Main Results: Privacy-Utility Tradeoff and Bottleneck Ablation 
+
+Table 1 reports attack accuracy and perplexity across models, datasets, bottleneck dimensions 
+
+r ∈ { 256 , 512 , 1024 }, and tradeoff weights λ ∈ { 0.1, 0.5, 0.9}, evaluated against three attacks. Three patterns emerge. (i) Increasing λ consistently reduces attack accuracy at the cost of higher perplexity, instantiating the tradeoff predicted by Theorem B.16; intermediate values ( λ=0 .5) achieve the best balance. (ii) Larger r increases information capacity, yielding both higher attack accuracy and lower perplexity, validating Theorem B.10’s prediction that bottleneck dimension directly bounds leakage. (iii) The defense generalizes across attack types: fresh classification and optimization attackers track our training adversary closely, with no attack able to exploit a configuration where the others fail. This rules out the failure mode of Theorem 4.2 (a fresh attacker recovering information that the co-adapted adversary missed). 
+
+6.3 Sensitive Token Analysis 
+
+A central observation is that privacy protection is selective : the bottleneck disproportionately sup-presses sensitive tokens while preserving common structural ones, exactly as Corollary 4.3 predicts. Figure 2 shows how sensitive token accuracy, NERR, and BLEU evolve with λ across all three datasets; per-dataset breakdowns with the privacy-gap visualization appear in Appendix D.1. The privacy gap widens with λ: from 11–15% at λ=0 .1 to 30–35% at λ=0 .9. Common token accuracy stays high (88–99%) even at aggressive settings, preserving syntactic coherence, while sensitive token accuracy drops from 85–89% to 54–58%—meaningful protection of domain-specific content. Notably, the defense provides this without explicit knowledge of which tokens are sensitive: the bottleneck discovers privacy-relevant compression purely from the minimax objective. 
+
+6.4 Qualitative Analysis 
+
+Table 2 shows a representative reconstruction on Skytrax at λ=0 .5. The defense preserves syntactic structure and evaluative tokens (“good,” “friendly,” “service,” “staff”) while scrambling specific identifiers: city names (“Noumea” → “Lfrivebound”), route codes (“RUN-SEY” → “LAX-G and”), 7Table 1: Attack accuracy (%) / Perplexity across attacks, models, datasets, and bottleneck dimensions (r, with k=4 ). Three attacks evaluated against the same protected activations: (a) Ours (training adversary, co-adapted via minimax); (b) Luo et al. [2025] (classification-based, fresh attacker); (c) Qu et al. [2025b] (optimization-based). Larger r increases information capacity (Theorem B.10). Perplexity depends only on the defense (not the attack) and is therefore identical across (a), (b), (c) for each (r, λ ) configuration. Bold columns ( λ=0 .5) indicate the best privacy-utility operating point. 
+
+r = 256 r = 512 r = 1024 
+
+Model Dataset No Def. λ=0 .1 λ=0 .5 λ=0 .9 λ=0 .1 λ=0 .5 λ=0 .9 λ=0 .1 λ=0 .5 λ=0 .9
+
+(a) Ours (training adversary, co-adapted via minimax) 
+
+Mistral-7B Skytrax 89.0/44.7 86.4/45.6 53.3/52.1 42.1/83.0 88.1/44.1 58.1/52.5 50.0/79.8 88.8/44.0 60.0/52.0 56.0/70.1 Medical 85.8/29.4 84.6/29.4 60.5/30.1 36.7/45.2 85.1/29.4 65.5/29.9 36.7/45.0 85.8/29.0 50.1/29.0 50.0/44.4 Legal 95.4/11.4 95.0/12.2 48.6/24.3 21.7/24.6 95.0/12.0 48.6/24.1 22.7/23.4 95.0/11.8 48.6/23.6 23.9/23.0 LLaMA-2-7B Skytrax 91.1/33.7 90.0/38.0 50.8/90.1 36.1/95.9 90.1/36.8 55.1/86.7 43.3/93.2 91.9/33.7 56.4/84.3 49.7/90.6 Medical 87.3/25.9 81.2/34.1 51.0/60.1 12.5/82.6 81.3/29.4 53.8/54.7 26.5/80.6 83.2/28.1 57.9/53.3 29.5/78.9 Legal 95.5/7.8 88.4/9.4 51.2/11.9 32.0/30.9 91.0/9.4 54.7/10.7 33.1/26.1 95.5/9.4 58.4/10.0 33.7/25.9 LLaMA-2-13B Skytrax 95.4/16.9 89.0/20.1 39.1/34.0 24.1/140.0 92.1/17.7 49.3/32.1 31.8/132.0 92.3/17.9 50.0/30.9 32.0/130.0 Medical 96.2/25.1 96.0/30.0 38.9/40.0 16.1/60.0 95.9/25.9 42.5/39.9 22.8/60.7 96.1/25.2 42.0/39.1 22.0/59.9 Legal 95.5/9.4 94.9/19.0 39.5/24.0 15.6/30.0 95.5/17.9 44.0/22.9 19.2/30.0 96.0/18.1 45.7/22.0 24.1/29.5 
+
+(b) Luo et al. [2025] (classification-based, fresh attacker) 
+
+Mistral-7B Skytrax 90.2/44.7 88.1/45.6 56.5/52.1 35.4/83.0 89.6/44.1 60.0/52.5 42.8/79.8 90.0/44.0 60.2/52.0 48.6/70.1 Medical 87.1/29.4 86.0/29.4 60.8/30.1 39.5/45.2 86.7/29.4 67.8/29.9 39.5/45.0 87.1/29.0 52.6/29.0 52.4/44.4 Legal 96.5/11.4 89.1/12.2 51.4/24.3 24.0/24.6 90.2/12.0 51.4/24.1 24.0/23.4 89.1/11.8 51.4/23.6 24.0/23.0 LLaMA-2-7B Skytrax 92.4/33.7 91.5/38.0 63.4/90.1 38.9/95.9 90.0/36.8 62.5/86.7 35.9/93.2 90.0/33.7 58.7/84.3 32.4/90.6 Medical 88.7/25.9 83.5/34.1 53.7/60.1 34.8/82.6 83.6/29.4 54.9/54.7 44.8/80.6 84.4/28.1 55.6/53.3 46.9/78.9 Legal 96.7/7.8 92.9/9.4 53.8/11.9 34.5/30.9 94.7/9.4 54.0/10.7 42.6/26.1 96.0/9.4 55.7/10.0 43.0/25.9 LLaMA-2-13B Skytrax 96.5/16.9 90.4/20.1 41.6/34.0 26.5/140.0 93.5/17.7 51.7/32.1 34.1/132.0 93.7/17.9 52.5/30.9 34.4/130.0 Medical 97.3/25.1 93.0/30.0 41.4/40.0 18.4/60.0 95.2/25.9 45.0/39.9 25.2/60.7 97.1/25.2 45.4/39.1 24.3/59.9 Legal 96.7/9.4 92.9/19.0 42.3/24.0 17.9/30.0 93.7/17.9 46.5/22.9 21.7/30.0 94.4/18.1 48.2/22.0 26.6/29.5 
+
+(c) Qu et al. [2025b] (optimization-based) 
+
+Mistral-7B Skytrax 88.4/44.7 84.7/45.6 49.8/52.1 33.2/83.0 85.3/44.1 54.5/52.5 40.6/79.8 85.9/44.0 56.4/52.0 45.0/70.1 Medical 84.6/29.4 82.1/29.4 56.4/30.1 32.5/45.2 82.7/29.4 61.0/29.9 33.8/45.0 84.0/29.0 47.6/29.0 47.4/44.4 Legal 94.1/11.4 90.5/12.2 43.5/24.3 17.8/24.6 91.6/12.0 45.0/24.1 20.4/23.4 92.4/11.8 45.8/23.6 19.5/23.0 LLaMA-2-7B Skytrax 89.5/33.7 86.6/38.0 47.4/90.1 33.0/95.9 87.5/36.8 51.6/86.7 39.8/93.2 88.0/33.7 53.2/84.3 41.0/90.6 Medical 85.8/25.9 77.4/34.1 47.5/60.1 11.5/82.6 77.9/29.4 49.1/54.7 23.4/80.6 78.5/28.1 53.0/53.3 26.4/78.9 Legal 94.0/7.8 84.5/9.4 46.0/11.9 26.6/30.9 87.1/9.4 49.4/10.7 27.2/26.1 94.0/9.4 53.0/10.0 27.5/25.9 LLaMA-2-13B Skytrax 94.2/16.9 80.8/20.1 34.7/34.0 19.6/140.0 86.0/17.7 44.5/32.1 27.4/132.0 88.2/17.9 45.4/30.9 27.6/130.0 Medical 95.1/25.1 83.6/30.0 36.2/40.0 12.0/60.0 85.9/25.9 39.6/39.9 16.0/60.7 88.7/25.2 40.3/39.1 17.9/59.9 Legal 94.4/9.4 90.8/19.0 34.9/24.0 11.2/30.0 91.2/17.9 39.0/22.9 14.7/30.0 94.7/18.1 40.5/22.0 19.0/29.5 0.2 0.4 0.6 0.8 
+
+Privacy Weight 
+
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Recovery Rate (%)
+
+Llama-2-7b-hf Skytrax 
+
+> Sensitive Token Acc. (%)
+> NERR (%)
+> BLEU Score
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> BLEU Score
+
+(a) Skytrax 0.2 0.4 0.6 0.8 
+
+Privacy Weight 
+
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Recovery Rate (%)
+
+Llama-2-7b-hf Medical  
+
+> Sensitive Token Acc. (%)
+> NERR (%)
+> BLEU Score
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> BLEU Score
+
+(b) Medical 0.2 0.4 0.6 0.8 
+
+Privacy Weight 
+
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Recovery Rate (%)
+
+Llama-2-7b-hf Legal  
+
+> Sensitive Token Acc. (%)
+> NERR (%)
+> BLEU Score
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> BLEU Score
+
+(c) Legal 
+
+Figure 2: Cross-dataset privacy-utility tradeoff over λ (LLaMA-2-7B, k=4 , r=512 ). As λ increases, sensitive token accuracy and NERR decrease (stronger privacy) while BLEU also decreases (utility cost). Medical, with the most distinctive domain terminology, exhibits the strongest privacy gains. flight numbers (“621” → “58”), and dates (“4/2014” → “K/101ment”). The attacker can infer that an airline review was written but cannot recover which flight , which route , or when —exactly the selective protection Corollary 4.3 predicts from bottleneck capacity arguments. Additional examples on Medical at λ=0 .3 (where conditions and drug names are protected) and Skytrax at 
+
+λ=0 .9 (near-complete obfuscation) appear in Appendix D.5. 
+
+6.5 Comparison with Existing Defenses 
+
+We compare our privacy adapters against four representative defense families operating under our constraint of frozen pre-trained layers and latency: noise perturbation (Gaussian and Laplacian) injected at every device-side layer; LDP-style training via NoPeek [Vepakomma et al., 2020], which adds a distance-correlation penalty between activations and inputs; information suppression via 8Table 2: Reconstruction example (LLaMA-2-7B, Skytrax, λ=0 .5, r=256 ). Sensitive tokens annotated as [PROT.] or [REC.]. More examples in Appendix D.5.              
+
+> Example (overall: 59.4%)
+> Original: Only flew Air Austral for medium haul (RUN-SEY) but was excellent! Good service much space good food and very friendly staff!
+> Recovered: only Flew Air Austral with1 holul (LAX-G and) but was full. nice service much space good food and very friendly staff.
+> Sensitive: “medium” →“1” [PROT.], “RUN-SEY” →“LAX-G and” [PROT.], “excellent” →“full” [PROT.], “Good”
+> →“nice” [PROT.], “Austral” →“Austral” [REC.]
+
+Fisher-based dimension masking [Guo et al., 2022] and ShredMI random projection; and linear projection via PCA at k ∈ { 256 , 512 }. All baselines use the same fresh classification attacker on LLaMA-2-7B at split layer k=4 . Full results are in Table 9. We summarize the key findings here. Table 3: Defense comparison against the fresh classifi-cation attacker Luo et al. [2025] (LLaMA-2-7B, k=4 ). Attack accuracy (%, ↓) and perplexity ( ↓) across three datasets. Ours achieves the lowest attack accuracy among all methods with usable perplexity (PPL <1000) on all three domains.                                                                                 
+
+> Skytrax Medical Legal Defense Atk PPL Atk PPL Atk PPL No Defense 88.4 32.9 85.1 17.3 94.7 10.0 Gaussian σ=0 .176.4 46.0 68.7 21.4 89.4 12.3 Gaussian σ=0 .517.2 2537 26.7 4222 56.2 903 Laplace b=0 .164.9 75.2 61.1 31.5 85.8 17.4 Laplace b=0 .510.9 7580 19.9 16316 43.9 2636 NoPeek 81.7 258.6 75.5 35.5 92.5 67.4 Fisher 87.9 3766 84.4 10134 94.7 290.6 ShredMI ( r=256 )8.2 4091 12.6 5213 17.9 1452 PCA ( k=256 )87.2 46.5 82.6 26.5 94.6 12.1 PCA ( k=512 )88.0 35.7 84.2 20.5 94.6 10.7
+> Ours (r=256 ,λ=0 .5)50.8 90.1 51.0 60.1 51.2 11.9
+
+All baselines exhibit failure modes our adapters avoid: noise faces a privacy-utility cliff (small budgets leave attack accuracy at 64.9–89.4%, while σ=0 .5 explodes per-plexity to 903–4222); PCA preserves too much structure (within 1–2 points of no defense, confirming Theorem 4.2); and MI-targeted methods (NoPeek [Vepakomma et al., 2020], Fisher [Guo et al., 2022], ShredMI) trade utility for privacy at per-plexities of 290–10,134. In contrast, our adapters at r=256 , λ=0 .5 achieve the low-est attack accuracy among defenses with usable perplexity on every dataset—50.8% / 51.0% / 51.2% on Skytrax/Medical/Legal at PPL 90.1 / 60.1 / 11.9, a 37–43 point reduction versus no defense within an or-der of magnitude of baseline perplexity. Related families share the same limita-tions: LDP frameworks like SnD [Mai et al., 2023] exhibit the same cliff; cryp-tographic frameworks [Juvekar et al., 2018, Pang et al., 2024, Xu et al., 2025] introduce orders-of-magnitude latency overhead (14 minutes per token on Llama-7B), incompatible with edge deployment. 
+
+Inference latency. Privacy adapters add only 5.6–8.4% end-to-end latency overhead across all three models on a Jetson Orin Nano client with RTX 4090 server (64-token input, k=4 ); full per-model breakdown in Appendix D.3 (Table 10). The overhead does not grow with model size since it is dominated by the lightweight client-side adapter computation. 
+
+Token identity persists across all layers. We confirm the finding of Dong et al. [2025] that splitting at deeper layers does not by itself provide privacy: on LLaMA-2-7B / Medical without defense, fresh-attacker accuracy stays at 84.7% / 80.7% / 80.2% / 81.1% for split layers k = 4 , 8, 12 , 16 
+
+respectively. Token identity persists through all 32 layers, motivating the need for an active defense rather than depth-based obfuscation. 
+
+## 7 Conclusions 
+
+We introduced a principled, information-theoretic defense against prompt inversion attacks in col-laborative LLM inference. By deploying lightweight privacy adapters that selectively suppress privacy-sensitive information, our approach achieves strong privacy protection with minimal utility and latency overhead. These results demonstrate that learned, task-aware transformations are essential for practical and effective prompt privacy in edge–cloud LLM systems. 9References 
+
+Martin Abadi, Andy Chu, Ian Goodfellow, H Brendan McMahan, Ilya Mironov, Kunal Talwar, and Li Zhang. Deep learning with differential privacy. In Proceedings of the 2016 ACM SIGSAC conference on computer and communications security , pages 308–318, 2016. Caridad Arroyo Arevalo, Sayedeh Leila Noorbakhsh, Yun Dong, Yuan Hong, and Binghui Wang. Task-agnostic privacy-preserving representation learning for federated learning against attribute inference attacks. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 38, pages 10909–10917, 2024. Martin Arjovsky, Soumith Chintala, and Léon Bottou. Wasserstein generative adversarial networks. In International Conference on Machine Learning (ICML) , pages 214–223. PMLR, 2017. Alexander Borzunov, Max Ryabinin, Artem Chumachenko, Dmitry Baranchuk, Tim Dettmers, Younes Belkada, Pavel Samygin, and Colin A Raffel. Distributed inference and fine-tuning of large language models over the internet. Advances in neural information processing systems , 36: 12312–12331, 2023. Alon Brutzkus, Ran Gilad-Bachrach, and Oren Elisha. Low latency privacy preserving inference. In 
+
+International Conference on Machine Learning , pages 812–821. PMLR, 2019. Guanzhong Chen, Zhenghan Qin, Mingxin Yang, Yajie Zhou, Tao Fan, Tianyu Du, and Zenglin Xu. Unveiling the vulnerability of private fine-tuning in split-based frameworks for large language models: A bidirectionally enhanced attack. In Proceedings of the 2024 on ACM SIGSAC Conference on Computer and Communications Security , pages 2904–2918, 2024. Pengyu Cheng, Weituo Hao, Shuyang Dai, Jiachang Liu, Zhe Gan, and Lawrence Carin. Club: A contrastive log-ratio upper bound of mutual information. In International Conference on Machine Learning (ICML) , pages 1779–1788. PMLR, 2020. Hao-Jen Chien, Hossein Khalili, Amin Hass, and Nader Sehatbakhsh. Enc2: Privacy-preserving inference for tiny iots via encoding and encryption. In Proceedings of the 29th Annual International Conference on Mobile Computing and Networking , pages 1–16, 2023. Thomas M Cover and Joy A Thomas. Elements of Information Theory . Wiley-Interscience, 2nd edition, 2006. Tian Dong, Yan Meng, Shaofeng Li, Guoxing Chen, Zhen Liu, and Haojin Zhu. Depth gives a false sense of privacy: {LLM } internal states inversion. In 34th USENIX Security Symposium (USENIX Security 25) , pages 1629–1648, 2025. Ran Gilad-Bachrach, Nathan Dowlin, Kim Laine, Kristin Lauter, Michael Naehrig, and John Wernsing. Cryptonets: Applying neural networks to encrypted data with high throughput and accuracy. In 
+
+International conference on machine learning , pages 201–210. PMLR, 2016. Ian Goodfellow, Jean Pouget-Abadie, Mehdi Mirza, Bing Xu, David Warde-Farley, Sherjil Ozair, Aaron Courville, and Yoshua Bengio. Generative adversarial nets. In Advances in Neural Information Processing Systems (NeurIPS) , volume 27, 2014. Chuan Guo, Brian Karrer, Kamalika Chaudhuri, and Laurens van der Maaten. Bounding training data reconstruction in private (deep) learning. In ICML . PMLR, 2022. Aayush Gupta, Ayush Jaiswal, Yue Wu, Vivek Yadav, and Pradeep Natarajan. Adversarial mask generation for preserving visual privacy. In 2021 16th IEEE International Conference on Automatic Face and Gesture Recognition (FG 2021) , pages 1–5. IEEE, 2021a. Umang Gupta, Aaron M Ferber, Bistra Dilkina, and Greg Ver Steeg. Controllable guarantees for fair outcomes via contrastive information estimation. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 35, pages 7610–7619, 2021b. Meng Hao, Hongwei Li, Hanxiao Chen, Pengzhi Xing, Guowen Xu, and Tianwei Zhang. Iron: Private inference on transformers. Advances in neural information processing systems , 35:15718–15731, 2022. 10 Edward J Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, Weizhu Chen, et al. Lora: Low-rank adaptation of large language models. ICLR , 1(2):3, 2022. Zhicong Huang, Wen-jie Lu, Cheng Hong, and Jiansheng Ding. Cheetah: Lean and fast secure 
+
+{Two-Party } deep neural network inference. In 31st USENIX Security Symposium (USENIX Security 22) , pages 809–826, 2022. Tyler Hunt, Zhipeng Jia, Vance Miller, Ariel Szekely, Yige Hu, Christopher J Rossbach, and Emmett Witchel. Telekine: Secure computing with cloud {GPUs }. In 17th USENIX Symposium on Networked Systems Design and Implementation (NSDI 20) , pages 817–833, 2020. Ayush Jaiswal, Daniel Moyer, Greg Ver Steeg, Wael AbdAlmageed, and Premkumar Natarajan. Invariant representations through adversarial forgetting. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 34, pages 4272–4279, 2020. Albert Q. Jiang, Alexandre Sablayrolles, Arthur Mensch, Chris Bamford, Devendra Singh Chaplot, Diego de las Casas, Florian Bressand, Gianna Lengyel, Guillaume Lample, Lucile Saulnier, Lélio Renard Lavaud, Marie-Anne Lachaux, Pierre Stock, Teven Le Scao, Thibaut Lavril, Thomas Wang, Timothée Lacroix, and William El Sayed. Mistral 7b. arXiv preprint arXiv:2310.06825 ,2023. Chiraag Juvekar, Vinod Vaikuntanathan, and Anantha Chandrakasan. {GAZELLE }: A low latency framework for secure neural network inference. In 27th USENIX Security Symposium (USENIX Security 18) , pages 1651–1669, 2018. Yiping Kang, Johann Hauswald, Cao Gao, Austin Rovinski, Trevor Mudge, Jason Mars, and Lingjia Tang. Neurosurgeon: Collaborative intelligence between the cloud and mobile edge. ACM SIGARCH Computer Architecture News , 45(1):615–629, 2017. Taegyeong Lee, Zhiqi Lin, Saumay Pushp, Caihua Li, Yunxin Liu, Youngki Lee, Fengyuan Xu, Chenren Xu, Lintao Zhang, and Junehwa Song. Occlumency: Privacy-preserving remote deep-learning inference using sgx. In The 25th Annual International Conference on Mobile Computing and Networking , pages 1–17, 2019. Jian Liu, Mika Juuti, Yao Lu, and Nadarajah Asokan. Oblivious neural network predictions via minionn transformations. In Proceedings of the 2017 ACM SIGSAC conference on computer and communications security , pages 619–631, 2017. Renju Liu, Luis Garcia, Zaoxing Liu, Botong Ou, and Mani Srivastava. Secdeep: Secure and performant on-device deep learning inference framework for mobile and iot devices. In Proceedings of the International Conference on Internet-of-Things Design and Implementation , pages 67–79, 2021. Zechun Liu, Changsheng Zhao, Forrest Iandola, Chen Lai, Yuandong Tian, Igor Fedorov, Yunyang Xiong, Ernie Chang, Yangyang Shi, Raghuraman Krishnamoorthi, et al. Mobilellm: Optimizing sub-billion parameter language models for on-device use cases. In Forty-first International Conference on Machine Learning , 2024. Lin Lu, Chenxi Dai, Wangcheng Tao, Binhang Yuan, Yanan Sun, and Pan Zhou. Position: Exploring the robustness of pipeline-parallelism-based decentralized training. In Forty-first International Conference on Machine Learning , 2024. Xinjian Luo, Ting Yu, and Xiaokui Xiao. Prompt inference attack on distributed large language model inference frameworks. In Proceedings of the 2025 ACM SIGSAC Conference on Computer and Communications Security , pages 1739–1753, 2025. Peihua Mai, Ran Yan, Zhe Huang, Youjia Yang, and Yan Pang. Split-and-denoise: Protect large language model inference with local differential privacy. arXiv preprint arXiv:2310.09130 , 2023. Xupeng Miao, Gabriele Oliaro, Zhihao Zhang, Xinhao Cheng, Hongyi Jin, Tianqi Chen, and Zhihao Jia. Towards efficient generative large language model serving: A survey from algorithms to systems. ACM Computing Surveys , 58(1):1–37, 2025. 11 Payman Mohassel and Yupeng Zhang. Secureml: A system for scalable privacy-preserving machine learning. In 2017 IEEE symposium on security and privacy (SP) , pages 19–38. IEEE, 2017. Sayedeh Leila Noorbakhsh, Binghui Zhang, Yuan Hong, and Binghui Wang. Inf2guard: An information-theoretic framework for learning privacy-preserving representations against inference attacks. In 33rd USENIX Security Symposium (USENIX Security 24) , pages 2405–2422. USENIX Association, 2024. Seyed Ali Osia, Ali Shahin Shamsabadi, Sina Sajadmanesh, Ali Taheri, Kleomenis Katevas, Hamid R Rabiee, Nicholas D Lane, and Hamed Haddadi. A hybrid deep learning architecture for privacy-preserving mobile analytics. IEEE Internet of Things Journal , 7(5):4505–4518, 2020. Qi Pang, Jinhao Zhu, Helen Möllering, Wenting Zheng, and Thomas Schneider. Bolt: Privacy-preserving, accurate and efficient inference for transformers. In 2024 IEEE Symposium on Security and Privacy (SP) , pages 4753–4771. IEEE, 2024. Guanqiao Qu, Qiyuan Chen, Wei Wei, Zheng Lin, Xianhao Chen, and Kaibin Huang. Mobile edge intelligence for large language models: A contemporary survey. IEEE Communications Surveys & Tutorials , 2025a. Wenjie Qu, Yuguang Zhou, Yongji Wu, Tingsong Xiao, Binhang Yuan, Yiming Li, and Jiaheng Zhang. Prompt inversion attack against collaborative inference of large language models. In 2025 IEEE Symposium on Security and Privacy (SP) , pages 1695–1712. IEEE, 2025b. Proteek Chandan Roy and Vishnu Naresh Boddeti. Mitigating information leakage in image represen-tations: A maximum entropy approach. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 2586–2594, 2019. Muhammad Husni Santriaji, Jiaqi Xue, Yancheng Zhang, Qian Lou, and Yan Solihin. Dataseal: Ensuring the verifiability of private computation on encrypted data. In 2025 IEEE Symposium on Security and Privacy (SP) , pages 2378–2394. IEEE, 2025. Ying Sheng, Lianmin Zheng, Binhang Yuan, Zhuohan Li, Max Ryabinin, Beidi Chen, Percy Liang, Christopher Ré, Ion Stoica, and Ce Zhang. Flexgen: High-throughput generative inference of large language models with a single gpu. In International Conference on Machine Learning , pages 31094–31116. PMLR, 2023. Abhishek Singh, Ayush Chopra, Ethan Garza, Emily Zhang, Praneeth Vepakomma, Vivek Sharma, and Ramesh Raskar. Disco: Dynamic and invariant sensitive channel obfuscation for deep neural networks. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 12125–12135, 2021. Abhishek Singh, Praneeth Vepakomma, Vivek Sharma, and Ramesh Raskar. Posthoc privacy guarantees for collaborative inference with modified propose-test-release. Advances in Neural Information Processing Systems , 36:26438–26451, 2023. Tong Sun, Bowen Jiang, Hailong Lin, Borui Li, Yixiao Teng, Yi Gao, and Wei Dong. Tensorshield: safeguarding on-device inference by shielding critical dnn tensors with tee. In Proceedings of the 2025 ACM SIGSAC Conference on Computer and Communications Security , pages 1008–1022, 2025. Hugo Touvron, Louis Martin, Kevin Stone, et al. Llama 2: Open foundation and fine-tuned chat models. arXiv preprint arXiv:2307.09288 , 2023. Florian Tramer and Dan Boneh. Slalom: Fast, verifiable and private execution of neural networks in trusted hardware. arXiv preprint arXiv:1806.03287 , 2018. Praneeth Vepakomma, Abhishek Singh, Otkrist Gupta, and Ramesh Raskar. Nopeek: Information leakage reduction to share activations in distributed deep learning. In 2020 International Conference on Data Mining Workshops (ICDMW) , pages 933–942. IEEE, 2020. Guanqun Wang, Jiaming Liu, Chenxuan Li, Yuan Zhang, Junpeng Ma, Xinyu Wei, Kevin Zhang, Maurice Chong, Renrui Zhang, Yijiang Liu, et al. Cloud-device collaborative learning for multi-modal large language models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 12646–12655, 2024. 12 Qizhe Xie, Zihang Dai, Yulun Du, Eduard Hovy, and Graham Neubig. Controllable invariance through adversarial feature learning. Advances in neural information processing systems , 30, 2017. Tianshi Xu, Wen-jie Lu, Jiangrui Yu, Yi Chen, Chenqi Lin, Runsheng Wang, and Meng Li. Breaking the layer barrier: Remodeling private transformer inference with hybrid {CKKS } and {MPC }. In 
+
+34th USENIX Security Symposium (USENIX Security 25) , pages 2653–2672, 2025. Binghui Zhang, Sayedeh Leila Noorbakhsh, Yun Dong, Yuan Hong, and Binghui Wang. Learning robust and privacy-preserving representations via information theory. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 39, pages 22363–22371, 2025. Mingjin Zhang, Xiaoming Shen, Jiannong Cao, Zeyang Cui, and Shan Jiang. Edgeshard: Efficient llm inference via collaborative edge computing. IEEE Internet of Things Journal , 2024a. Ziqi Zhang, Chen Gong, Yifeng Cai, Yuanyuan Yuan, Bingyan Liu, Ding Li, Yao Guo, and Xiangqun Chen. No privacy left outside: On the (in-) security of tee-shielded dnn partition for on-device ml. In 2024 IEEE Symposium on Security and Privacy (SP) , pages 3327–3345. IEEE, 2024b. Han Zhao, Jianfeng Chi, Yuan Tian, and Geoffrey J Gordon. Trade-offs and guarantees of adversarial representation learning for information obfuscation. Advances in Neural Information Processing Systems , 33:9485–9496, 2020. 13 NeurIPS Paper Checklist 
+
+1. Claims 
+
+Question: Do the main claims made in the abstract and introduction accurately reflect the paper’s contributions and scope? Answer: [Yes] Justification: The abstract and introduction (Section 1) state our four main contributions: (i) an information-theoretic minimax framework for prompt inversion defense, (ii) privacy adapters as information-bottleneck modules with theoretical guarantees, (iii) a sensitive token analysis methodology, and (iv) experiments showing 15–35% reduction in sensitive token recovery with <9% latency overhead. These claims are supported by the formal results in Section 4 and the empirical evaluation in Section 6. Guidelines: • The answer [N/A] means that the abstract and introduction do not include the claims made in the paper. • The abstract and/or introduction should clearly state the claims made, including the contributions made in the paper and important assumptions and limitations. A [No] or [N/A] answer to this question will not be perceived well by the reviewers. • The claims made should match theoretical and experimental results, and reflect how much the results can be expected to generalize to other settings. • It is fine to include aspirational goals as motivation as long as it is clear that these goals are not attained by the paper. 2. Limitations 
+
+Question: Does the paper discuss the limitations of the work performed by the authors? Answer: [Yes] Justification: We discuss several limitations throughout the paper. Theorem B.16 formalizes the inherent utility-privacy tradeoff: stronger privacy necessarily reduces achievable utility. Section 6 reports the perplexity cost of stronger privacy settings ( λ=0 .9 degrades perplexity substantially). Our threat model assumes an honest-but-curious cloud server with white-box access; we do not address malicious servers that tamper with computation. Experiments are limited to three LLM families (LLaMA-2-7B/13B, Mistral-7B) at sequence length 32 with k=4 adapter layers; generalization to longer sequences, larger models, and other architectures requires further study. Appendix D.4 discusses why we do not compare against retrained representation-learning baselines, acknowledging this restricts our comparison set. Guidelines: • The answer [N/A] means that the paper has no limitation while the answer [No] means that the paper has limitations, but those are not discussed in the paper. • The authors are encouraged to create a separate “Limitations” section in their paper. • The paper should point out any strong assumptions and how robust the results are to violations of these assumptions (e.g., independence assumptions, noiseless settings, model well-specification, asymptotic approximations only holding locally). The authors should reflect on how these assumptions might be violated in practice and what the implications would be. • The authors should reflect on the scope of the claims made, e.g., if the approach was only tested on a few datasets or with a few runs. In general, empirical results often depend on implicit assumptions, which should be articulated. • The authors should reflect on the factors that influence the performance of the approach. For example, a facial recognition algorithm may perform poorly when image resolution is low or images are taken in low lighting. Or a speech-to-text system might not be used reliably to provide closed captions for online lectures because it fails to handle technical jargon. • The authors should discuss the computational efficiency of the proposed algorithms and how they scale with dataset size. 14 • If applicable, the authors should discuss possible limitations of their approach to address problems of privacy and fairness. • While the authors might fear that complete honesty about limitations might be used by reviewers as grounds for rejection, a worse outcome might be that reviewers discover limitations that aren’t acknowledged in the paper. The authors should use their best judgment and recognize that individual actions in favor of transparency play an impor-tant role in developing norms that preserve the integrity of the community. Reviewers will be specifically instructed to not penalize honesty concerning limitations. 3. Theory assumptions and proofs 
+
+Question: For each theoretical result, does the paper provide the full set of assumptions and a complete (and correct) proof? Answer: [Yes] Justification: All theoretical results are numbered and cross-referenced. Theorem 4.1 (Pri-vacy Leakage Bound), Theorem 4.2 (Residual MI Invariance), Theorem B.10 (Bottleneck MI Bound), Theorem B.16 (Utility-Privacy Tradeoff), and Theorem B.18 (Token Recon-struction Accuracy) are stated in Section 4 with informal intuition, with complete proofs and assumptions in Appendix B. Variational bounds (Lemmas B.4 and B.5) used by the framework are proven in Appendices B.2 and B.3. Assumptions (uniform prior on prompt space, bounded activations with precision ϵ, deterministic invertible perturbations for the residual case) are stated explicitly in each theorem statement. Guidelines: • The answer [N/A] means that the paper does not include theoretical results. • All the theorems, formulas, and proofs in the paper should be numbered and cross-referenced. • All assumptions should be clearly stated or referenced in the statement of any theorems. • The proofs can either appear in the main paper or the supplemental material, but if they appear in the supplemental material, the authors are encouraged to provide a short proof sketch to provide intuition. • Inversely, any informal proof provided in the core of the paper should be complemented by formal proofs provided in appendix or supplemental material. • Theorems and Lemmas that the proof relies upon should be properly referenced. 4. Experimental result reproducibility 
+
+Question: Does the paper fully disclose all the information needed to reproduce the main ex-perimental results of the paper to the extent that it affects the main claims and/or conclusions of the paper (regardless of whether the code and data are provided or not)? Answer: [Yes] Justification: Section 5 and Appendix C provide the full experimental setup. The privacy adapter architecture is given by Eq. (6) ; training procedure by Algorithm 1 (Appendix C.3); all hyperparameters in Table 6 (Appendix C.2). Datasets (MedAlpaca, Skytrax airline reviews, ECHR Legal), models (LLaMA-2-7B/13B, Mistral-7B from HuggingFace), attack baselines (Luo et al. [2025] and Qu et al. [2025b]), and the optimizer/learning rate/training epochs are documented. Code will be released publicly upon publication. Guidelines: • The answer [N/A] means that the paper does not include experiments. • If the paper includes experiments, a [No] answer to this question will not be perceived well by the reviewers: Making the paper reproducible is important, regardless of whether the code and data are provided or not. • If the contribution is a dataset and/or model, the authors should describe the steps taken to make their results reproducible or verifiable. • Depending on the contribution, reproducibility can be accomplished in various ways. For example, if the contribution is a novel architecture, describing the architecture fully might suffice, or if the contribution is a specific model and empirical evaluation, it may be necessary to either make it possible for others to replicate the model with the same 15 dataset, or provide access to the model. In general. releasing code and data is often one good way to accomplish this, but reproducibility can also be provided via detailed instructions for how to replicate the results, access to a hosted model (e.g., in the case of a large language model), releasing of a model checkpoint, or other means that are appropriate to the research performed. • While NeurIPS does not require releasing code, the conference does require all submis-sions to provide some reasonable avenue for reproducibility, which may depend on the nature of the contribution. For example (a) If the contribution is primarily a new algorithm, the paper should make it clear how to reproduce that algorithm. (b) If the contribution is primarily a new model architecture, the paper should describe the architecture clearly and fully. (c) If the contribution is a new model (e.g., a large language model), then there should either be a way to access this model for reproducing the results or a way to reproduce the model (e.g., with an open-source dataset or instructions for how to construct the dataset). (d) We recognize that reproducibility may be tricky in some cases, in which case authors are welcome to describe the particular way they provide for reproducibility. In the case of closed-source models, it may be that access to the model is limited in some way (e.g., to registered users), but it should be possible for other researchers to have some path to reproducing or verifying the results. 5. Open access to data and code 
+
+Question: Does the paper provide open access to the data and code, with sufficient instruc-tions to faithfully reproduce the main experimental results, as described in supplemental material? Answer: [No] Justification: Code is not released at submission time to preserve anonymity. The imple-mentation will be released publicly upon publication, including training scripts, attack baselines, dataset preprocessing pipelines, and trained adapter checkpoints. All datasets used (MedAlpaca, Skytrax airline reviews, ECHR Legal) are publicly available; pre-trained models (LLaMA-2-7B/13B, Mistral-7B) are accessible via HuggingFace. The architecture (Eq. (6) ), training procedure (Algorithm 1), and hyperparameters (Table 6) are sufficient to reproduce our results from scratch. Guidelines: • The answer [N/A] means that paper does not include experiments requiring code. • Please see the NeurIPS code and data submission guidelines ( https://neurips.cc/ public/guides/CodeSubmissionPolicy ) for more details. • While we encourage the release of code and data, we understand that this might not be possible, so [No] is an acceptable answer. Papers cannot be rejected simply for not including code, unless this is central to the contribution (e.g., for a new open-source benchmark). • The instructions should contain the exact command and environment needed to run to reproduce the results. See the NeurIPS code and data submission guidelines ( https: //neurips.cc/public/guides/CodeSubmissionPolicy ) for more details. • The authors should provide instructions on data access and preparation, including how to access the raw data, preprocessed data, intermediate data, and generated data, etc. • The authors should provide scripts to reproduce all experimental results for the new proposed method and baselines. If only a subset of experiments are reproducible, they should state which ones are omitted from the script and why. • At submission time, to preserve anonymity, the authors should release anonymized versions (if applicable). • Providing as much information as possible in supplemental material (appended to the paper) is recommended, but including URLs to data and code is permitted. 6. Experimental setting/details 
+
+16 Question: Does the paper specify all the training and test details (e.g., data splits, hyperpa-rameters, how they were chosen, type of optimizer) necessary to understand the results? Answer: [Yes] Justification: Section 5 specifies optimizer (AdamW for adapters, Adam for adversary), learning rates ( 10 −4 adapter, 10 −3 adversary), training duration (10 epochs), and the alter-nating minimax schedule ( S=3 adversary steps per adapter step). Hyperparameter sweeps over r ∈ { 256 , 512 , 1024 } and λ ∈ { 0.1, 0.3, 0.5, 0.9} are explicitly varied as primary controls. Section 6.1 details datasets, train/test splits, and metrics. Full hyperparameter table appears in Appendix C.2 (Table 6). Guidelines: • The answer [N/A] means that the paper does not include experiments. • The experimental setting should be presented in the core of the paper to a level of detail that is necessary to appreciate the results and make sense of them. • The full details can be provided either with the code, in appendix, or as supplemental material. 7. Experiment statistical significance 
+
+Question: Does the paper report error bars suitably and correctly defined or other appropriate information about the statistical significance of the experiments? Answer: [No] Justification: Main results in Table 1 and Figure 2 report point estimates without error bars due to the computational cost of running multiple full training runs across all combinations of three models, three datasets, three bottleneck dimensions, and four privacy weights. The noise baseline tables in Appendix D.4 (Tables 11–13) do report mean ± standard deviation across test prompts, providing one indicator of variability. The trends across the multi-axis sweep ( λ, r, model, dataset, attack type) are highly consistent, providing confidence in the reported observations beyond what single-cell error bars would convey. Guidelines: • The answer [N/A] means that the paper does not include experiments. • The authors should answer [Yes] if the results are accompanied by error bars, confidence intervals, or statistical significance tests, at least for the experiments that support the main claims of the paper. • The factors of variability that the error bars are capturing should be clearly stated (for example, train/test split, initialization, random drawing of some parameter, or overall run with given experimental conditions). • The method for calculating the error bars should be explained (closed form formula, call to a library function, bootstrap, etc.) • The assumptions made should be given (e.g., Normally distributed errors). • It should be clear whether the error bar is the standard deviation or the standard error of the mean. • It is OK to report 1-sigma error bars, but one should state it. The authors should preferably report a 2-sigma error bar than state that they have a 96% CI, if the hypothesis of Normality of errors is not verified. • For asymmetric distributions, the authors should be careful not to show in tables or figures symmetric error bars that would yield results that are out of range (e.g., negative error rates). • If error bars are reported in tables or plots, the authors should explain in the text how they were calculated and reference the corresponding figures or tables in the text. 8. Experiments compute resources 
+
+Question: For each experiment, does the paper provide sufficient information on the com-puter resources (type of compute workers, memory, time of execution) needed to reproduce the experiments? Answer: [Yes] 17 Justification: Section 6.1 states that training is performed on a server with two NVIDIA RTX 4090 GPUs (24 GB each), and latency benchmarking uses a Jetson Orin Nano (8 GB Ampere-class GPU) representing an edge client. Appendix C.4 provides per-iteration computational complexity (Table 7) showing adapter overhead is approximately r/d ≈ 0.8% of transformer cost. Adapter parameter counts per model are reported in Table 8. Inference latency on the edge client is in Table 10 (5.6–8.4% overhead). The full hyperparameter sweep across 3 models × 3 datasets × 3 bottleneck dimensions × 4 privacy weights required additional preliminary runs not reported. Guidelines: • The answer [N/A] means that the paper does not include experiments. • The paper should indicate the type of compute workers CPU or GPU, internal cluster, or cloud provider, including relevant memory and storage. • The paper should provide the amount of compute required for each of the individual experimental runs as well as estimate the total compute. • The paper should disclose whether the full research project required more compute than the experiments reported in the paper (e.g., preliminary or failed experiments that didn’t make it into the paper). 9. Code of ethics 
+
+Question: Does the research conducted in the paper conform, in every respect, with the NeurIPS Code of Ethics https://neurips.cc/public/EthicsGuidelines ?Answer: [Yes] Justification: This research conforms to the NeurIPS Code of Ethics. The work is defense-oriented, aimed at protecting user prompt privacy in collaborative LLM inference. We use only publicly available datasets and pre-trained models with appropriate citations. No human subjects research, crowdsourcing, or sensitive personal data collection is involved; the datasets used (MedAlpaca, Skytrax, ECHR) consist of pre-existing public corpora. Anonymity is preserved in the submission. Guidelines: • The answer [N/A] means that the authors have not reviewed the NeurIPS Code of Ethics. • If the authors answer [No], they should explain the special circumstances that require a deviation from the Code of Ethics. • The authors should make sure to preserve anonymity (e.g., if there is a special consid-eration due to laws or regulations in their jurisdiction). 10. Broader impacts 
+
+Question: Does the paper discuss both potential positive societal impacts and negative societal impacts of the work performed? Answer: [Yes] Justification: We include a Broader Impacts section discussing both positive and negative societal impacts. Positive: enabling privacy-preserving LLM inference for sensitive appli-cations such as healthcare, legal services, and enterprise retrieval-augmented generation, lowering the barrier to deploying privacy-aware AI on resource-constrained devices. Nega-tive: as with any privacy-enhancing technology, improved confidentiality could be misused to obscure malicious activities; we note our defense is designed for benign user data under defined threat models and does not prevent lawful access at higher system layers, and we encourage complementary mechanisms for transparency and accountability. Guidelines: • The answer [N/A] means that there is no societal impact of the work performed. • If the authors answer [N/A] or [No], they should explain why their work has no societal impact or why the paper does not address societal impact. • Examples of negative societal impacts include potential malicious or unintended uses (e.g., disinformation, generating fake profiles, surveillance), fairness considerations (e.g., deployment of technologies that could make decisions that unfairly impact specific groups), privacy considerations, and security considerations. 18 • The conference expects that many papers will be foundational research and not tied to particular applications, let alone deployments. However, if there is a direct path to any negative applications, the authors should point it out. For example, it is legitimate to point out that an improvement in the quality of generative models could be used to generate Deepfakes for disinformation. On the other hand, it is not needed to point out that a generic algorithm for optimizing neural networks could enable people to train models that generate Deepfakes faster. • The authors should consider possible harms that could arise when the technology is being used as intended and functioning correctly, harms that could arise when the technology is being used as intended but gives incorrect results, and harms following from (intentional or unintentional) misuse of the technology. • If there are negative societal impacts, the authors could also discuss possible mitigation strategies (e.g., gated release of models, providing defenses in addition to attacks, mechanisms for monitoring misuse, mechanisms to monitor how a system learns from feedback over time, improving the efficiency and accessibility of ML). 11. Safeguards 
+
+Answer: [N/A] Justification: The paper proposes a defense mechanism (privacy adapters) rather than releasing pre-trained generative models, attack tools, or scraped datasets that pose high misuse risk. The trained adapter modules are tied to specific frozen pre-trained LLMs and are designed to protect privacy rather than generate or extract content. Released code will consist of training scripts and lightweight adapter checkpoints; standard responsible-release practices apply. Guidelines: • The answer [N/A] means that the paper poses no such risks. • Released models that have a high risk for misuse or dual-use should be released with necessary safeguards to allow for controlled use of the model, for example by requiring that users adhere to usage guidelines or restrictions to access the model or implementing safety filters. • Datasets that have been scraped from the Internet could pose safety risks. The authors should describe how they avoided releasing unsafe images. • We recognize that providing effective safeguards is challenging, and many papers do not require this, but we encourage authors to take this into account and make a best faith effort. 12. Licenses for existing assets 
+
+Question: Are the creators or original owners of assets (e.g., code, data, models), used in the paper, properly credited and are the license and terms of use explicitly mentioned and properly respected? Answer: [Yes] Justification: All existing assets are properly credited. Pre-trained models: LLaMA-2-7B/13B Touvron et al. [2023] (Meta LLaMA-2 Community License), Mistral-7B-v0.1 Jiang et al. [2023] (Apache 2.0). Datasets: MedAlpaca (clinical query corpus, CC BY 4.0), Skytrax airline reviews (publicly available), and ECHR case law (public domain). Software: PyTorch 2.0 (BSD-style), HuggingFace Transformers v4.35 (Apache 2.0). Baseline attack implementations follow Luo et al. [2025] and Qu et al. [2025b], both cited. All licenses are respected in our experimental usage. Guidelines: • The answer [N/A] means that the paper does not use existing assets. • The authors should cite the original paper that produced the code package or dataset. • The authors should state which version of the asset is used and, if possible, include a URL. • The name of the license (e.g., CC-BY 4.0) should be included for each asset. • For scraped data from a particular source (e.g., website), the copyright and terms of service of that source should be provided. 19 • If assets are released, the license, copyright information, and terms of use in the package should be provided. For popular datasets, paperswithcode.com/datasets 
+
+has curated licenses for some datasets. Their licensing guide can help determine the license of a dataset. • For existing datasets that are re-packaged, both the original license and the license of the derived asset (if it has changed) should be provided. • If this information is not available online, the authors are encouraged to reach out to the asset’s creators. 13. New assets 
+
+Question: Are new assets introduced in the paper well documented and is the documentation provided alongside the assets? Answer: [Yes] Justification: The new assets introduced are the privacy adapter modules and the training framework. Documentation is provided in Section 3 (architecture), Section 5 (training), and Appendix C (hyperparameters, complexity analysis, full algorithm). At submission time, code and adapter checkpoints are not released to preserve anonymity; upon publication, all assets will be released with documentation, license, and usage instructions. Guidelines: • The answer [N/A] means that the paper does not release new assets. • Researchers should communicate the details of the dataset/code/model as part of their submissions via structured templates. This includes details about training, license, limitations, etc. • The paper should discuss whether and how consent was obtained from people whose asset is used. • At submission time, remember to anonymize your assets (if applicable). You can either create an anonymized URL or include an anonymized zip file. 14. Crowdsourcing and research with human subjects 
+
+Question: For crowdsourcing experiments and research with human subjects, does the paper include the full text of instructions given to participants and screenshots, if applicable, as well as details about compensation (if any)? Answer: [N/A] Justification: This work does not involve crowdsourcing or research with human subjects. All datasets used are pre-existing public corpora. Guidelines: • The answer [N/A] means that the paper does not involve crowdsourcing nor research with human subjects. • Including this information in the supplemental material is fine, but if the main contribu-tion of the paper involves human subjects, then as much detail as possible should be included in the main paper. • According to the NeurIPS Code of Ethics, workers involved in data collection, curation, or other labor should be paid at least the minimum wage in the country of the data collector. 15. Institutional review board (IRB) approvals or equivalent for research with human subjects 
+
+Question: Does the paper describe potential risks incurred by study participants, whether such risks were disclosed to the subjects, and whether Institutional Review Board (IRB) approvals (or an equivalent approval/review based on the requirements of your country or institution) were obtained? Answer: [N/A] Justification: This work does not involve human subjects research and therefore does not require IRB approval. All experimental data comes from pre-existing public corpora. Guidelines: 20 • The answer [N/A] means that the paper does not involve crowdsourcing nor research with human subjects. • Depending on the country in which research is conducted, IRB approval (or equivalent) may be required for any human subjects research. If you obtained IRB approval, you should clearly state this in the paper. • We recognize that the procedures for this may vary significantly between institutions and locations, and we expect authors to adhere to the NeurIPS Code of Ethics and the guidelines for their institution. • For initial submissions, do not include any information that would break anonymity (if applicable), such as the institution conducting the review. 16. Declaration of LLM usage 
+
+Question: Does the paper describe the usage of LLMs if it is an important, original, or non-standard component of the core methods in this research? Note that if the LLM is used only for writing, editing, or formatting purposes and does not impact the core methodology, scientific rigor, or originality of the research, declaration is not required. Answer: [N/A] Justification: LLMs (LLaMA-2-7B/13B, Mistral-7B) are used as the experimental targets being defended, not as a methodological component. They are pre-trained, frozen, and serve as the underlying model whose intermediate activations our privacy adapters protect. No LLMs were used as core, original, or non-standard components in the development of our defense methodology, theoretical analysis, or evaluation pipeline. Guidelines: • The answer [N/A] means that the core method development in this research does not involve LLMs as any important, original, or non-standard components. • Please refer to our LLM policy in the NeurIPS handbook for what should or should not be described. 
+
+## A Technical Appendices and Supplementary Material A Notation 
+
+Table 4 summarizes the notation used throughout the paper. Table 4: Notation summary.                                      
+
+> Symbol Description Symbol Description
+> XToken space LM_head Language modeling head
+> x∈ X nInput prompt (length n)VVocabulary ( |V| tokens)
+> EEmbedding function y=xn+1 Next-token target
+> Tii-th transformer layer I(X;Y)Mutual information
+> Gii-th privacy adapter H(X)Entropy
+> AProtected intermediate activation rBottleneck dimension
+> dHidden dimension λPrivacy-utility tradeoff weight
+> qΨAdversary (token classifier) kSplit layer index
+
+## B Proofs 
+
+This appendix contains full statements and proofs of all theoretical results referenced in Section 4, together with auxiliary results (variational bounds, definitions, and surrogate-loss propositions). 
+
+B.1 Definitions Definition B.1 (Reconstruction Error) . For a prompt x and its reconstruction ˆx, we measure error as: Error (x, ˆx) = ∥x − ˆx∥p (11) 21 for some p-norm (e.g., p = 2 for Euclidean distance in embedding space). 
+
+Definition B.2 (Reconstruction Attack Set) . Let AP IA denote the set of all prompt inversion attacks: 
+
+AP IA = A : Rn×d → X n , (12) where each attack A maps activation A to reconstructed prompt ˆx = A(A).
+
+Definition B.3 (Token Accuracy) . For prompts of length n, token accuracy is: Acc token = 1
+
+n
+
+> n
+
+X
+
+> i=1
+
+⊮[ˆ xi = xi] (13) 
+
+B.2 Variational Upper Bound (vCLUB) Lemma B.4 (Variational Upper Bound, vCLUB) . For any distribution qΨ(x|A),
+
+I (A; x) ≤ Ep(A,x )[log qΨ(x|A)] − Ep(A)p(x)[log qΨ(x|A)] . (14) 
+
+Proof. We decompose the mutual information as: 
+
+I (A; x) = Ep(A,x )
+
+
+
+log p(x|A)
+
+p(x)
+
+
+
+= Ep(A,x )[log p(x|A)] − Ep(x)[log p(x)] = Ep(A,x )
+
+
+
+log p(x|A)
+
+qΨ(x|A)
+
+
+
++ Ep(A,x )[log qΨ(x|A)] 
+
+− Ep(x)[log p(x)] = Ep(A)[KL (p(x|A)∥qΨ(x|A))] + Ep(A,x )[log qΨ(x|A)] − Ep(x)[log p(x)] .
+
+Since KL (p(x|A)∥qΨ(x|A)) ≥ 0 and Ep(x)[log p(x)] is constant w.r.t. the encoder: 
+
+I (A; x) ≤ Ep(A,x )[log qΨ(x|A)] − Ep(A)p(x)[log qΨ(x|A)] + C. 
+
+B.3 Variational Lower Bound for Utility Lemma B.5 (Variational Lower Bound) . For the language model distribution pLM (y|A) where 
+
+y = xn+1 is the next token, 
+
+I (A; y) ≥ Ep(A,y )[log pLM (y|A)] + H (y) . (15) 
+
+Proof. 
+
+I (A; y) = H (y) − H (y|A)= H (y) + Ep(A,y )[log p(y|A)] = H (y) + Ep(A,y )[log pLM (y|A)] + Ep(A,y )
+
+
+
+log p(y|A)
+
+pLM (y|A)
+
+
+
+= H (y) + Ep(A,y )[log pLM (y|A)] + Ep(A)[KL (p(y|A)∥pLM (y|A))] .
+
+Since KL (p(y|A)∥pLM (y|A)) ≥ 0:
+
+I (A; y) ≥ Ep(A,y )[log pLM (y|A)] + H (y) .
+
+22 B.4 Tightening the Variational Upper Bound 
+
+To tighten the variational upper bound from Lemma B.4, we parameterize qΨ(x|A) as a per-position token classifier: 
+
+qΨ(x | A) = 
+
+> n
+
+Y
+
+> j=1
+
+qΨ(xj | Aj ), (16) where each factor is implemented as an MLP that maps the activation at position j to a distribution over the vocabulary: 
+
+qΨ(xj | Aj ) = softmax (fΨ(Aj )) , j = 1 , . . . , n, (17) with fΨ : Rd → R|V| and Aj ∈ Rd. This factorization is consistent with the attack model of Luo et al. [2025]. Tightening the bound requires minimizing the KL divergence between the true posterior and the variational approximation: 
+
+min  
+
+> Ψ
+
+KL (p(x|A)∥qΨ(x|A)) = min  
+
+> Ψ
+
+Ep(A,x ) [log p(x|A) − log qΨ(x|A)] 
+
+⇔ max  
+
+> Ψ
+
+Ep(A,x ) [log qΨ(x|A)] , (18) where E[log p(x|A)] is constant in Ψ and dropped. Substituting the factorized form: 
+
+⇔ min  
+
+> Ψ
+
+−Ep(A,x )
+
+
+
+> n
+
+X
+
+> j=1
+
+log qΨ(xj | Aj )
+
+| {z }
+
+> Per-position cross-entropy
+
+. (19) Thus, training the adversary to minimize per-position cross-entropy is equivalent to maximizing the per-position variational lower bound on P 
+
+> j
+
+I(Aj ; xj ) (see Remark B.6 for why this is a principled surrogate rather than a direct bound on the joint I(A; x)). 
+
+Remark B.6 (Per-position factorization as a principled surrogate) . The per-position factorization 
+
+qΨ(x|A) = Qnj=1 qΨ(xj |Aj ) is structurally unable to model cross-position dependencies in p(x|A),since transformer activations Aj encode contextual information about positions i̸ = j via attention prior to the bottleneck. Consequently, the variational quantity tightened by training Ψ does not directly upper-bound the joint I (A; x); rather, it tightens a bound on the per-position MI P 
+
+> j
+
+I (Aj ; xj ).We adopt this surrogate deliberately. (i) Threat-model alignment. State-of-the-art prompt inversion attacks operate per-position: Luo et al. [2025] is a per-position token classifier and Qu et al. [2025b] performs per-token optimization. By Theorem B.18, the expected token-level recovery of any such attack is bounded as E[Acc token ] ≤ 1
+
+> n
+
+P 
+
+> j
+
+(I (Aj ; xj ) + 1) / log |V| , so reducing P 
+
+> j
+
+I (Aj ; xj )
+
+directly tightens the success bound for the relevant adversary class. (ii) Connection to joint MI. By Lemma B.7, P 
+
+> j
+
+I (A; xj ) ≥ I (A; x), so the marginal sum upper-bounds the joint MI. Although our adversary estimates I (Aj ; xj ) ≤ I (A; xj ) by the data processing inequality, the architectural argument in Remark B.8 shows that residual joint leakage beyond what is captured per-position must be inherited from the frozen backbone rather than created by the defense. Closing the gap via a sequence-level autoregressive adversary qΨ(xj |A, x <j ) is left to future work. 
+
+B.5 Per-Position MI Upper Bound Lemma B.7 (Per-Position MI Upper Bound) . Let A = ( A1, . . . , A n) ∈ Rn×d be the protected activation and x = ( x1, . . . , x n) ∈ V n the input prompt. Then 
+
+I (A; x) ≤
+
+> n
+
+X
+
+> j=1
+
+I (A; xj ) . (20) 23 Proof. By the chain rule of mutual information, 
+
+I (A; x) = I (A; x1, . . . , x n) = 
+
+> n
+
+X
+
+> j=1
+
+I (A; xj | x<j ) . (21) For each term, since conditioning reduces entropy, 
+
+I (A; xj | x<j ) = H (xj |x<j ) − H (xj |A, x <j )
+
+≤ H (xj ) − H (xj |A) = I (A; xj ) ,
+
+where the inequality combines H (xj |x<j ) ≤ H (xj ) and H (xj |A, x <j ) ≥ H (xj |A) (both follow because conditioning on more variables cannot increase entropy). Summing over j yields the claim. 
+
+Remark B.8 (Architectural compatibility of the surrogate) . Our adapters Gi are pointwise modules that operate on each position independently; they cannot introduce new cross-position redistribution of token information. Cross-position information flow is inherited from the (frozen, unmodified) attention layers Ti and is therefore the same across all defense configurations. Consequently, any residual joint leakage that would not be captured by P 
+
+> j
+
+I (Aj ; xj ) comes from the frozen backbone rather than from the defense, ensuring that reductions in our per-position objective reflect genuine information destruction by the bottleneck. 
+
+B.6 Proof of Theorem 4.1 
+
+Proof. We apply Fano’s inequality [Cover and Thomas, 2006] to bound the reconstruction probability. 
+
+Step 1: Fano’s Inequality. For any estimator ˆx = A(A):
+
+H (x|A) ≤ hb(Pe) + Pe log( |X n| − 1) , (22) where Pe = P[ˆ x̸ = x] and hb(·) is binary entropy. 
+
+Step 2: Relate Conditional Entropy to MI. By definition, H (x|A) = H (x) − I (x; A).
+
+Step 3: Combine. Using hb(Pe) ≤ 1 and log( |X n| − 1) ≤ log |X n|:
+
+H (x) − I (x; A) ≤ 1 + Pe log |X n| . (23) 
+
+Step 4: Solve. Under a uniform prior, H (x) = log |X n|. Rearranging: 
+
+1 − Pe ≤ I (x; A) + 1 log |X n| . (24) Since 1 − Pe = P[A(A) = x], the bound follows. 
+
+Corollary B.9. For fixed prompt-space size |X n|, minimizing I (x; A) directly reduces the upper bound on adversary success. As I (x; A) → 0, success probability approaches 1log |X n| , negligible for large prompt spaces. 
+
+B.7 Bottleneck Mutual Information Bound 
+
+We now formalize the bottleneck argument sketched in Eq. (9) of the main text. 
+
+Theorem B.10 (Bottleneck MI Bound) . Let Gi(h) = W (i) 
+
+> up
+
+· σ(W (i) 
+
+> down
+
+· h) be a privacy adapter with bottleneck dimension r. Let z(i) = σ(W (i) 
+
+> down
+
+· h(i)) ∈ Rr denote the bottleneck representation at position j. Then by the data processing inequality: 
+
+I(Aj ; xj ) ≤ I(z(k) 
+
+> j
+
+; xj ) ≤ H(z(k) 
+
+> j
+
+). (25) 
+
+For bounded activations with z(k) 
+
+> j
+
+∈ [−B, B ]r , the entropy is bounded as: 
+
+I(Aj ; xj ) ≤ r · log(2 B/ϵ ), (26) 
+
+where ϵ is the precision of the representation. Thus, smaller bottleneck dimension r directly constrains the information capacity of the transmitted activation. 
+
+24 Proof. The first inequality follows from the data processing inequality applied to the Markov chain 
+
+xj → h(k) 
+
+> j
+
+→ z(k) 
+
+> j
+
+→ Aj , where Aj = W (k) 
+
+> up
+
+z(k) 
+
+> j
+
+is a deterministic function of z(k) 
+
+> j
+
+. The second follows from the entropy bound H(z(k) 
+
+> j
+
+) ≤ r · log(2 B/ϵ ) for r-dimensional bounded continuous variables discretized at precision ϵ.
+
+Corollary B.11 (Bottleneck Dimension Controls Privacy) . Combining Theorems 4.1 and B.10, for any attack A ∈ A P IA :
+
+P[A(A) = x] ≤ n · r · log(2 B/ϵ ) + 1 log |X n| . (27) 
+
+This bound decreases with smaller bottleneck dimension r, formalizing the intuition that narrower bottlenecks provide stronger privacy guarantees. 
+
+B.8 Proof of Theorem 4.2 (Residual MI Invariance) 
+
+Proof. Suppose ϕ : h 7 → h + δ(h) is injective. Then there exists a measurable left-inverse ϕ−1 :
+
+ϕ(Rd) → Rd satisfying ϕ−1(ϕ(h)) = h for all h.Applying the data processing inequality to the Markov chain x → h → ϕ(h):
+
+I(ϕ(h); x) ≤ I(h; x). (28) Conversely, applying the data processing inequality to the chain x → ϕ(h) → ϕ−1(ϕ(h)) = h:
+
+I(h; x) = I(ϕ−1(ϕ(h)); x) ≤ I(ϕ(h); x). (29) Combining the two inequalities yields I(ϕ(h); x) = I(h; x).
+
+Sufficient condition for injectivity. If δ is L-Lipschitz with L < 1, then for any h1̸ = h2, the reverse triangle inequality gives 
+
+∥ϕ(h1) − ϕ(h2)∥ ≥ ∥ h1 − h2∥ − ∥ δ(h1) − δ(h2)∥≥ (1 − L)∥h1 − h2∥ > 0, (30) so ϕ is injective (in fact, bi-Lipschitz with constants 1 − L and 1 + L). 
+
+Remark B.12 (Scope and counterexamples) . Theorem 4.2 requires injectivity and does not extend to all deterministic δ. Two illustrative counterexamples: (i) δ(h) = −h yields ϕ(h) ≡ 0, giving 
+
+I(ϕ(h); x) = 0 ; (ii) any linear residual ϕ(h) = ( I + B)h with I + B singular collapses information along the null space of I + B. Our claim is restricted to the operating regime of residual defenses proposed in the literature: LoRA-style adapters with standard small initialization, learned additive perturbations with bounded weights, and bounded-norm noise mechanisms all satisfy L < 1 Lipschitz in practice and therefore fall under the theorem. The empirical finding (Section 6) that residual adapters yield > 85% fresh-attacker recovery is consistent with this restricted regime. 
+
+Remark B.13 (Stochastic perturbations) . For stochastic perturbations δ ∼ p(δ) independent of h,the data processing inequality gives I(h + δ; x) ≤ I(h; x), and MI can strictly decrease. Stochastic noise is therefore not covered by Theorem 4.2. However, stochastic noise at inference time introduces non-deterministic model behavior, making outputs unreproducible—a significant drawback for deployed systems. Our bottleneck Gi achieves MI reduction deterministically by replacing rather than perturbing the activation, mapping Rd → Rr with r ≪ d (a non-injective compression). 
+
+B.9 Surrogate Loss Bounds Proposition B.14 (Privacy Surrogate Bounds MI) . Let A be the protected activation and E(x) the prompt embedding. Then 
+
+I(A; x) ≤ I(A; E(x)) (31) 
+
+by the data processing inequality, since x → E(x) → A forms a Markov chain. For approximately Gaussian activations, I(A; E(x)) is monotonically increasing in |CosSim (A, E (x)) |, so minimizing cosine similarity reduces the upper bound on I(A; x).
+
+Proposition B.15 (Utility Surrogate Preserves Log-Likelihood) . Let Aclean = F1(E(x)) . If CosSim (A, A clean ) ≥ 1 − ϵ, then 
+
+|E[log pLM (y|F2(A))] − E[log pLM (y|F2(Aclean ))] | ≤ L · ∥ A − Aclean ∥2, (32) 
+
+where L is the Lipschitz constant of log pLM ◦ F2. Maximizing cosine similarity therefore preserves the variational lower bound on I(A; y).
+
+25 B.10 Utility–Privacy Tradeoff Theorem B.16 (Inherent Utility-Privacy Tradeoff) . For the Markov chain x → A → y where 
+
+A = ( Gk ◦ Tk ◦ · · · ◦ G1 ◦ T1)( E(x)) and y = xn+1 :
+
+I(A; y) ≤ I(A; x) ≤ H(x). (33) 
+
+Thus, decreasing privacy leakage I(A; x) constrains the maximum achievable utility I(A; y).Proof. Step 1: Bound on Utility. By the data processing inequality on the Markov chain x → A →
+
+y:
+
+I(A; y) ≤ I(x; y) ≤ H(y). (34) 
+
+Step 2: Privacy-utility coupling. By the chain rule, I(A; x, y ) = I(A; x) + I(A; y | x). Since 
+
+y = xn+1 is deterministic given x, I(A; y | x) = 0 , so 
+
+I(A; x, y ) = I(A; x). (35) Applying the chain rule in the other order yields 
+
+I(A; x) = I(A; y) + I(A; x | y). (36) Since I(A; x | y) ≥ 0:
+
+I(A; y) ≤ I(A; x) ≤ H(x). (37) Utility cannot exceed privacy leakage. The tradeoff parameter λ in Eq. (5) controls this allocation. 
+
+Corollary B.17. For a fixed prompt entropy H (x), increasing utility I (A; y) necessarily increases potential leakage I (A; x). The tradeoff parameter λ and the bottleneck dimension r together control how the available information budget is allocated between task utility and privacy protection. 
+
+B.11 Token-Level Reconstruction Accuracy Theorem B.18 (Token Reconstruction Accuracy Bound) . For any prompt inversion attack A ∈ A P IA ,the expected token accuracy is bounded as: 
+
+E[Acc token ] ≤ 1
+
+n
+
+> n
+
+X
+
+> i=1
+
+I(A; xi) + 1 log |V| , (38) 
+
+where |V| is the vocabulary size. Proof. For position i, the attacker produces ˆxi = A(A)i with accuracy Acc i = 1 − Pe,i . Applying Fano’s inequality per-token: 
+
+H(xi | A) ≤ hb(Pe,i ) + Pe,i log 2(|V | − 1) . (39) Since H(xi | A) = H(xi) − I(A; xi) and H(xi) = log 2 |V | under uniform prior: 
+
+log 2 |V | − I(A; xi) ≤ 1 + Pe,i log 2 |V |. (40) Rearranging: Acc i = 1 − Pe,i ≤ I(A; xi) + 1 log 2 |V | . (41) Averaging over n positions yields 
+
+E[Acc token ] ≤ 1
+
+n
+
+> n
+
+X
+
+> i=1
+
+I(A; xi) + 1 log 2 |V | . (42) The sensitive-vs-common token corollary (Corollary 4.3) is stated in the main text and follows immediately by restricting the average above to positions i ∈ S .26 Table 5: System constraints on the client device.              
+
+> Constraint Description
+> Layer k≤kmax (max. transformer layers on device) Parameter Pki=1 |Gi| ≤ Bparams (adapter parameter budget) Latency Tdevice ({Gi})≤Tmax (inference time overhead)
+
+## C Implementation Details 
+
+C.1 System Constraints C.2 Hyperparameters 
+
+Table 6 summarizes all training hyperparameters used in our experiments. We fix k=4 adapter layers throughout (split after the 4th transformer layer), which provides a practical balance between on-device computation and privacy protection. The bottleneck dimension r and privacy weight λ
+
+are the primary knobs for controlling the privacy-utility tradeoff and are varied systematically in our experiments. Table 6: Privacy adapter hyperparameters. 
+
+Hyperparameter Value Hyperparameter Value 
+
+Bottleneck dim. r {256 , 512 , 1024 } Num. adapter layers k 4
+
+Nonlinearity GELU Initialization Xavier uniform Adapter LR ηadapt 10 −4 Adversary LR ηadv 10 −3
+
+Adversary steps S 3 Gradient clipping 1.0
+
+Optimizer (adapters) AdamW ( β1=0 .9, wd =0 .01 ) Optimizer (adversary) Adam ( β1=0 .9)Privacy weight λ {0.1, 0.3, 0.5, 0.9} Training epochs 10 
+
+Batch size 1 Max sequence length 32 
+
+C.3 Training Algorithm 
+
+Details of our algorithm are shown in Algorithm 1. 
+
+C.4 Overhead Analysis Training complexity. Table 7 reports complexity per training iteration, where n is sequence length, 
+
+k device layers, d hidden dim., r adapter rank, L total layers, and Niter adversary iterations. Table 7: Computational complexity per training iteration.                 
+
+> Component Forward Backward
+> Frozen transformer layers O(nkd 2)O(0)
+> Privacy adapters O(nkdr )O(nkdr )
+> Adversary (PIA) O(Niter ·nd )O(Niter ·nd )
+> Cloud forward (frozen) O(n(L−k)d2)O(0)
+
+The adapter overhead O(nkdr ) is substantially smaller than O(nkd 2) since r ≪ d—approximately 
+
+r/d ≈ 0.8% of transformer computation in practice. Gradients flow only through adapter parameters, reducing backward-pass memory by over 99%. 
+
+Storage overhead. Adapter parameter count is k × 2 × d × r. Table 8 shows totals per model. 27 Algorithm 1 Privacy Adapter Training via Minimax Optimization 
+
+Require: Frozen LLM layers {T1, . . . , T L}, split layer k, dataset D, privacy weight λ, bottleneck dim. r, adversary steps S
+
+Ensure: Trained privacy adapters {G1, . . . , G k} 
+
+> 1:
+
+Initialize adapters Gi : Rd → Rr → Rd (Xavier uniform)  
+
+> 2:
+
+Initialize adversary qΨ as 4-layer MLP  
+
+> 3:
+
+for each epoch do  
+
+> 4:
+
+for each batch x ∼ D do  
+
+> 5:
+
+// Forward through device with interleaved adapters  
+
+> 6:
+
+h(0) ← Embed (x) 
+
+> 7:
+
+for i = 1 , . . . , k do  
+
+> 8:
+
+h(i) ← Gi(Ti(h(i−1) )) ▷ No residual  
+
+> 9:
+
+end for  
+
+> 10:
+
+A ← h(k) 
+
+> 11: 12:
+
+// Phase 1: Adversary update (tighten MI bound)  
+
+> 13:
+
+for s = 1 , . . . , S do  
+
+> 14:
+
+Ladv ← CE (qΨ(stopgrad (A)) , x) 
+
+> 15:
+
+Update Ψ to minimize Ladv  
+
+> 16:
+
+end for  
+
+> 17: 18:
+
+// Phase 2: Adapter update (privacy-utility tradeoff)  
+
+> 19:
+
+Recompute A with gradient flow through {Gi} 
+
+> 20:
+
+Lpriv ← − CE (qΨ(A), x) ▷ Maximize CE  
+
+> 21:
+
+y ← TL(· · · Tk+1 (A))  
+
+> 22:
+
+Lutil ← CE (y<n , x2: n) 
+
+> 23:
+
+Ltotal ← λ · L priv + (1 − λ) · L util  
+
+> 24:
+
+Update {Gi} to minimize Ltotal  
+
+> 25:
+
+end for  
+
+> 26:
+
+end for  
+
+> 27:
+
+return {G1, . . . , G k}
+
+Table 8: Privacy adapter parameter count ( r=32 , k=4 ).             
+
+> Model dAdapter params % of model
+> Mistral-7B 4096 1.05M 0.015% LLaMA-2-7B 4096 1.05M 0.015% LLaMA-2-13B 5120 1.31M 0.010%
+
+## D Additional Experimental Results 
+
+D.1 Per-Dataset Privacy-Utility Ablation 
+
+This section provides per-dataset breakdowns of the privacy-utility ablation summarized in Section 6.3. For each dataset, we show three panels: (a) token accuracy with separate curves for overall, common, and sensitive tokens (the shaded privacy gap is the region between common and sensitive recovery); (b) BLEU score; and (c) named entity recovery rate (NERR). These views reveal the mechanism behind the cross-dataset tradeoff curves of Figure 2: as λ increases, the sensitive-token curve drops while the common-token curve remains stable, producing the widening privacy gap predicted by Corollary 4.3. 
+
+D.2 Defense Baseline Comparison 
+
+Table 9 reports the full defense comparison referenced in Section 6.5, evaluating noise (Gaussian, Laplacian), LDP-style training (NoPeek Vepakomma et al. [2020]), Fisher-based information suppres-sion Guo et al. [2022], ShredMI random projection, and PCA against the same fresh classification 28 0.2 0.4 0.6 0.8        
+
+> Privacy Weight
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Token Accuracy (%)
+> (a) Token Accuracy
+> Overall Acc.
+> Sensitive Acc.
+> Common Acc.
+> Privacy Gap
+> 0.2 0.4 0.6 0.8
+> Privacy Weight
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> BLEU Score
+> 0.82
+> 0.45
+> 0.25
+> (b) BLEU Score
+> 0.2 0.4 0.6 0.8
+> Privacy Weight
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> NERR (%)
+> 89.3%
+> 65.6%
+> 40.0%
+> (c) Entity Recovery Rate
+> Llama-2-7b-hf Skytrax Dataset
+
+Figure 3: Skytrax dataset (LLaMA-2-7B, k=4 , r=512 ). The privacy gap widens as λ increases. 0.2 0.4 0.6 0.8 
+
+> Privacy Weight
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Token Accuracy (%)
+
+(a) Token Accuracy    
+
+> Overall Acc.
+> Sensitive Acc.
+> Common Acc.
+> Privacy Gap
+> 0.2 0.4 0.6 0.8
+> Privacy Weight
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> BLEU Score  0.76
+> 0.71
+> 0.43
+> 0.15
+
+(b) BLEU Score    
+
+> 0.2 0.4 0.6 0.8
+> Privacy Weight
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> NERR (%)
+> 53.5%
+> 45.9%
+> 17.6%
+> 1.4%
+
+(c) Entity Recovery Rate  
+
+> Llama-2-7b-hf Medical Dataset
+
+Figure 4: Medical dataset (LLaMA-2-7B, k=4 , r=512 ). Sensitive token accuracy drops most aggressively, reflecting the high concentration of domain-specific terminology (medical conditions, drug names). attacker Luo et al. [2025] on LLaMA-2-7B at split k=4 . Our privacy adapters at r=256 , λ=0 .5
+
+achieve the lowest attack accuracy among all defenses with usable perplexity on every dataset. Table 9: Defense comparison against the fresh classification attacker Luo et al. [2025] (LLaMA-2-7B, 
+
+k=4 ). Attack accuracy (%, ↓) and perplexity ( ↓) across three datasets. Ours achieves the lowest attack accuracy among all methods with usable perplexity (PPL <1000) on all three domains. 
+
+Skytrax Medical Legal Defense Atk PPL Atk PPL Atk PPL No Defense 88.4 32.9 85.1 17.3 94.7 10.0 Gaussian σ=0 .1 76.4 46.0 68.7 21.4 89.4 12.3 Gaussian σ=0 .5 17.2 2537 26.7 4222 56.2 903 Laplace b=0 .1 64.9 75.2 61.1 31.5 85.8 17.4 Laplace b=0 .5 10.9 7580 19.9 16316 43.9 2636 NoPeek 81.7 258.6 75.5 35.5 92.5 67.4 Fisher 87.9 3766 84.4 10134 94.7 290.6 ShredMI ( r=256 ) 8.2 4091 12.6 5213 17.9 1452 PCA ( k=256 ) 87.2 46.5 82.6 26.5 94.6 12.1 PCA ( k=512 ) 88.0 35.7 84.2 20.5 94.6 10.7 
+
+Ours (r=256 , λ=0 .5) 50.8 90.1 51.0 60.1 51.2 11.9 
+
+D.3 Inference Latency Breakdown 
+
+Table 10 reports per-model end-to-end latency on a Jetson Orin Nano client (representing a realistic resource-constrained edge device) with an RTX 4090 cloud server, 64-token input, and split layer 
+
+k=4 . Privacy adapter overhead ranges from 5.6% (LLaMA-2-13B) to 8.4% (LLaMA-2-7B), well within practical limits for edge deployment. Notably, overhead does not grow with model size because 29 0.2 0.4 0.6 0.8        
+
+> Privacy Weight
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Token Accuracy (%)
+> (a) Token Accuracy
+> Overall Acc.
+> Sensitive Acc.
+> Common Acc.
+> Privacy Gap
+> 0.2 0.4 0.6 0.8
+> Privacy Weight
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> BLEU Score
+> 0.78
+> 0.17
+> 0.25
+> 0.15
+> (b) BLEU Score
+> 0.2 0.4 0.6 0.8
+> Privacy Weight
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> NERR (%)
+> 81.3%
+> 5.4%
+> 33.5%
+> 22.4%
+> (c) Entity Recovery Rate
+> Llama-2-7b-hf Legal Dataset
+
+Figure 5: Legal dataset (LLaMA-2-7B, k=4 , r=512 ). Token accuracy curves converge at intermedi-ate λ, indicating more uniform entropy across token types in legal text. the additional computation introduced by the adapters is fixed by the bottleneck dimension r rather than by the underlying transformer width. Table 10: Inference latency on Jetson Orin Nano (client) + RTX 4090 (cloud), k=4 , 64-token input. 
+
+Model Defense Latency (ms) Overhead 
+
+Mistral-7B None 54.3 –Adapters 58.8 +8.25% LLaMA-2-7B None 49.9 –Adapters 54.1 +8.42% LLaMA-2-13B None 77.0 –Adapters 81.4 +5.65% 
+
+D.4 Comparison with Noise-Based Defenses 
+
+We do not include comparisons to learned representation-learning baselines—such as adversarial representation learning [Zhao et al., 2020], information bottleneck variants [Jaiswal et al., 2020], Inf2Guard-style MI frameworks [Noorbakhsh et al., 2024], dimensionality reduction with retrain-ing [Dong et al., 2025], or inversion-aware training—for three reasons: 1. Most existing learned defenses are designed for supervised classification and require training a full encoder jointly with the downstream model. Applying these to collaborative LLM inference would require retraining large portions of the transformer stack on the client side, which is infeasible. Our method operates under the realistic constraint of frozen pre-trained layers. 2. MI-based frameworks like Inf2Guard [Noorbakhsh et al., 2024] target dataset-level privacy (membership/property inference) using global MI estimates over training distributions. Extending these to token-level prompt inversion in autoregressive LLMs requires nontrivial redesign and is beyond our scope. 3. Dimensionality reduction or inversion-aware retraining incurs high computational and tuning costs, making fair edge-cloud comparison infeasible. We instead compare against noise-based defenses, which (i) are widely used, (ii) apply at inference without retraining, and (iii) operate under the same system constraints. Tables 11–13 show that strong privacy via noise perturbation requires extreme noise budgets that severely degrade utility (perplexity exploding into the thousands), while our adapters achieve substantial attack-accuracy reductions with minimal utility impact. 
+
+D.5 Additional Qualitative Reconstruction Examples 
+
+This section provides additional reconstruction examples across datasets and privacy strengths, complementing the Skytrax examples ( λ=0 .5) shown in Section 6.4. 30 Table 11: Noise perturbation baseline (LLaMA-2-7B, Skytrax). Attack Accuracy (%) | Perplexity (Mean ± Std). 
+
+Noise σ Attack Acc. (%) Perplexity 
+
+Gaussian 0.000 84.00 ± 6.08 17.60 ± 0.00 Gaussian 0.010 84.00 ± 6.08 17.65 ± 7.07 Gaussian 0.050 84.10 ± 5.40 17.82 ± 7.15 Gaussian 0.100 83.46 ± 6.20 18.92 ± 9.87 Gaussian 0.200 79.30 ± 7.00 75.22 ± 73.86 Gaussian 0.500 31.47 ± 11.20 2957.91 ± 2056.22 Gaussian 1.000 1.96 ± 3.12 6961.16 ± 1941.02 Laplacian 0.000 83.79 ± 6.23 17.60 ± 0.00 Laplacian 0.010 84.01 ± 6.10 17.62 ± 7.05 Laplacian 0.050 83.91 ± 5.43 17.59 ± 6.74 Laplacian 0.100 82.38 ± 6.55 25.48 ± 12.91 Laplacian 0.200 69.12 ± 8.24 298.52 ± 171.01 Laplacian 0.500 12.10 ± 7.56 4619.11 ± 2117.78 Laplacian 1.000 0.56 ± 1.90 7767.54 ± 1018.97 
+
+Table 12: Medical (LLaMA-2-7B). 
+
+Noise σ Atk.% PPL G 0.00 91.04 ±4.53 25.62 ±0.00 G 0.01 91.04 ±4.53 25.62 ±23.45 G 0.05 91.18 ±4.14 25.74 ±23.31 G 0.10 90.72 ±5.15 29.60 ±26.45 G 0.20 88.07 ±5.36 116.73 ±147.88 G 0.50 28.42 ±9.56 3900.75 ±2350.51 G 1.00 0.90 ±2.30 5931.51 ±2087.01 L 0.00 91.16 ±4.54 25.60 ±0.00 L 0.01 91.04 ±4.53 25.68 ±23.66 L 0.05 91.14 ±4.53 28.16 ±29.00 L 0.10 90.12 ±5.72 40.81 ±45.01 L 0.20 72.72 ±8.81 655.01 ±1282.65 L 0.50 8.93 ±7.29 5135.96 ±2187.86 L 1.00 0.69 ±1.93 7788.44 ±959.55 
+
+Table 13: Legal (LLaMA-2-7B). 
+
+Noise σ Atk.% PPL G 0.00 83.88 ±6.30 17.60 ±0.00 G 0.01 84.00 ±6.08 17.67 ±7.06 G 0.05 84.15 ±5.52 17.64 ±6.97 G 0.10 83.17 ±5.64 18.83 ±8.06 G 0.20 80.20 ±7.15 68.35 ±48.28 G 0.50 32.38 ±11.42 3040.70 ±2275.11 G 1.00 1.62 ±2.85 6237.46 ±2327.85 L 0.00 84.03 ±5.94 17.60 ±0.00 L 0.01 83.67 ±5.85 17.62 ±7.03 L 0.05 83.79 ±5.59 18.09 ±7.67 L 0.10 83.20 ±6.27 25.27 ±13.04 L 0.20 69.48 ±9.35 338.40 ±348.45 L 0.50 9.04 ±7.25 4666.04 ±1860.14 L 1.00 0.96 ±2.22 7330.75 ±2037.73 
+
+Medical (moderate privacy). Table 14 shows reconstructions for the Medical dataset at λ=0 .3,
+
+r=512 . The defense preserves question structure (“What information do we have for . . . ”, “What does . . . mean?”) while scrambling medical conditions, drug names, and patient descriptors. Table 14: Reconstruction examples (LLaMA-2-7B, Medical, λ=0 .3, r=512 ). Sensitive tokens annotated as [PROTECTED] or [RECOVERED]. 
+
+Example 1 (overall: 75.0%, sensitive: 50.0%) 
+
+Original: What information do we have for patients with Gangrene? 
+
+Recovered: What information do you have for individuals with gangrene? 
+
+Sensitive: “patients” → “individuals” [PROT.], “Gangrene” → “gangrene” [PROT.] 
+
+Example 2 (overall: 72.7%, sensitive: 57.1%) 
+
+Original: What does SSRI sexual dysfunction mean? 
+
+Recovered: What doesTLRI other dys context mean? 
+
+Sensitive: “SSRI” → “TLRI” [PROT.], “sexual” → “other” [PROT.], “function” → “context” [PROT.] 
+
+Example 3 (overall: 90.0%, sensitive: 75.0%) 
+
+Original: What information about prostatitis is available? 
+
+Recovered: What information about proingitis is available? 
+
+Sensitive: “prostat” → “proing” [PROT.], “itis” → “itis” [REC.] 
+
+Legal (moderate privacy). Table 15 shows Legal-dataset reconstructions at λ=0 .5, r=256 . The defense protects birth years, city names, and personal details while preserving legal document structure (“The applicant was born in . . . ”). 31 Table 15: Reconstruction examples (LLaMA-2-7B, Legal, λ=0 .5, r=256 ). Mean acc. 51.3%, PPL 12.0. 
+
+Example 1 (overall: 59.4%) 
+
+Original: The applicant was born in 1931 and lives in Milan. He is the owner of a flat 
+
+Recovered: The applic in1 born in 1 and11 and lives in was The .. , of the lives of the lives 
+
+Sensitive: “applicant” → “applic in1” [PROT.], “1931” → “1 and11” [PROT.], “Milan” → “was” [PROT.], “He” →
+
+“The” [PROT.], “owner” → “lives” [PROT.], “flat” → “lives” [PROT.] 
+
+Example 2 (overall: 53.1%) 
+
+Original: The applicant was born in 1946 and lives in Rome. She is the owner of a flat 
+
+Recovered: The applic in1 born in 1 and11 in lives in On The applic. ants of the lives of the lives 
+
+Sensitive: “1946” → “1 and11” [PROT.], “Rome” → “On” [PROT.], “She” → “The” [PROT.] 
+
+Example 3 (overall: 40.6%) 
+
+Original: The applicants are Irish citizens, born in 1958 and 1957, respectively, and they both live 
+
+Recovered: The applicants antsants born in 1 and129 1 was12 and1 was in.1 lives 
+
+Sensitive: “Irish” → scrambled [PROT.], “citizens” → scrambled [PROT.], “1958” → “1 and129” [PROT.], “1957” →
+
+“was12” [PROT.] 
+
+Skytrax (strong privacy). At higher privacy weight ( λ=0 .9), Table 16 shows nearly all identifiable content is scrambled beyond recognition. Utility decreases substantially at this operating point, but the defense provides near-complete obfuscation suitable for highly sensitive deployments. Table 16: Reconstruction examples under strong defense (LLaMA-2-7B, Skytrax, λ=0 .9, r=1024 ). 
+
+Example 1 (overall: 28.1%) 
+
+Original: Noumea to Sydney found Air Austral staff friendly and good customer service. My only issue was the size of the seats in economy - a tight fit 
+
+Recovered: L Fle Ath out toens -2ATH crew friendly and good I time. a of flight was the flight of theights to return was and foodATH 
+
+Sensitive: “Noumea” → “L” [PROT.], “Sydney” → “Ath” [PROT.], “Austral” → “2ATH” [PROT.], “staff” → “crew” [PROT.], “customer” → “I” [PROT.], “service” → “time” [PROT.], “seats” → “theights” [PROT.], “economy” →
+
+“return” [PROT.] 
+
+Example 2 (overall: 25.0%) 
+
+Original: Only flew Air Austral for medium haul (RUN-SEY) but was excellent! Good service much space good food and very friendly staff! 
+
+Recovered: with Flew2A with flight entertain7–ens- outens flight I was good. comfortable time good comfortable good food and were friendly staff. 
+
+Sensitive: “Air” → “2A” [PROT.], “Austral” → “flight” [PROT.], “medium” → “entertain” [PROT.], “RUN-SEY” →
+
+“–ens-outens” [PROT.], “excellent” → “good” [PROT.] 
+
+Example 3 (overall: 34.4%) 
+
+Original: I travel very frequently on Air Astana from Delhi-Almaty. Check-in staff at Delhi and Almaty are very efficient. 
+
+Recovered: I3 was the on2 entertain out from entertainens-Al fleATH. G-in crew at Shens and Al airATH were were flight. 
+
+Sensitive: “Astana” → “out” [PROT.], “Delhi” → “entertainens” [PROT.], “Almaty” → “fleATH” [PROT.], “Check” 
+
+→ “G” [PROT.], “staff” → “crew” [PROT.], “efficient” → “flight” [PROT.] 
+
+Summary. Together, these examples confirm Corollary 4.3: as λ increases, the defense progres-sively scrambles more sensitive content while structural tokens (articles, conjunctions, common verbs) survive longest. This matches the bottleneck capacity argument—high-entropy sensitive tokens re-quire more bits to distinguish than low-entropy common tokens, so the bottleneck preferentially discards them. 
+
+## E Extended Related Work 
+
+Recent advances in AI have expanded IoT capabilities, but compute-intensive ML workloads are infeasible to execute locally on resource-constrained devices, motivating reliance on cloud servers and raising privacy concerns about transmitted data. 32 A range of privacy-preserving machine learning (PPML) techniques has been proposed: homomorphic encryption (HE) [Juvekar et al., 2018, Brutzkus et al., 2019, Gilad-Bachrach et al., 2016, Pang et al., 2024, Santriaji et al., 2025], secure multi-party computation (MPC) [Mohassel and Zhang, 2017, Liu et al., 2017, Huang et al., 2022, Hao et al., 2022, Xu et al., 2025], differential privacy (DP) [Abadi et al., 2016, Mai et al., 2023], and hardware-assisted approaches [Lee et al., 2019, Tramer and Boneh, 2018, Liu et al., 2021, Hunt et al., 2020, Zhang et al., 2024b, Sun et al., 2025]. An ideal PPML solution provides strong privacy under a realistic threat model while preserving accuracy, low latency, and modest computational complexity. Existing PPML methods cannot simultaneously satisfy all of these requirements. Many incur significant computational or communication overhead due to algorithmic or hardware constraints, limiting applicability to latency-sensitive applications such as smart homes, video surveillance, and collaborative robotic systems. An emerging alternative is encoding-based PPML, particularly adversarial representation learning (ARL) [Xie et al., 2017, Gupta et al., 2021a,b, Jaiswal et al., 2020, Osia et al., 2020, Singh et al., 2021, Roy and Boddeti, 2019, Singh et al., 2023, Zhang et al., 2025]. ARL introduces a client-side encoding stage that removes sensitive information before transmission, enabling efficient cloud-side inference on sanitized representations. However, providing strong privacy with ARL requires increasingly expressive encoders as network depth grows, which limits practicality on resource-constrained devices. Prior ARL work targets shallow models for downstream classification , often training large client-side encoders—impractical for modern LLMs and edge devices. Our approach instead uses lightweight, low-rank privacy adapters that keep all pre-trained transformer layers frozen, achieving stronger privacy at lower latency while remaining compatible with large-scale LLMs. 
+
+## F Broader Impacts 
+
+This work advances the security and privacy of collaborative large language model (LLM) inference by introducing a principled, efficient defense against prompt inversion attacks. By enabling lightweight, privacy-preserving inference on resource-constrained edge devices, our approach can help protect sensitive user inputs in real-world applications such as smart homes, healthcare systems, enterprise retrieval-augmented generation, and other edge–cloud AI deployments. The proposed privacy adapters offer a practical alternative to heavyweight cryptographic techniques, potentially lowering the barrier to deploying privacy-aware AI systems at scale. At the same time, as with any privacy-enhancing technology, there is a risk that improved confiden-tiality could be misused to obscure malicious or harmful activities. We emphasize that our method is designed to protect benign user data under clearly defined threat models and system constraints, and does not prevent lawful access or auditing at higher system layers. We encourage future work to explore complementary mechanisms for transparency, accountability, and misuse detection alongside privacy-preserving inference techniques. Overall, we believe that this work contributes positively to the responsible deployment of large-scale AI systems by strengthening user privacy while maintaining practical efficiency and performance. 33
