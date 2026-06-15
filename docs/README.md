@@ -6,63 +6,47 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-14
-- 运行时间：2026-06-14 06:44:52 UTC
+- 最新运行日期：2026-06-15
+- 运行时间：2026-06-15 07:31:11 UTC
 - 运行状态：成功
-- 本次总论文数：13
-- 精读区：6
-- 速读区：7
+- 本次总论文数：9
+- 精读区：5
+- 速读区：4
 
 ### 今日简报（AI）
-今日精读两篇9分论文，聚焦AI Agent自主信任层构建与RAG系统低成本指令伪装攻击。
-
-最值得关注《AgentTrust》的自我改进信任机制，以及《Document-Authored Control-Signal Impersonation》揭示的RAG安全盲区。
-
-建议普通读者优先精读这两篇，了解Agent安全与检索增强生成系统的隐蔽漏洞。
-- 详情：[/202606/14/README](/202606/14/README)
+今日聚焦多智能体系统安全与博弈论推理，精选10分SAIGuard主动防御与9分博弈控制论文。SAIGuard通过通信状态模拟实现LLM多智能体系统主动防御，博弈论控制则增强上下文推理鲁棒性。建议优先精读这两篇，并速览自动化提示注入检测工具PI-Hunter以补充攻击面认知。
+- 详情：[/202606/15/README](/202606/15/README)
 
 ### 精读区论文标签
-1. [AgentTrust: A Self-Improving Trust Layer for AI-Agent Actions](/202606/14/2606.08539v1-agenttrust-a-self-improving-trust-layer-for-ai-agent-actions)  
+1. [SAIGuard: Communication-State Simulation for Proactive Defense of LLM Multi-Agent Systems](/202606/15/2606.12474v1-saiguard-communication-state-simulation-for-proactive-defense-of-llm-multi-agent-systems)  
+   标签：评分：10.0/10、query:llm-security
+   evidence：面向LLM多智能体系统的主动防御方法
+2. [Game-Theoretic Multi-Agent Control for Robust Contextual Reasoning in LLMs](/202606/15/2606.10322v2-game-theoretic-multi-agent-control-for-robust-contextual-reasoning-in-llms)  
    标签：评分：9.0/10、query:llm-security
-   evidence：针对AI代理动作的信任层，包含威胁分类
-2. [Document-Authored Control-Signal Impersonation: A Low-Cost Indirect Prompt Attack on RAG Safety Boundaries](/202606/14/2606.09005v1-document-authored-control-signal-impersonation-a-low-cost-indirect-prompt-attack-on-rag-safety-boundaries)  
-   标签：评分：9.0/10、query:llm-security
-   evidence：研究RAG系统中的一类间接提示注入攻击
-3. [The Injection Paradox: Brand-Level Suppression in Safety-Trained LLM Recommendations via RAG Context Injection](/202606/14/2606.09204v1-the-injection-paradox-brand-level-suppression-in-safety-trained-llm-recommendations-via-rag-context-injection)  
-   标签：评分：9.0/10、query:llm-security
-   evidence：RAG-based LLM推荐中的提示注入导致品牌压制
-4. [Runtime Skill Audit: Targeted Runtime Probing for Agent Skill Security](/202606/14/2606.11671v1-runtime-skill-audit-targeted-runtime-probing-for-agent-skill-security)  
-   标签：评分：9.0/10、query:llm-security
-   evidence：智能体技能的动态安全分析
-5. [Constrained Paraphrase Consistency for LLM Hallucination Detection](/202606/14/2606.08158v1-constrained-paraphrase-consistency-for-llm-hallucination-detection)  
+   evidence：通过多智能体博弈论控制防御提示注入和上下文投毒
+3. [Detecting Sensitive Personal Information in Japanese Pre-Training Corpora for Large Language Models](/202606/15/2606.12114v1-detecting-sensitive-personal-information-in-japanese-pre-training-corpora-for-large-language-models)  
    标签：评分：8.0/10、query:llm-security
-   evidence：幻觉检测作为内容安全保障
-6. [Autonomous Incident Resolution at Hyperscale: An Agentic AI Architecture for Network Operations](/202606/14/2606.09122v1-autonomous-incident-resolution-at-hyperscale-an-agentic-ai-architecture-for-network-operations)  
+   evidence：从LLM训练语料中检测和过滤敏感个人信息
+4. [SMSR: Certified Defence Against Runtime Memory Poisoning in Persistent LLM Agent Systems](/202606/15/2606.12703v1-smsr-certified-defence-against-runtime-memory-poisoning-in-persistent-llm-agent-systems)  
    标签：评分：8.0/10、query:llm-security
-   evidence：包含安全边界的智能体AI架构用于自主事件解决
+   evidence：对持久化LLM智能体系统中的内存投毒提供认证防御
+5. [SkillMutator: Benchmarking and Defending Language-and-Code Cross-modal Attacks on LLM Agent Skills](/202606/15/2606.14154v1-skillmutator-benchmarking-and-defending-language-and-code-cross-modal-attacks-on-llm-agent-skills)  
+   标签：评分：8.0/10、query:llm-security
+   evidence：防御针对LLM智能体技能的语言-代码跨模态攻击
 
 ### 速读区论文标签
-1. [JailbreakOPT: Tool-Assisted Iterative Jailbreak Prompt Optimization](/202606/14/2606.11425v1-jailbreakopt-tool-assisted-iterative-jailbreak-prompt-optimization)  
-   标签：评分：8.0/10、query:llm-security
-   evidence：提出JailbreakOPT框架用于迭代优化越狱提示，属于提示注入攻击
-2. [Hierarchical Certified Semantic Commitment for Byzantine-Resilient LLM-Agent Collaboration](/202606/14/2606.07316v1-hierarchical-certified-semantic-commitment-for-byzantine-resilient-llm-agent-collaboration)  
+1. [PI-Hunter: Automated Red-Teaming for Exposing and Localizing Prompt Injections](/202606/15/2606.12737v1-pi-hunter-automated-red-teaming-for-exposing-and-localizing-prompt-injections)  
    标签：评分：7.0/10、query:llm-security
-   evidence：LLM智能体协作的拜占庭容错协议，确保安全提交
-3. [Adversarial Robustness of Activation Steering in Large Language Models](/202606/14/2606.07696v1-adversarial-robustness-of-activation-steering-in-large-language-models)  
+   evidence：自动化红队测试暴露提示注入
+2. [SafeLLM: Extraction as a Hallucination-Resistant Alternative to Rewriting in Safety-Critical Settings](/202606/15/2606.12897v1-safellm-extraction-as-a-hallucination-resistant-alternative-to-rewriting-in-safety-critical-settings)  
    标签：评分：7.0/10、query:llm-security
-   evidence：评估激活引导方法的对抗鲁棒性
-4. [Defending Against Malicious Finetuning by Scaling Train-time Adversarial Attacks](/202606/14/2606.07970v1-defending-against-malicious-finetuning-by-scaling-train-time-adversarial-attacks)  
+   evidence：提出基于提取的RAG减少幻觉，确保安全内容
+3. [Functional Cache Grafting: Robust and Rapid Code-Policy Synthesis for Embodied Agents](/202606/15/2606.13097v1-functional-cache-grafting-robust-and-rapid-code-policy-synthesis-for-embodied-agents)  
    标签：评分：7.0/10、query:llm-security
-   evidence：防御恶意微调以保持安全对齐，类似于内容安全过滤
-5. [Defense Against Prompt Inversion Attacks: An Information-Theoretic Approach for LLM Collaborative Inference](/202606/14/2606.11592v1-defense-against-prompt-inversion-attacks-an-information-theoretic-approach-for-llm-collaborative-inference)  
-   标签：评分：7.0/10、query:llm-security
-   evidence：信息论方法防御提示反转攻击，保护输入隐私
-6. [Context-Based Adversarial Attacks on AI Code Generators: Vulnerability Analysis and Implications](/202606/14/2606.10945v1-context-based-adversarial-attacks-on-ai-code-generators-vulnerability-analysis-and-implications)  
+   evidence：解决具身智能体代码策略中缺失安全防护的问题
+4. [Contract-Based Compositional Shielding for Safe Multi-Agent Reinforcement Learning](/202606/15/2606.14130v1-contract-based-compositional-shielding-for-safe-multi-agent-reinforcement-learning)  
    标签：评分：6.0/10、query:llm-security
-   evidence：基于上下文的AI代码生成器对抗攻击与防御机制
-7. [Null-Space Constrained Low-Rank Adaptation for Response-Specified Large Language Model Unlearning](/202606/14/2606.10989v1-null-space-constrained-low-rank-adaptation-for-response-specified-large-language-model-unlearning)  
-   标签：评分：6.0/10、query:llm-security
-   evidence：LLM遗忘抑制不良知识，与内容安全相关
+   evidence：多智能体系统的组合式安全屏蔽方法
 
 
 <div class="dpr-home-promo-card">
