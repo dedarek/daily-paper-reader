@@ -6,47 +6,26 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-15
-- 运行时间：2026-06-15 07:31:11 UTC
+- 最新运行日期：2026-06-16
+- 运行时间：2026-06-16 07:09:52 UTC
 - 运行状态：成功
-- 本次总论文数：9
-- 精读区：5
-- 速读区：4
+- 本次总论文数：2
+- 精读区：1
+- 速读区：1
 
 ### 今日简报（AI）
-今日聚焦多智能体系统安全与博弈论推理，精选10分SAIGuard主动防御与9分博弈控制论文。SAIGuard通过通信状态模拟实现LLM多智能体系统主动防御，博弈论控制则增强上下文推理鲁棒性。建议优先精读这两篇，并速览自动化提示注入检测工具PI-Hunter以补充攻击面认知。
-- 详情：[/202606/15/README](/202606/15/README)
+今日精读1篇、速读1篇，聚焦LLM Agent安全：护栏系统自身存在DoS攻击漏洞，需警惕；同时隐私保护方案（Minim）通过本地清理实现最小化视图，值得参考。建议首先阅读《From Shield to Target》，学习防护Agent免受拒绝服务攻击的具体方法。
+- 详情：[/202606/16/README](/202606/16/README)
 
 ### 精读区论文标签
-1. [SAIGuard: Communication-State Simulation for Proactive Defense of LLM Multi-Agent Systems](/202606/15/2606.12474v1-saiguard-communication-state-simulation-for-proactive-defense-of-llm-multi-agent-systems)  
-   标签：评分：10.0/10、query:llm-security
-   evidence：面向LLM多智能体系统的主动防御方法
-2. [Game-Theoretic Multi-Agent Control for Robust Contextual Reasoning in LLMs](/202606/15/2606.10322v2-game-theoretic-multi-agent-control-for-robust-contextual-reasoning-in-llms)  
+1. [From Shield to Target: Denial-of-Service Attacks on LLM-Based Agent Guardrails](/202606/16/2606.14517v1-from-shield-to-target-denial-of-service-attacks-on-llm-based-agent-guardrails)  
    标签：评分：9.0/10、query:llm-security
-   evidence：通过多智能体博弈论控制防御提示注入和上下文投毒
-3. [Detecting Sensitive Personal Information in Japanese Pre-Training Corpora for Large Language Models](/202606/15/2606.12114v1-detecting-sensitive-personal-information-in-japanese-pre-training-corpora-for-large-language-models)  
-   标签：评分：8.0/10、query:llm-security
-   evidence：从LLM训练语料中检测和过滤敏感个人信息
-4. [SMSR: Certified Defence Against Runtime Memory Poisoning in Persistent LLM Agent Systems](/202606/15/2606.12703v1-smsr-certified-defence-against-runtime-memory-poisoning-in-persistent-llm-agent-systems)  
-   标签：评分：8.0/10、query:llm-security
-   evidence：对持久化LLM智能体系统中的内存投毒提供认证防御
-5. [SkillMutator: Benchmarking and Defending Language-and-Code Cross-modal Attacks on LLM Agent Skills](/202606/15/2606.14154v1-skillmutator-benchmarking-and-defending-language-and-code-cross-modal-attacks-on-llm-agent-skills)  
-   标签：评分：8.0/10、query:llm-security
-   evidence：防御针对LLM智能体技能的语言-代码跨模态攻击
+   evidence：揭示了对基于LLM的护栏的拒绝服务攻击，属于提示注入攻击的一种
 
 ### 速读区论文标签
-1. [PI-Hunter: Automated Red-Teaming for Exposing and Localizing Prompt Injections](/202606/15/2606.12737v1-pi-hunter-automated-red-teaming-for-exposing-and-localizing-prompt-injections)  
+1. [Minim: Privacy-Aware Minimal View for Agents via Trusted Local Sanitization](/202606/16/2606.13949v1-minim-privacy-aware-minimal-view-for-agents-via-trusted-local-sanitization)  
    标签：评分：7.0/10、query:llm-security
-   evidence：自动化红队测试暴露提示注入
-2. [SafeLLM: Extraction as a Hallucination-Resistant Alternative to Rewriting in Safety-Critical Settings](/202606/15/2606.12897v1-safellm-extraction-as-a-hallucination-resistant-alternative-to-rewriting-in-safety-critical-settings)  
-   标签：评分：7.0/10、query:llm-security
-   evidence：提出基于提取的RAG减少幻觉，确保安全内容
-3. [Functional Cache Grafting: Robust and Rapid Code-Policy Synthesis for Embodied Agents](/202606/15/2606.13097v1-functional-cache-grafting-robust-and-rapid-code-policy-synthesis-for-embodied-agents)  
-   标签：评分：7.0/10、query:llm-security
-   evidence：解决具身智能体代码策略中缺失安全防护的问题
-4. [Contract-Based Compositional Shielding for Safe Multi-Agent Reinforcement Learning](/202606/15/2606.14130v1-contract-based-compositional-shielding-for-safe-multi-agent-reinforcement-learning)  
-   标签：评分：6.0/10、query:llm-security
-   evidence：多智能体系统的组合式安全屏蔽方法
+   evidence：面向智能体输入的隐私感知本地清理
 
 
 <div class="dpr-home-promo-card">

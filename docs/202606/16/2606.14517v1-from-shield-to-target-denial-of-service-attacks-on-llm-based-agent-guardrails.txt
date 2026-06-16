@@ -1,0 +1,908 @@
+Title: From Shield to Target: Denial-of-Service Attacks on LLM-Based Agent Guardrails
+
+URL Source: https://arxiv.org/pdf/2606.14517v1
+
+Published Time: Mon, 15 Jun 2026 01:11:45 GMT
+
+Number of Pages: 19
+
+Markdown Content:
+# From Shield to Target: Denial-of-Service Attacks on LLM-Based Agent Guardrails 
+
+Yuguang Zhou ∗, Xunguang Wang ∗, Pingchuan Ma †, Zhantong Xue ∗, Zhaoyu Wang ∗, Shuai Wang ∗∗Hong Kong University of Science and Technology, Hong Kong SAR, 
+
+> †
+
+Zhejiang University of Technology, Hangzhou, China 
+
+Abstract —LLM-based guardrails have emerged as a highly effective defense against prompt injection and jailbreak attacks in autonomous agents. However, we reveal that the very rea-soning and task-following capabilities enabling this protection introduce a novel vulnerability: attackers can inject crafted data to trap the guardrail in extended reasoning loops, effectuating a systematic denial-of-service (DoS) attack. To systematically expose this threat, we design a beam-search optimization framework that crafts natural-language payloads to maximize guardrail reasoning length, utilizing an LLM proposer guided by a strategy bank. Based on the observation of guardrail’s schema-following nature, we also provide another attack frame-work driven by mechanism-aware structural mutations with less computational load. The attack efficacy is systematically evaluated in two parts. First, in standalone evaluations, the attack generalizes across diverse guardrail architectures, safety templates, and agent benchmarks. Payloads optimized on a single open-source surrogate successfully transfer to eight leading model backbones (e.g., Claude, GPT, Gemini, DeepSeek, and Qwen), achieving a 13–63 × token amplification. Second, in end-to-end real-world agent deployments (web, desktop, code, and multi-agent systems), the attack reveals up to a 148 × latency amplification. We show that a single poisoned document can saturate shared guardrail infrastructures, effectively starving co-located agents and paralyzing the entire system. By uncovering this availability flaw, our work underscores the urgent need to develop cost-bounded, reasoning-robust guardrails. 
+
+## 1. Introduction 
+
+LLM-based autonomous agents are rapidly transitioning from research prototypes to production systems. Various agents like web agents [1]–[3], desktop agents [4], [5], code agents [6]–[8], and multi-agent systems [9], [10] are now deployed in increasingly consequential real-world scenarios. Different from ordinary chatbots, these agents do not only answer questions. They can read third-party content like web pages, repository files, desktop contents, or messages from other agents, and then decide whether to click, write code, execute tools, or delegate tasks. This shift from text generation to real-world interactions makes a runtime safety layer for autonomous agents essential. Early defenses for such systems often rely on simple filters: for example, blocking known malicious phrases, matching policy keywords, or checking whether a proposed action fits a small set of hand-written rules. These defenses are easy to understand, but they struggle when the danger is not a single forbidden word or command. In prompt injection [11], [12] and jailbreak attacks [13], [14], the risk may depend on how external text, the user’s goal, the agent’s memory, and the next tool call interact. To handle this richer setting, recent systems increasingly place an LLM-based guardrail between the agent and its next action. Instead of only matching patterns, the guardrail reads the full agent context, including proposed actions, environmental observations, and conversation history, and then produces a structured safety verdict. This context-aware reasoning capability makes LLM-based guardrails the dominant paradigm in recent agent safety research [15]– [19]. For instance, LLM-based guardrails have become the de facto “auto-approval” method in commercial agents like OpenAI’s Codex [20] and Anthropic’s Claude Code [21]. This shift from lightweight filtering to LLM-based guardrails, however, introduces an assumption that has received little attention: the guardrail itself must remain fast enough to serve as a practical runtime defense. But an LLM-based guardrail is no longer a cheap check over a string or action label; it is an additional LLM inference step that may reason for a while and generate detailed analysis before every agent action. Most prior work asks whether a guardrail reaches the correct safety verdict. But in agent deployments, availability is equally important, because the agent cannot safely proceed until the guardrail finishes. In this paper, we reveal reasoning-extension denial-of-service (DoS), a previously overlooked attack surface in LLM-based guardrails, by exploiting their schema-following characteristics. LLM-based guardrails are prompted, some-times trained, to enumerate risks, assess evidence, and produce structured verdicts, while adversarial content can mimic and extend these schemas, causing the guardrail to treat the injected scaffold as part of its analysis and reason far longer than normally needed. To systematically expose this threat, we design a beam-search optimization framework in Section 3.3 that uses the guardrail’s own reasoning output as feedback: it identifies structures that trigger extended analysis, mutates them, and retains variants that maximize reasoning length. We instantiate it in two ways: an LLM proposer guided by a strategy bank, and a mechanism-aware optimizer that directly mutates schema slots such as risk categories, enumeration depth, and anti-shortcut clauses. Payloads op-timized on a single open-source surrogate TS-Guard-8B could transfer without adaptation to eight additional model backbones spanning open-source and closed-source families, 
+
+> arXiv:2606.14517v1 [cs.CR] 12 Jun 2026
+
+achieving 13–63 × token amplification, while six prior DoS methods achieve only 1.1–1.2 ×. Figure 1 summarizes this end-to-end threat: poisoned environmental content enters the agent loop, is interpreted by the guardrail as an analytical schema, and delays verdict generation until guardrail compute and shared-agent availability degrade. We further demonstrate the attack’s real-world impact through four end-to-end agent deployments in Section 6. Each setting requires a different adaptation: integrated guardrails in code agents need contradictory security factors rather than pure template-following; multi-agent systems require transform-resilient payloads that survive intermediate rewriting; web and desktop agents require payloads that fit natural environmental content. Across OpenHands [6], LangGraph [9], BrowserGym [3], and OSWorld [4], these adaptations achieve 36.3 ×, 148 ×, 131 ×, and 18 × peak la-tency amplification, with LangGraph also showing significant throughput degradation from head-of-line blocking on shared guardrail infrastructure. We evaluate several mitigations in Section 7 and find that none directly resolves the threat. Pre-inference filters miss our fluent, safety-analysis-like payloads; hard token budgets merely shift the failure mode, where fail-open enables safety bypass and fail-closed denies availability to legitimate users; and more capable guardrail models can produce even longer loops because they follow the injected schemas more faithfully. These results underscore the need for cost-bounded, reasoning-robust guardrails. In summary, we make the following contributions:  
+
+> •
+
+We identify and characterize reasoning-extension DoS , a new vulnerability class in LLM-based guardrails where adversarial content exploits schema-following behavior to induce unbounded reasoning loops.  
+
+> •
+
+We present a beam-search optimization framework 
+
+with two instantiations: LLM-as-Proposer with strategy-bank guidance, and Mechanism-Aware with attention-informed structural mutations. Our method can craft fluent, natural-language payloads transferring across 8 guardrail models. We further develop scenario-specific adaptations: conflict-based ambiguity for integrated guardrails and transform-resilient optimization for multi-agent pipelines.  
+
+> •
+
+We demonstrate the attack’s real-world impact through four end-to-end agent deployments with scenario-specific technical adaptations, spanning web, desktop, code, and multi-agent systems, revealing up to 148 ×
+
+latency amplification and systemic cascading effects that paralyze shared guardrail infrastructure.  
+
+> •
+
+We evaluate several mitigations and show that straight-forward defense mechanisms fail to adequately address the vulnerability, underscoring the urgent need for cost-bounded, reasoning-robust guardrails. 
+
+## 2. Background 
+
+2.1. LLM-based Agent Safety 
+
+LLM-Based Agents. Modern LLM-based agents extend language models with tool use, memory, and multi-step planning, enabling autonomous interaction with complex environments [1], [2], [4], [6], [9]. Beyond conventional LLM chatbots, LLM-based agents do not merely generate text for a human to inspect. They read from external environments, choose actions, call tools, and may update persistent state. We model an LLM-based agent as a policy π that interacts with an environment E over a trajectory τt = ( u, o 1: t, m t, a 1: t−1),where u is the user task, o1: t are observations obtained from the environment, mt is the agent’s memory or internal state, and a1: t−1 are previously executed actions. At step t, the agent proposes an action at ∼ π(τt), such as clicking a webpage element, calling an API, executing code, or writing a file. 
+
+Agent Safety. This shift from text generation to action makes safety a runtime property of the whole trajectory rather than a static property of a single prompt or completion. An action 
+
+at may be safe or unsafe depending on the user task u, prior observations o1: t, memory mt, tool state, and downstream effects captured by τt. This trajectory also contains untrusted environmental content: agents routinely read webpages, files, API responses, repository contents, desktop state, and inter-agent messages whose provenance and integrity cannot be guaranteed. We denote such content by x; when it is adversarially crafted, we call it a payload p. Because x
+
+enters τt through an observation ot, an attacker can affect the agent’s future context without controlling the user task, model weights, or system prompt. This is the core channel for agent safety attacks: indirect prompt injection [11], [12] targets observations by placing malicious instructions in agent-fetched content; jailbreaks [13], [14] target the policy’s interpretation of u and τt through adversarial instructions; and supply-chain attacks inject malicious tools or plugins into the action space available to the agent [8]. Recent benchmarks show that these harms often arise from tool misuse, task misalignment, indirect instructions, and multi-step interaction effects visible only in the full environmental trajectory [22]– [24]. The OWASP Top 10 for LLM Applications ranks prompt injection as the highest-priority risk [19]. As a result, agent safety mechanisms must monitor not only user instructions, but also observations, proposed tool calls, intermediate reasoning, and cross-turn state. 
+
+2.2. The Rise of LLM-Based Reasoning Guardrails 
+
+Agent Guardrails. An agent guardrail is a runtime monitor that evaluates an agent’s context before an action is executed. Let G denote the guardrail and T its prompt template or policy wrapper. We write the guardrail input context as 
+
+ct = ( τt, a t), i.e., the current trajectory together with the proposed action. If an environmental payload p appears in the observation stream, ct[p] denotes the same context after 1⃝ Where it enters 2⃝ Inside the guardrail: the schema-following hijack 3⃝ Impact      
+
+> inject
+> !
+> environment
+> agent guardrail
+> fetch
+> !
+> poison
+> action
+> benign VERDICT fixed schema ⇒reaches a verdict
+> !
+> fetched content
+
+## · · · VERDICT      
+
+> 1reads as schema 2generates more sections 4no verdict
+> attends to schema headers 3
+
+## 13 –63 ×  
+
+> compute / call (up to 148 ×)
+> ××
+> co-located agents starved
+> throughput degradation
+
+Figure 1: Illustration of the guardrail DoS threat, i.e. From Shield to Target. Hidden text in fetched content mimics the guardrail’s analytical schema, trapping it in an unbounded reasoning loop with no verdict—inflating per-call compute 13 –63 ×
+
+(up to 148 ×) and starving co-located agents. inserting p into the relevant observation. Given a context ct,the guardrail produces a response 
+
+rt = G(T (ct)) , (1) which contains a safety analysis and a verdict vt ∈{allow , block }. When vt = allow , the agent proceeds to execute at; when vt = block , the agent halts or replans. Hence, the guardrail serves as a safety shield that filters out unsafe actions before they can cause harm. Different guardrail designs vary in how they implement G and T , but they all share this core function of inspecting the agent’s proposed action in context and making a safety decision. This runtime guardrail is distinct from safety alignment: Alignment shapes the agent model’s general behavior during training or prompting, while a guardrail is an explicit per-action decision layer that can inspect the concrete trajectory and proposed action at deployment time. 
+
+Guardrail Paradigms. Existing guardrail designs can be expressed as three broad instantiations of this monitor, including rule-based guardrails, model-based classifiers, and LLM-based reasoning guardrails. 
+
+Rule-Based Guardrails instantiate G as a deterministic policy over hand-written predicates: vt = grule (F (ct)) ,where F (·) extracts keywords, tool names, permissions, or other fixed features from the context-action pair. They enforce static policies through keyword filters, permission systems, or code-level access control. They are fast and predictable, but they cannot reason about whether an action is safe in context. Furthermore, as attacks grow more sophisticated, using natural-language manipulation rather than detectable patterns, static rules become trivially bypassable [25]–[27]. 
+
+Model-Based Classifiers instantiate G as a discriminative model st = fθ (T (ct)) followed by a thresholding rule that maps harm scores st to vt. Systems such as Llama Guard [28] and DeBERTa-based injection detectors [29] score inputs against predefined harm taxonomies. These handle known attack categories effectively but cannot generalize to the open-ended, context-dependent nature of agent behavior. Novel indirect prompt injections that use benign-looking language, multi-step attack chains that appear safe at each individual step [30], and domain-specific risks that require semantic understanding of the task evade fixed taxonomies [31], [32]. The limitations of rule-based and classifier-based guardrails against sophisticated, context-aware threats have driven the community toward a different paradigm. 
+
+LLM-Based Guardrails instantiate G as a generative language model that outputs a structured response rt, typ-ically containing an explicit reasoning section, evidence analysis, and a parsed verdict vt. Formally, the response can be decomposed into 
+
+rt = ( ϕt, v t), ϕt = Φ( rt), (2) where ϕt denotes the generated reasoning or analysis section and vt is the final safety verdict. They address the limitations above by analyzing the agent’s full context, including pro-posed actions, environmental observations, and conversation history, before producing a structured safety verdict. This reasoning capability enables nuanced judgments that account for intent, context, and downstream consequences, making these guardrails effective against indirect prompt injection and adversarial jailbreaks where static approaches fail. 
+
+2.3. Denial-of-Service Attacks on LLMs 
+
+LLM Denial-of-Service. Denial-of-service attacks on LLMs aim to force the model or its serving stack to consume excessive computation, thereby increasing latency, reducing throughput, and exhausting resources. For an LLM M
+
+exposed through an interface I, a DoS attack can be viewed as searching for a payload 
+
+p∗ = arg max  
+
+> p∈P
+
+C(M (I(p))) , (3) where P is the payload space and C(·) is a cost measure such as output length, hidden reasoning length, tool invocations, wall-clock latency, or serving cost. Because generation cost is approximately proportional to the number of generated tokens, many attacks use response length as the observable proxy for DoS impact. Thus, the objective of many DoS attacks can be simplified to finding a payload that maximizes the model’s output length. Current LLM DoS strategies mainly fall into three categories. First, decoy problem injection places compu-tationally expensive tasks, such as long reasoning puzzles, Attacker       
+
+> Zsame decoy LLM
+> Guardrail
+> ✓SAFE
+> engages
+> ignored
+> long reasoning
+> short verdict
+> Decoy: off-task puzzle as bait, e.g. “R∞
+> 0e−x2
+> dx ”
+> (a) Off-task decoy: engaged by the LLM, ignored by the guardrail.
+> Attacker
+> schema payload
+> Schema Payload: text shaped like the guardrail’s own analysis template as bait
+> Example:
+> A) decompose request B) list evidence C) adversarial check D) score S1–S9, calibrate
+> Guardrail
+> inject
+> reasoning loop
+> potential loop
+> (b) Schema-shaped payload: mimicking the guardrail’s own analysis traps it in a reasoning loop.
+
+Figure 2: From decoy DoS to schema-based guardrail attack. mathematical derivations, recursive instructions, or multi-step analytic prompts, inside the model input; representative methods include OverThink [33], ReasoningBomb [34], ENGORGIO [35], CRABS [36], and RECUR [37]. Second, optimization-based adversarial strings search over token sequences or prompt fragments that induce unusually long generation, using gradient, embedding-space, evolutionary, or black-box feedback signals, as in ThinkTrap [38]. Third, tool-call chaining increases cost at the system level by causing an agent or LLM application to invoke additional tools, model calls, or interaction steps from a single input event [39]. 
+
+## 3. The Concealed Vulnerability 
+
+In this section, we show that the very reasoning capability of LLM-based guardrails, which makes them effective safety analyzers, also makes them vulnerable to a new threat, the reasoning-extension DoS attack. We exploit the guardrail’s own schema-following behavior and design a beam-search optimization framework to discover effective payloads that maximize the guardrail’s reasoning length. 
+
+3.1. A New Attack Surface 
+
+As defined in Section 2, an LLM-based guardrail G
+
+evaluates the current trajectory τt and proposed action at
+
+before the agent can proceed. This makes the guardrail a powerful runtime safeguard: by reasoning over the full agent context, it can detect sophisticated attacks including indirect prompt injection, multi-step jailbreaks, and context-dependent risks that traditional rule-based filters and static classifiers cannot handle well. The same placement also makes the guardrail a critical-path service for web agents, desktop agents, code agents, and multi-agent systems. Yet this very reasoning capability introduces a vulner-ability that has no analogue in prior safety architectures. Consider what happens when a guardrail processes a tra-jectory containing adversarial environmental content p: the model must reason about whether the proposed action is safe, producing a structured analysis before issuing a verdict. If an attacker can make this reasoning process take significantly longer and inflate its computation, the guardrail becomes a denial-of-service amplifier sitting on the critical path of every agent action. This threat is structurally different from attacking the agent LLM itself. The guardrail occupies a uniquely vulnera-ble position: it is (1) invoked on every agent action, creating a multiplicative effect; (2) exposed to raw, unsanitized third-party content that the agent fetches from its environment; and (3) designed to reason deeply about that content. The deeper it reasons, the better its safety judgment may be, but the more compute it consumes. An attacker who can inject text into any content the agent touches, which could be a webpage, a repository file, or an API response, can force the guardrail into extended reasoning on every action that touches that content. The downstream consequences are severe. Since the guardrail is a necessary step for agent functioning, each poi-soned action can consume dozens of times more compute and time, and the agent cannot advance until the guardrail returns. Sustained injection thus drives the guardrail into resource exhaustion, halting task progress and effectively denying service to the agent. This effect compounds in multi-agent or shared-guardrail deployments, where a single poisoned resource can saturate the guardrail serving infrastructure, degrading throughput for all co-located agents through head-of-line blocking. A rigorous formulation of this threat is later given in Section 4. 
+
+3.2. Existing DoS Attacks on LLMs 
+
+Currently, there are some existing DoS attacks on LLMs as summarized in Section 2.3. However, their technical paths do not directly transfer to agent guardrails, primarily because they assume the target model will treat the payload as task-relevant generation work. Guardrails operate under task confinement: their prompt template T and safety tuning concentrate behavior on evaluating the guardrail context 
+
+ct = ( τt, a t), not on solving arbitrary content embedded in an observation. As shown in Figure 2, off-task puzzles or recursive instructions that may engage a general-purpose LLM are usually treated by the guardrail as inert data to inspect. Similarly, optimized adversarial strings are brittle in this setting because they are model-specific, easy to expose with perplexity-style filters [40], [41], and still enter the guardrail as content to evaluate rather than instructions to execute. Tool-call chaining has a different mismatch: it consumes resources by expanding the agent’s action loop, but it does not directly extend the guardrail response rt and requires control over a tool-like interface rather than simple text injection. The common barrier is that these methods try to distract the model away from its assigned task. When the model’s behavioral distribution is concentrated on safety analysis, off-task engagement is difficult. We confirm this empirically in Section 5: all six baselines achieve ≤1.20 × amplification on guardrails. Our key insight is to invert this challenge: rather than trying to distract the guardrail away from its task, we exploit the guardrail’s own task-following behavior to make it reason excessively within its task. 
+
+3.3. Our Approach 
+
+Typically, LLM-based guardrails are designed to follow a structured analytical template [15]–[17], [42], [43]. It includes enumerate risk categories, assess each one, weigh evidence, and produce a verdict. Some guardrails may also be fine-tuned to follow their safety guidelines and generate analysis content [15], [17]. This template-following behavior is one of the reasons that makes them reliable safety analyzers. However, we discovered that when the agent-fetched content contains structures that mirror and extend this analytical schema, the guardrail tends to treat them as legitimate analytical structures and dutifully executes them, producing vastly extended reasoning that mechanically re-applies the injected scaffold. Our attack is built on this key observation: the guardrail’s strongest defense, its structured reasoning schema, is also a great vulnerability. Compared to prior DoS attacks, our attack does not inject irrelevant problems or adversarial token sequences. Instead, it injects more of what the guardrail already wants to do, i.e. the structured safety analysis, causing it to reason excessively within its own task rather than deviating from it. The guardrail’s instruction-following capability, as shown in Figure 8, the very property that makes it effective at safety reasoning, becomes the amplification mechanism. 
+
+Mechanistic Observations. As shown in Figure 3, our observations reveal that effective payloads trigger a recurring mechanistic behavior in the guardrail model. When the model encounters content structured as an analytical schema (e.g., risk categories, enumeration requirements, assessment matrices), its attention patterns shift: response tokens begin attending heavily to schema-header tokens in the model’s own generated output, creating a self-reinforcing cycle. The model re-reads its own structural output, generates more structure following the same pattern, attends to that new structure, and continues indefinitely. This manifests as two measurable signatures: attention cycling : the mean attention weight from response tokens to schema headers is 9.6 × higher in loop cases than baselines; 
+
+entropy collapse : the model’s per-token uncertainty drops sharply (mean 0.132 bits vs. 0.264 bits for normal gener-ation) as it enters template-driven generation rather than genuine reasoning. The model is no longer “thinking” in any meaningful sense; it is mechanically filling a template it has constructed for itself, trapped by its own instruction-following fidelity. 0 5 10 15 20 25  
+
+> Layer
+> 0.00
+> 0.02
+> 0.04
+> 0.06
+> 0.08
+> 0.10
+> Attention to Schema Headers
+> L3
+> Baseline
+> Loop-inducing Baseline Loop-inducing
+> 0.00
+> 0.05
+> 0.10
+> 0.15
+> 0.20
+> 0.25
+> 0.30
+> 0.35
+> Mean Shannon Entropy (bits)
+> 2.0x
+
+Figure 3: Mechanistic signatures of reasoning extensions. 
+
+Left : layer-wise attention to schema headers. Right : per-token entropy comparison. 
+
+Beam-Search Optimization Framework. Based on the observations in Section 3.3, we design a beam-search opti-mization framework to discover effective payloads. Given a surrogate guardrail Gs with prompt template T and a set of agent contexts C = {c1, . . . , c n}, where each ci = ( τi, a i)
+
+follows the notation in Section 2, we seek a payload p∗ that maximizes the expected reasoning length: 
+
+p∗ = arg max  
+
+> p∈P
+
+Ec∼C [|Φ( Gs(T (c[p]))) |] , (4) where Φ( ·) extracts the reasoning section from the guardrail’s output, | · | measures its length, and c[p] denotes the context obtained by inserting payload p into the environmental observation of c. The expectation over multiple contexts ensures the payload generalizes rather than overfitting to a single input. The optimizer maintains a beam of k candidate payloads, iteratively expanding each parent into b children, scoring all candidates with Fη , and selecting the top-k subject to a diversity threshold δ that prevents beam collapse to near-duplicates. Early stopping terminates the search after P
+
+consecutive non-improving iterations. Algorithm 1 provides the full procedure for an instantiation η.As shown in Figure 4, this framework is instantiated in two complementary ways to discover effective payloads, including a general LLM-based proposer and a mechanism-aware structural mutator. Each instantiation has distinct strengths: the LLM-based proposer excels at discovering diverse attack strategies from scratch, while the mechanism-aware mutator achieves comparable effectiveness at signif-icantly lower optimization cost by directly manipulating structural dimensions informed by mechanistic insights. 
+
+Instantiation I: LLM-as-Proposer. The first instantiation sets GENERATE η to a proposer LLM M and uses the reasoning-length fitness directly, with Rη (p) = 0 . For each beam parent, M receives the parent payload, the guardrail’s full reasoning output (so it can observe which structural patterns triggered extended reasoning), and guidance from a strategy bank B that accumulates effective patterns across multiple iterations. The strategy bank maintains a mapping from canon-ical strategy names (e.g., “categorical exhaustion,” “anti-convergence clauses,” “schema mimicry”) to running average fitness scores, updated via exponential moving average after each iteration. The top-performing strategies are fed back Seed Payloads     
+
+> Current Beam
+> Parent p
+> + resp. r
+> Strategy Bank
+> Proposer LLM
+> cchild variants
+> Evaluate on Gs
+> Score
+> F(p)
+> Diverse Top-k
+> LLM-as-Proposer
+> update bank
+> next iter.
+
+(a) Instantiation I (LLM-as-Proposer): an LLM proposer guided by strategy bank discovers effective structural patterns.    
+
+> Seed Payloads
+> Current Beam
+> Parent slot state s
+> Structural Mutation Ops
+> cmutated variants
+> Evaluate on Gs
+> Score
+> Fbase +A
+> Entropy Filter + Top-k
+> Mechanism-Aware
+> next iter.
+
+(b) Instantiation II (Mechanism-Aware): lightweight structural muta-tion operators with attention-guided scoring and entropy filtering. 
+
+Figure 4: Beam-search optimization framework overview. 
+
+Algorithm 1 Beam-Search Reasoning Extension Optimizer 
+
+Require: Surrogate Gs, template T , contexts C, beam width 
+
+k, children b, diversity δ, max iterations T , patience P
+
+Require: Instantiation η = ( GENERATE η , Fη ) 
+
+> 1:
+
+K(0) ← SEED (k); p∗ ← ⊥ ; stale ← 0 
+
+> 2:
+
+for t = 1 , . . . , T do  
+
+> 3:
+
+Q ← K (t−1)  
+
+> 4:
+
+for each p ∈ K (t−1) do  
+
+> 5:
+
+Q ← Q ∪ GENERATE η (p, b ) 
+
+> 6:
+
+end for  
+
+> 7:
+
+Score all p ∈ Q with Fη 
+
+> 8:
+
+K(t) ← DIVERSE TOP K(Q, k, δ ) 
+
+> 9:
+
+if max p∈K (t) Fη (p) > Fη (p∗) then  
+
+> 10:
+
+p∗ ← arg max p∈K (t) Fη (p); stale ← 0 
+
+> 11:
+
+else  
+
+> 12:
+
+stale ← stale + 1  
+
+> 13:
+
+end if  
+
+> 14:
+
+if stale ≥ P then  
+
+> 15:
+
+break  
+
+> 16:
+
+end if  
+
+> 17:
+
+end for  
+
+> 18:
+
+return p∗
+
+to M as guidance, steering the search toward structural patterns with demonstrated effectiveness. Over the course of optimization, the bank accumulates 100+ distinct structural patterns, providing an increasingly refined vocabulary for describing what makes payloads effective. This instantiation excels at discovering diverse attack strategies from scratch. It requires no prior knowledge of why loops occur and can explore the full space of natural-language structural patterns. Full protocol details and hyperparameters are provided in Appendix A. 
+
+Instantiation II: Mechanism-Aware Optimization. The second instantiation sets GENERATE η to a set of lightweight structural mutation operators, replacing the expensive LLM proposer in resource-limited settings. We decompose pay-loads into a template with named slots (risk categories, enumeration depth, analysis sections, anti-shortcut clauses) and define mutation operators that directly manipulate these structural dimensions. Here Rη (p) is an attention-cycling score A(p) that measures how strongly the guardrail’s attention patterns exhibit the self-reinforcing loop signature, and an entropy-based filter rejects candidates whose early-token entropy indicates they will not sustain a loop. This instantiation achieves comparable effectiveness to the LLM-as-Proposer variant at significantly lower optimiza-tion cost, and provides direct evidence that the attack’s effectiveness stems from specific structural properties rather than surface-level wording. Full details on template slots, mutation operators, and scoring are in Appendix B. 
+
+3.3.1. Scenario Adaptability. A key strength of our frame-work is its adaptability to diverse real-world attack surfaces. The beam-search structure is agnostic to the specific guardrail, agent workflow, or injection surface:  
+
+> •
+
+The attack payload adapts to the injection surface — hidden DOM attributes for web agents, code comments for code agents, docs and emails for desktop agents, and inter-agent messages for multi-agent systems.  
+
+> •
+
+The surrogate model can be swapped to match the deployment — an open-source LLM that approximates the target guardrail’s reasoning behavior.  
+
+> •
+
+The instantiation can be chosen based on available resources — LLM-as-Proposer for maximum explo-ration when the target is unknown, mechanism-aware for efficient optimization when the structural patterns are understood. We demonstrate this adaptability through four attack in-stantiations in Section 6 spanning web, desktop, code, and multi-agent scenarios, each with distinct injection surfaces, guardrail architectures, and operational constraints. 
+
+## 4. Threat Model 
+
+In this section, we formalize the adversarial setting for reasoning-extension DoS attacks on agent guardrails, including the protected system, the adversary’s objective and capabilities, and the security goals of the guardrail target. 
+
+4.1. System Model 
+
+We consider a deployed LLM-based agent protected by an LLM-based guardrail. At step t, the agent observes its environment, updates the trajectory τt, and proposes an action 
+
+at ∼ π(τt). Before executing at, the guardrail evaluates 
+
+ct = ( τt, a t) and returns 
+
+rt = Gt(Tt(ct)) = ( ϕt, v t), (5) where Gt is the target guardrail, Tt is its prompt template or policy wrapper, ϕt = Φ( rt) is the generated reasoning section, and vt ∈ { allow , block } is the final verdict. The agent proceeds only after vt is returned. During normal operation, the agent naturally consumes third-party content x, such as webpages, repository files or inter-agent messages. Some of this content can be controlled by an attacker. If the attacker embeds an adversarial payload p
+
+into such content and the agent later observes it, the guardrail input becomes the payload-injected context ct[p]:
+
+rt(p) = Gt(Tt(ct[p])) . (6) The attack targets the cost of producing rt(p), especially the reasoning component Φ( rt(p)) .
+
+4.2. Adversary Model 
+
+Capabilities. The attacker can inject text into third-party content that a target agent may later fetch or observe, e.g. publishing a webpage, committing to a public repository, or sending a message that enters the agent workflow. The attacker also has enough local computation resources to deploy a surrogate guardrail Gs and run the optimization procedure described in Section 3.3. 
+
+Knowledge. During offline optimization, the attacker can observe the surrogate guardrail’s full output. During deploy-ment, however, the target guardrail Gt is black-box. The attacker can only observe coarse external effects such as request latency, timeouts, or whether the guarded action eventually succeeds. 
+
+Constraints. The attacker does not have access to:  
+
+> •
+
+The target guardrail model’s weights or architecture  
+
+> •
+
+The guardrail’s system prompt or prompt template  
+
+> •
+
+The agent’s task instructions or internal state  
+
+> •
+
+Per-token logprobabilities or internal activations The attacker cannot compromise the agent host, modify the guardrail service, directly choose the user’s task, force the agent to visit an arbitrary resource on demand, control a privileged tool, or change the target guardrail’s serving configuration. The attack is triggered only when the agent naturally consumes third-party content containing p. This is the same low-barrier injection capability used by indirect prompt injection attacks, but the objective here is availability rather than unsafe action execution. 
+
+Goal and Success Criterion. The attacker’s goal is resource exhaustion of the guardrail target.For a benign context ct
+
+and its payload-injected version ct[p], the attacker seeks to increase the cost of producing the guardrail response before a verdict is returned. Using reasoning length as the primary observable proxy, success can be expressed as amplification over a benign baseline: 
+
+|Φ( Gt(Tt(ct[p]))) ||Φ( Gt(Tt(ct))) | ≥ ρ. (7) Equivalently, a deployment-level success occurs when the guardrail latency or generated reasoning length exceeds an operator-defined budget. The attack can succeed even when 
+
+vt = block , as long as the guardrail consumes excessive compute before reaching that verdict. 
+
+4.3. Guardrail Security Goals 
+
+The agent guardrail is the target safety monitor. It is intended to protect the agent by analyzing ct against a safety policy and blocking unsafe actions. The protected system therefore requires the guardrail to satisfy two goals simultane-ously. Safety requires the guardrail to block harmful actions while allowing benign ones. Bounded availability requires the guardrail to return a verdict within a predictable compute and latency budget. Reasoning-extension DoS attacks target the tension between these goals by inflating ϕt while the guardrail is still performing its safety analysis. 
+
+## 5. Attack Effectiveness 
+
+In this section, we establish that the attack is effective across a broad range of guardrail models and agent bench-marks. We also ablate the key components of our optimiza-tion framework to understand their individual contributions. 
+
+5.1. Setup 
+
+Models. We use Instantiation I with GPT-5.2 [44] as the proposer model to optimize payloads in effectiveness evaluation. Payloads are optimized on a single surrogate model (TS-Guard-8B [15]) using our beam-search framework (Section 3.3) and evaluated on 8 target guardrail models spanning open-source and closed-source families. TS-Guard-8B is a representative open-source guardrail with full output observability, enabling efficient fitness evaluation during optimization. All experiments are conducted on a group of NVIDIA RTX5880 GPU servers. 
+
+Metrics. We report three complementary metrics. Attacked thinking length measures the total character count within the guardrail’s reasoning section ( <Think>...< \Think> )under attack, capturing the absolute compute burden imposed on the safety model. Extension ratio is the ratio of attacked thinking length to the baseline thinking length on a length-matched benign input, isolating the amplification effect from any length-induced increase. Fitness is the beam-search optimization objective Fη (p) from Section 3.3. For Instantiation I, Fη equals the mean attacked thinking length of payload p on the surrogate guardrail Gs over evaluation contexts; ablation tables report the peak fitness reached during search. For Instantiation II, Fη augments this base length with an attention-cycling score shown in Appendix B. 
+
+Benchmarks. To demonstrate that the attack generalizes across operational contexts, we evaluate under three agent benchmarks that span the major deployment scenarios for guardrailed agents: AgentDojo [23] is a tool-use agent benchmark with built-in injection attack scenarios, providing realistic agent contexts where the guardrail must evaluate tool calls against potentially adversarial environments. ASB [24] is a safety benchmark covering diverse agent safety scenarios across multiple risk categories, including privacy, financial harm, and physical safety. AgentHarm [22] is a benchmark of explicitly harmful agent behaviors, including malware generation, social engineering, and illegal activities. TABLE 1: Attack effectiveness across guardrail models, agent benchmarks, and attack instantiations, reported as attacked thinking length ( ↑) / extension ratio × (↑). Data marked with * indicates reasoning loops ( >10 repetitions) induced by the payload. Cell shading scales with the extension ratio; the highest ratio per column is in bold.                                                         
+
+> AgentDojo ASB AgentHarm Guardrail Model Inst. I Inst. II Inst. I Inst. II Inst. I Inst. II
+> Open-source
+> TS-Guard-8B 42,959* / 45.2 ×47,736* / 50.2 ×45,818* / 49.6 ×36,851* / 39.9 ×47,589* / 46.5 ×45,235* / 44.2 ×
+> Qwen3.5-9B 482,344* / 23.1 ×395,562* / 19.0 ×521,697* / 26.3 ×489,350* / 24.7 ×437,976* / 23.0 ×413,220* / 21.7 ×
+> DeepSeek-V3.2 80,803* / 59.2 ×66,335* / 48.6 ×77,176* / 63.4 ×48,082 / 39.5 ×52,154 / 43.8 ×49,181 / 41.3 ×
+> GLM-4.7 38,644 / 24.0 ×24,838 / 15.4 ×32,656 / 21.0 ×36,855 / 23.7 ×35,234 / 21.2 ×32,076 / 19.3 ×
+> Kimi-K2.5 36,066 / 25.2 ×18,892 / 13.2 ×56,117* / 33.8 ×49,974* / 30.1 ×31,615 / 21.1 ×28,168 / 18.8 ×
+> Closed-source
+> Claude-3.5-Haiku 61,981* / 27.7 ×36,921 / 16.5 ×54,415* / 26.3 ×42,622 / 20.6 ×49,130* / 23.6 ×46,424 / 22.3 ×
+> GPT-4o-mini 14,103 / 20.6 ×13,008 / 19.0 ×17,857 / 21.8 ×19,987 / 24.4 ×13,381 / 17.4 ×14,515 / 18.8 ×
+> Gemini-3-Flash 28,872 / 22.1 ×28,218 / 21.6 ×26,943 / 23.9 ×22,885 / 20.3 ×21,077 / 19.1 ×19,642 / 17.8 ×
+
+5.2. Effectiveness Across Guardrail Models 
+
+Results. Table 1 reports effectiveness across all model– instantiation–benchmark combinations. Entries marked with * indicate sustained reasoning loops, which would consume unbounded compute without generation length limit.  
+
+> •
+
+Instantiation I achieves >17 × amplification on nearly all model–benchmark combinations, confirming that the attack is model-agnostic. Open-source models reach the highest peak ratios: DeepSeek-V3.2 achieves 63.4 × (ASB, Inst. I) and TS-Guard-8B reaches 50.2 × (AgentDojo, Inst. II), both entering sustained reasoning loops. Qwen3.5-9B pro-duces the longest absolute output (521,697 characters on ASB, Inst. I) owing to its already-long baseline reasoning.  
+
+> •
+
+Closed-source models show strong amplification despite unknown architectures and safety training: Claude-3.5-Haiku reaches 27.7 ×, Gemini-3-Flash 22.1 ×, and GPT-4o-mini 20.6 × on AgentDojo (Inst. I), confirming black-box transferability from a single open-source surrogate.  
+
+> •
+
+Both instantiations achieve effective amplification across all models. Instantiation I generally produces higher peak amplification due to its adaptive strategy bank, while Instantiation II delivers more consistent results with fewer optimization iterations, offering a practical option when optimization budget is limited.  
+
+> •
+
+Amplification is consistent across benchmarks: the same payload achieves comparable extension ratios whether the guardrail is evaluating tool-use scenarios (AgentDojo), diverse safety risks (ASB), or explicitly harmful behav-iors (AgentHarm), indicating that the attack exploits the guardrail’s reasoning mechanism rather than any task-specific reasoning pattern. 
+
+Baseline Comparison. Table 2 compares our method against six prior LLM DoS approaches, all evaluated on Claude-3.5-Haiku with the ToolSafe template under identical conditions. For each baseline, we use their framework to optimize payloads and inject them into the same agent context used for our attack, reporting the best-case think length across all available payloads per method. TABLE 2: Comparison with prior DoS methods on Claude-3.5-Haiku + ToolSafe template. † = partial reproduction (code not released).                     
+
+> Method Think Length (↑)Ratio (↑)Length-matched benign 1,984 1.00 ×
+> ENGORGIO 2,207 1.11 ×
+> OverThink 2,283 1.15 ×
+> CRABS 2,270 1.14 ×
+> ReasoningBomb 2,379 1.20 ×
+> RECUR† 2,298 1.16 ×
+> ThinkTrap† 2,207 1.11 ×
+> Ours 61,981* 27.7 ×
+
+All six baselines achieve only 1.11–1.20 × amplification, which are well within the normal variance of guardrail reason-ing length. Our method achieves 27.7 ×, a 23 × improvement over the best prior work (ReasoningBomb at 1.20 ×), and is the only method that induces a sustained reasoning loop. 
+
+5.3. Ablation of Optimization Framework 
+
+We ablate several key components of the beam-search optimizer to understand their individual contributions. All experiments use Instantiation I on Claude-3.5-Haiku with the AgentDojo benchmark. 
+
+Framework Components. Table 3 isolates each system component. Beam search is the most critical: greedy search (k=1 ) achieves only 7,220, an 88% drop from the full framework, because a single unlucky mutation can derail the entire optimization. The diversity filter and strategy bank each provide some improvement: removing diversity filtering drops fitness to 45,513 (23% reduction) as the beam collapses to near-duplicate payloads, and removing the strategy bank drops to 43,896 (26% reduction) as the proposer explores without structural guidance. The random seed baseline (2,195) is near the benign baseline, confirming that optimization drives the attack’s effectiveness. 
+
+Proposer Model Sensitivity. Table 4 compares proposer LLMs of varying capability. GPT-5.2 achieves the highest TABLE 3: Ablation of optimization framework components. All variants run for the same wall-clock budget.              
+
+> Configuration Best Fitness (↑)Full framework (beam + diversity + strategy bank) 59,182
+> −Diversity filter ( δ= 1 .0, no dedup) 45,513
+> −Strategy bank (random guidance) 43,896
+> −Beam search (greedy, k= 1 )7,220 Random seed only (no optimization) 2,195
+
+TABLE 4: Effect of proposer model capability on optimiza-tion effectiveness.                 
+
+> Proposer Model Best Fitness (↑)Iters to Peak (↓)GPT-5.2 59,182 6GPT-4o-mini 58,433 8Claude-3.5-Haiku 53,074 8DeepSeek-V3.2 49,159 9Qwen3.5-9B 37,071 10 Mechanism-aware (no LLM) 33,895 15
+
+fitness 59,182 and converges fastest in 6 iterations, while GPT-4o-mini reaches near-parity 58,433 fitness with slightly more iterations. Smaller models (e.g., Qwen3.5-9B at 37,071 fitness) still achieve substantial amplification but require more iterations. The mechanism-aware instantiation also achieves 33,895 fitness with 15 iterations, which is a lower peak fitness but still 16.5 × amplification to the benign baseline. This confirms that direct structural manipulation is effective even without LLM-guided exploration. 
+
+5.4. Discussions 
+
+Structural Analysis. To understand why the attack works, we isolate the contribution of each structural element in the Instantiation II by removing one component at a time from the best-performing configuration. As shown in Table 5, three types of structural elements emerge as critical. Completion-forcing mechanisms like anti-shortcut clauses and enumeration depth prevent the model from abbreviating or summarizing its analysis. Multiplicative expansion like category enumeration S1–S9 forces the model to replicate its analysis across multiple dimensions. Each ad-ditional risk category multiplies the reasoning output roughly linearly, creating combinatorial growth when combined with deep enumeration. The minimal configuration with single section achieves only 5,084 characters, still 2.6 × the benign baseline. This shows that schema mimicry alone provides some amplification, but structural reinforcement is essential for high-ratio attacks. These findings directly inform the mechanistic analysis in Section 3.3: the structural patterns that drive amplification correspond precisely to those that trigger attention cycling to schema headers. 
+
+Cross-Template Generalization. Since guardrail deploy-ments use different prompt templates, we evaluate whether payloads optimized on one template transfer to others without re-optimization. We test our payloads against two additional templates: TaskShield [16] and MELON [42]. As shown in TABLE 5: Contribution of structural payload components. Each row removes one element from the full payload. Fitness = mean <Think> length (chars).                         
+
+> Configuration Fitness ( ↑)Drop ( ↓)
+> Full payload 33,895 –
+> −Anti-shortcut clauses 5,776 83.0%
+> −Category enumeration (S1–S9) 8,760 74.2%
+> −Enumeration depth (reduce to 1) 6,424 81.1%
+> −Counterfactual drill 14,582 57.0%
+> −Forced calibration 15,591 54.0%
+> −Evidence ledger 19,217 43.3% Minimal (single section, no clauses) 5,084 85.0%
+
+TABLE 6: Cross-template transfer of Instantiation I payloads. Reported in Think Length ( ↑).             
+
+> Model ToolSafe TaskShield MELON
+> TS-Guard-8B 42,959 35,158 43,151 Claude-3.5-Haiku 61,981 53,074 64,842 DeepSeek-V3.2 80,803 70,032 82,466
+
+Table 6, all results remain above 20 × amplification across different configurations. The consistently high transferability confirms that the attack targets instruction-following behavior rather than template-specific parsing logic. 
+
+## 6. Real-World Attack Instantiation 
+
+We instantiate our attack across four real-world agent scenarios, Code Agent and Multi-Agent System presented in Section 6 and 2 more scenarios Web Agent and Desktop Agent presented in Appendix C. Each representing a distinct agent type, guardrail architecture, and injection surface. Together, they demonstrate that reasoning extension DoS is a 
+
+universal vulnerability of LLM-based guardrails, independent of the specific agent framework or deployment pattern. The details of the scenarios are shown in Table 7. 
+
+6.1. Code Agents 
+
+Code agents are rapidly becoming the primary interface through which developers interact with large language mod-els. These agents operate in a domain where the consequences of unguarded actions are uniquely severe. A code agent can execute arbitrary shell commands, modify source code, access credentials, exfiltrate data through network requests, and install persistent backdoors. This power makes guardrails essential, but also raises the stakes of guardrail failure. When a code agent’s safety mechanism is degraded, the agent becomes a vector for supply chain attacks, data exfiltration, and arbitrary code execution with the developer’s full permissions. Commercial code agents (GitHub Copilot Workspace [45], Cursor [46], Claude Code [21], etc.) increasingly support autonomous modes where the agent executes multi-step plans without human review. In these modes, LLM-based guardrails serve as the sole safety TABLE 7: Attack surfaces across four agent scenarios. All share the same attacker capability: inject text into content the agent fetches from its environment.                      
+
+> Scenario Agent Type Guardrail Injection Surface Downstream Impact
+> BrowserGym Web agent Separated (per-action) Hidden DOM, a11y tree, ARIA Safety bypass; availability loss OSWorld Desktop agent Separated (3 checks/action) A11y tree, files, terminal, GUI 3×amplification per action OpenHands Code agent Integrated (same LLM) Config files, README, comments Action + security reasoning degraded LangGraph Multi-agent Separated (inter-agent) Tool output, messages, shared memory Cascading; head-of-line blocking
+
+mechanism, where human is no longer involved to catch dangerous actions. Due to the unavailability of guardrail outputs of commercial code agents, we take a widely used open-source code agent platform, OpenHands [6], as our case study. OpenHands [6] (70K+ GitHub stars) is one of the most widely-deployed coding agent platforms, supporting fully autonomous operation on real software engineering tasks. 
+
+Setup and Guardrail Architecture. OpenHands uses an integrated guardrail architecture. Rather than adedicated guardrail model, OpenHands’ safety mod-ule (LLMSecurityAnalyzer ) operates within the agent’s own LLM: a security_risk parameter ("LOW"|"MEDIUM"|"HIGH" ) is injected into every tool’s JSON schema, and the agent must assess and output the security risk as part of each tool call. This integrated guardrail architecture is a general practice also in commercial code agents like Claude Code auto mode [21]. The security policy ( ∼1.5KB) and risk assessment guidelines ( ∼2KB) are included in the system prompt, meaning file contents read by the agent enter the conversation history and are present during all subsequent security assessments. This integrated design means the attack affects both action generation and security assessment simultaneously. 
+
+Injection Surfaces and Evaluation. We identify three possible injection surfaces specific to code agents workspace: (1) config file injection : payload disguised as a security notice in config.py with a risk matrix and assessment requirements; (2) README injection : payload disguised as security policy documentation in README.md , entering the conversation history early and persisting across all subsequent actions; and (3) code comment injection : payload embedded in function docstrings, activated when the agent analyzes specific functions. We evaluate on 20 SWE-bench [7] in-stances covering real GitHub issues from Django, scikit-learn, matplotlib, and other popular repositories using DeepSeek-V3.2 [47] as both agent and guardrail model. Under benign baseline test, the guardrail consumes ∼84 reasoning tokens and ∼9.2 seconds per action. 
+
+Technical Adaptations. In previous separated guardrail setting, the payload exploits template-following behavior. While a key characteristic of integrated guardrails for code agents is to work for the main agentic task simultaneously, which prioritizes task completion over analytical compliance. Therefore, we exploit the integrated architecture’s unique vulnerability: we try to force the model to generate a useful action and assess its security risk at the same time. By presenting contradictory security factors that resist simple TABLE 8: OpenHands with LLMSecurityAnalyzer 
+
+results on DeepSeek-V3.2.                 
+
+> Surface Avg Amp. ( ↑)Max Amp. ( ↑)Tasks >3×(↑)
+> Config file 11.9 ×20.7 ×2/3 README 25.9 ×36.3 ×3/3 Code comment 5.5 ×13.2 ×1/3 010 010 1
+> Reasoning Token Amplification
+> Config File
+> README
+> Code Comment
+> avg 11.9x
+> avg 25.9x
+> avg 5.5x
+
+Figure 5: Distribution of reasoning token amplification across 20 SWE-bench tasks for each injection surface. resolution, we force extended deliberation rather than ex-tended enumeration. The supply-chain nature of this attack scenario moti-vates the use of Instantiation II, i.e. the Mechanism-Aware Optimization. In real-world scenarios, the high efficiency of this instantiation can enable effective poisoning with multiple variants across many repositories. To adapt to this scenario, we apply a two-phase strategy: Instantiation I runs once on a small surrogate task pool to discover the conflict factors and structural slots that maximally amplify the integrated guardrail’s deliberation like blast-radius framing, irreversibility clauses, compliance scope. Once these slots are identified, Instantiation II generates a large family of surface-diverse variants by directly mutating slot contents like different incident histories, compliance labels, microservice counts without invoking LLM proposer. This reduces per-variant generation cost of attacker’s budget by 6.6 × from $0.46 to $0.07, while preserving considerable amplification and enabling mass poisoning of heterogeneous repositories where identical payloads would be conspicuous. 
+
+Results. Table 8 and Figure 5 report the results in detail. Among all possible injection surfaces, the README surface achieves the strongest and most consistent amplification (25.9 × mean, all tasks above 3 ×) because its content enters the conversation history early and persists across all subsequent actions. Every tool call the agent makes triggers security reasoning in the presence of the injected “security policy” documentation. The config surface achieves 
+
+11.9 × mean amplification (peak 20.7 ×) because its security-relevant framing (risk matrices, incident references, com-pliance requirements) directly triggers extended security deliberation. The code comment surface shows weaker amplification (5.5 × mean) due to the constrained injection context within a function docstring, though it still achieves 13.2 × peak amplification on tasks that directly modify the poisoned function. Beyond compute amplification, the attack causes risk misclassification: baseline produces 0 HIGH-risk assessments, while the config and README payloads trigger HIGH and MEDIUM false positives that would block legitimate development actions. 
+
+Cumulative and Persistent Impact. Code agents amplify the attack in three ways. First, cost compounds across multi-step tasks: a typical SWE-bench task requires 15–30 actions, each invoking the security analyzer. With README injection, this raises guardrail overhead from ∼138 seconds to over 59 minutes for a single task. Second, the trigger persists: a poisoned README.md or config.py remains in the repository and affects future agent sessions, including those launched by other developers. Third, guardrail exhaustion has higher downstream risk in code agents because the agent may still hold access to shell execution, file modification, credentials, and network requests. Thus, a single malicious commit can create a long-lived supply-chain DoS vector that requires no infrastructure access and activates whenever an agent reads the poisoned file. 
+
+Takeaway. For code agents with integrated guardrails, conflict-based ambiguity achieves up to 36.3 × token amplification on the README surface by forcing the same model to resolve task execution and security assessment simultaneously. Leveraging light-weighted Instantiation II further makes this attack practical at repository scale. Repository persistence turns a single poisoned file into a long-lived trigger across future agent sessions, while the privileges of code execution make guardrail exhaustion a path to more severe downstream compromise. 
+
+6.2. Multi-Agent Systems 
+
+In this section, we evaluate our attack on multi-agent architectures where specialized LLM agents collaborate on complex tasks. For instance, a research agent retrieves information, an analysis agent processes it, a writing agent synthesizes results, and a supervisor coordinates the workflow. These systems introduce a qualitatively different threat model: agents communicate through shared channels (messages, tool outputs, shared memory), and a single guardrail service often validates all inter-agent communications. When that shared guardrail is overwhelmed, the impact could cascade across the entire system. 
+
+Setup and Guardrail Architecture. LangGraph [9] is one of the dominant frameworks for building multi-agent systems, with widespread adoption in enterprise deployments for customer service, research automation, and data analysis pipelines. LangGraph models agent workflows as directed graphs where nodes are LLM agents or tools and edges represent message passing, enabling complex patterns such as fan-out parallelism, sequential pipelines, and hierarchical supervision. Targeted to this kind of multi-agent systems, NeMo Guardrails [48] provides programmable safety rails that intercept inter-agent communications, validating each message before it reaches the next agent in the graph. We deploy a NeMo output rail with a moderate size reasoning model backend Qwen3.5-Flash [49] that uses a structured prompt with <Think> reasoning followed by a 
+
+<Harmfulness_Rating> verdict. We evaluate three common LangGraph architectural patterns, each creating distinct cascading dynamics: (1) Fan-out : a scraper agent fans out to 3 parallel specialist agents, each protected by an independent guardrail call; (2) Se-quential pipeline : a 4-stage agentic pipeline with guardrail validation between each stage; and (3) Supervisor : a supervi-sor dispatches tasks to 4 worker agents sharing a single guardrail with sequential access. We test four injection surfaces spanning multi-agent communication channels: tool output, agent message shared memory, and user instruction. Agent workers use GPT-4o-mini across 25 tasks in 5 domains Financial, Healthcare, Legal, Software Development, Open-Source Intelligence (OSINT). 
+
+Technical Adaptation. A key challenge unique to multi-agent systems is that payloads propagate through intermediate agents that transform content before downstream guardrails evaluate it. We characterize this as the transform resilience problem: how to craft payloads whose DoS-triggering prop-erties survive multi-stage agent processing. We first measure payload survival empirically by passing optimized payloads through each pipeline stage and evalu-ating guardrail amplification on the transformed output at each checkpoint. The results reveal that agents completely strip security terminology and meta-reasoning instructions. In contrast, three structural elements exhibit high transform resilience: (1) tabular data with numeric values, (2) section headers, and (3) entity-anchored facts such as dates, IDs, and percentages. Notably, we observe a reverse amplification effect: when the scraper agent reformats raw content into markdown tables, guardrail reasoning increases from 135 to 20,425 characters (151 ×), because tabular structure triggers deeper analytical reasoning in the guardrail. Based on these findings, we design a transform-aware fitness function for the optimizer: 
+
+ftransform = α ·
+
+> N
+
+X
+
+> i=1
+
+wi · think (G(stage i(x))) , (8) where stage i(x) denotes content after the i-th agent transform, 
+
+G(·) denotes guardrail reasoning length, and weights w =[0 .5, 1.0, 1.5, 2.0, . . . ] increase with pipeline depth. Through this design, the transform-aware payloads achieve persistent DoS amplification across all pipeline stages. 
+
+Injection Surface Results. Table 9 reports amplification by injection surface. The tool output and agent message surfaces achieve up to 115.8 × token amplification, i.e. 82,000+ tokens, hitting the generation cap, and 148.2 ×TABLE 9: LangGraph + NeMo Guardrails: amplification by injection surface. Reported in Token Amplification ( ↑) and Latency Amplification ( ↑). 
+
+Surface Avg Tok. Max Tok. Avg Lat. Max Lat. 
+
+Tool output 9.7 × 115.8 × 10.3 × 106.0 ×
+
+Agent message 7.2 × 115.2 × 8.0 × 148.2 ×
+
+Shared memory 4.3 × 40.3 × 3.3 × 27.8 ×
+
+User instruction 1.6 × 4.1 × 1.6 × 3.4 ×
+
+TABLE 10: Domain vulnerability in multi-agent scenario. 
+
+Domain Avg Token Amp. ( ↑) Max Token Amp. ( ↑)
+
+Healthcare 12.3 × 115.2 ×
+
+OSINT 7.7 × 115.8 ×
+
+Financial 5.0 × 40.3 ×
+
+Software Dev 2.3 × 9.6 ×
+
+Legal 1.3 × 2.8 ×
+
+latency amplification, i.e. 730.8 seconds for a single guardrail call. This single guardrail evaluation consuming 12+ minutes effectively renders the entire agent pipeline unusable. The shared memory surface shows moderate amplification 4.3 ×
+
+average, while user instruction shows minimal effect 1.6 ×,confirming that surfaces closer to external data sources are more vulnerable. 
+
+Cascading Effects. The multi-agent setting amplifies reasoning-extension DoS through workflow structure, as shown in Figure 6. In the fan-out pattern, a single poisoned document triggers 3 independent guardrail evaluations when the scraper distributes content to parallel specialists. In the sequential pipeline, amplified latency accumulates across inter-stage checkpoints; if the payload is blocked, the pipeline halts before task completion. The shared-guardrail supervisor pattern creates the strongest systemic effect: one poisoned worker consumes 12+ minutes of guardrail time, causing 23.3% throughput degradation and 113–146 seconds of waiting for benign workers. Thus, the attack’s impact extends beyond the poisoned agent to co-located workloads that share the same guardrail. This cascading delay also increases downstream safety risk. If a deployed system times out, truncates guardrail reasoning, or fails open under resource pressure, prompt injections, jailbreak instructions, or malicious tool outputs may reach downstream agents. We therefore view DoS-to-bypass escalation as a plausible consequence of fail-open guardrail designs, rather than a separate claim required for the availability attack itself. 
+
+Takeaway. Multi-agent systems transform individual guardrail DoS into systemic infrastructure failure. A single poisoned document propagates through fan-out, sequential, and supervisor architectures via shared communication channels, and the shared-guardrail pattern creates head-of-line blocking that degrades throughput for all co-located agents. Fan-out    
+
+> (3 parallel)
+> Sequential
+> (3 stages)
+> Supervisor
+> (4 workers)
+> 0
+> 50
+> 100
+> 150
+> 200
+> 250
+> Pipeline Time (s)
+> Baseline
+> Under Attack
+> 1234
+> Worker Index
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> 1.1
+> Relative Throughput
+> 23.3%
+> degradation
+> No attack
+> 1 poisoned worker
+
+Figure 6: Cascading effects across multi-agent architectures. 
+
+Left: pipeline completion time under baseline vs. attack. 
+
+Right: throughput starvation in the supervisor pattern where one poisoned worker degrades all co-located agents. Code Agent  
+
+> (OpenHands)
+> Multi-Agent
+> (NeMo)
+> Web Agent
+> (WebGuard)
+> Desktop Agent
+> (ShieldAgent)
+> 10 1
+> 10 2
+> Token Amplification Factor
+> 25.9x
+> 9.7x
+> 39.3x
+> 18.4x
+> 36x
+> 116x 131x
+> 28x
+> Avg Amplification
+> Max Amplification
+
+Figure 7: Attack effectiveness comparison across all four agent scenarios. 
+
+## 7. Mitigation 
+
+As a new attack directly targeted on the guardrail, the defense layer of an agent system, there is a lack of defense for the defense layer itself, as far as we know. Here we consider three possible ways to defend against our attack, and evaluate their effectiveness and limitations. 
+
+Susceptible Content Filtering. We evaluate evasion against a DeBERTa-based prompt injection classifier [29], a com-mon pre-inference filter in production guardrail deploy-ments. Our optimized payloads score <0.001 injection probability (stealth >0.999), compared to 1.0 for classic injection patterns. Unlike optimization-based attacks (e.g., ThinkTrap [38]) that produce statistically anomalous, high-perplexity token sequences, our payloads are fluent natural language. Traditional filter techniques like perplexity filters therefore do not fire on them, and keyword blocklists cannot enumerate the structural patterns we exploit. 
+
+Hard Token-Budget Cutoff. A natural countermeasure is to cap guardrail generation at a fixed token budget, truncating runaway reasoning before it consumes unbounded compute. Our results show, however, that this defense could not totally resolve the attack. It only shifts the failure mode. When the cutoff fires before the guardrail emits a definitive verdict (e.g., a harmfulness rating or block signal), the system must define a fallback policy with no good option. If the fallback defaults to pass , the guardrail may termi-nate mid-reasoning without outputting any danger signal. In our LangGraph experiment in Section 6.2, sustained DoS pressure exhausted the generation budget and the guardrail ultimately passed malicious content it would normally block. The same pattern appears in web-agent deployments: under a 30-second timeout that defaults to allow, the checkout task completes with 10 timed-out guardrail calls. The agent submits a financial transaction entirely without safety review as shown in Appendix C, Table 11. The attacker thus converts compute exhaustion into a safety bypass whenever production systems fail-open under resource limits. If the fallback defaults to reject , the agent-level DoS objective is achieved directly. Under the same web-agent setup with a 30-second timeout defaulting to block, 34 of 55 actions are blocked and task success drops from 5/10 to 3/10. In multi-agent deployments, even benign co-located agents suffer 23.3% throughput degradation and 113–146 seconds of head-of-line blocking while waiting on a poisoned worker’s truncated guardrail call (Section 6.2). Thus, the guardrail DoS is converted into an agent-level DoS, which is also a symbol of the success of attack. 
+
+Deploying a More Capable Guardrail. A stronger reason-ing model should recognize adversarial structure and refuse to engage. However, our results show the opposite: models with stronger reasoning produce longer loops because their instruction-following nature makes them more compliant with the schema structures in the payload. The attack exploits instruction-following fidelity, which scales with model capa-bility. Further research could utilize directed reinforcement learning techniques [50], [51] and well-prepared datasets to make sure LLM-based guardrails behave less compliant with the inductive schema structures in the payload. 
+
+## 8. Related Work 
+
+8.1. Prompt Injection and Jailbreak Attacks 
+
+Prompt injection manipulates LLM behavior by embed-ding adversarial instructions in model inputs. Perez and Ribeiro [12] first demonstrated direct injection via “ignore previous instructions” patterns, while Greshake et al. [11] introduced indirect prompt injection through third-party content (webpages, emails, documents) that agents fetch during operation. The OWASP Top 10 for LLM Applications ranks prompt injection as the highest-priority risk [19]. Jailbreak attacks bypass safety alignment to elicit harmful outputs. Zou et al. [13] use gradient-based optimization to find universal adversarial suffixes and coerce the model to produce harmful outputs, while Wei et al. [14] systemat-ically categorize jailbreak strategies exploiting competing objectives and mismatched generalization in safety training. 
+
+8.2. LLM-Based Agent Guardrails 
+
+The shift from rule-based filters to LLM-based rea-soning guardrails reflects the need for context-dependent safety judgments in agent systems. WebGuard [52] evaluates each web agent action against the page’s accessibility tree. ShieldAgent [17] performs three independent verification passes (grounding, action, state) per desktop agent action. NeMo Guardrails [48] provides programmable safety rails for multi-agent pipelines via input/output rail interception. LlamaFirewall [18] combines a PromptGuard classifier with an LLM-based reasoning judge. ToolSafe [15] and TaskShield [16] define structured prompt templates with explicit risk categories that guide the guardrail’s reasoning process. GuardAgent [43] uses an LLM to retrieve relevant safety rules and generate executable verification checks. 
+
+8.3. Denial-of-Service Attacks on LLMs 
+
+A growing body of work demonstrates that LLMs can be forced to generate excessively long outputs. ENGORGIO [35] crafts prompts that suppress the EOS token, causing outputs far beyond typical length. CRABS [36] automates this via evolutionary search over prompt structures. They target general-purpose LLM services queried directly by users. OverThink [33] poisons RAG documents with complex reasoning problems that lure models into solving them. Rea-soningBomb [34] constructs pathological logical structures inducing self-referential reasoning chains. ThinkTrap [38] optimizes adversarial prompts via covariance-based pertur-bations in embedding space to trigger extended thinking. The resulting sequences are high-perplexity, model-specific, and non-transferable to black-box targets. Similarly, Zhou et al. [53] (Beyond Max Tokens) chain tool calls so that each step triggers further invocations, compounding token consumption across turns via modified agent templates. This requires the attacker to control a tool in the agent’s registry, which is a significantly stronger capability than injecting text into agent-fetched content. 
+
+## 9. Conclusion 
+
+We have shown that LLM-based guardrails, the stan-dard safety layer for autonomous agents, are vulnerable to reasoning-extension denial-of-service attacks. By injecting structured content that mimics the guardrail’s own analytical schema into agent-fetched data, an attacker with no access to the agent, model weights, or system prompts can trap the safety model in extended reasoning loops, consuming 13–63 × more tokens in standalone evaluation and up to 148 × latency amplification in end-to-end deployments across web, desktop, code, and multi-agent systems. Payloads optimized on a single open-source surrogate transfer to eight diverse guardrail backbones, and a single poisoned document can cascade through shared guardrail infrastruc-ture, starving co-located agents, persisting across code sessions, and converting compute exhaustion into safety bypass when guardrails fail-open under resource limits. The attack exploits the same instruction-following fidelity that enables structured safety reasoning, and existing mitigations offer limited relief. Reasoning-extension DoS is therefore a structural challenge for the guardrail paradigm, calling for cost-bounded, reasoning-robust safety architectures before agents take increasingly consequential actions. References 
+
+[1] OpenAI, “Introducing operator,” https://openai.com/index/ introducing-operator/, 2025. [2] Google DeepMind, “Project mariner,” https://deepmind.google/ technologies/project-mariner/, 2024. [3] T. Le Sellier de Chezelles, A. Drouin, M. Caccia, L. Boisvert et al. ,“The BrowserGym ecosystem for web agent research,” Transactions on Machine Learning Research , 2025, arXiv:2412.05467. [4] T. Xie, D. Zhang, J. Chen, X. Li, S. Zhao, R. Cao et al. , “OSWorld: Benchmarking multimodal agents for open-ended tasks in real com-puter environments,” in NeurIPS , vol. 37, 2024, arXiv:2404.07972. [5] Anthropic, “Introducing computer use, a new Claude 3.5 Son-net, and Claude 3.5 Haiku,” https://www.anthropic.com/news/ 3-5-models-and-computer-use, 2024. [6] X. Wang, B. Li, Y. Song et al. , “OpenHands: An open platform for AI software developers as generalist agents,” in ICLR , 2025, arXiv:2407.16741. [7] C. E. Jimenez, J. Yang, A. Wettig, S. Yao, K. Pei, O. Press, and K. Narasimhan, “SWE-bench: Can language models resolve real-world GitHub issues?” in ICLR , 2024, arXiv:2310.06770. [8] Y. Qu, Y. Liu et al. , “Supply-chain poisoning attacks against LLM coding agent skill ecosystems,” arXiv preprint arXiv:2604.03081 ,2026. [9] LangChain, Inc., “LangGraph: Multi-agent orchestration framework,” https://github.com/langchain-ai/langgraph, 2024. [10] Q. Wu, G. Bansal, J. Zhang, Y. Wu, B. Li, E. Zhu, L. Jiang, X. Zhang, S. Zhang, J. Liu, A. H. Awadallah, R. W. White, D. Burger, and C. Wang, “AutoGen: Enabling next-gen LLM applications via multi-agent conversation,” arXiv preprint arXiv:2308.08155 , 2023. [11] K. Greshake, S. Abdelnabi, S. Mishra, C. Endres, T. Holz, and M. Fritz, “Not what you’ve signed up for: Compromising real-world LLM-integrated applications with indirect prompt injections,” in AISec ,2023, arXiv:2302.12173. [12] F. Perez and I. Ribeiro, “Ignore previous prompt: Task-oriented conversational modeling,” in NeurIPS Workshop on Machine Learning Safety , 2022, arXiv:2211.09527. [13] A. Zou, Z. Wang, N. Carlini, M. Nasr, J. Z. Kolter, and M. Fredrikson, “Universal and transferable adversarial attacks on aligned language models,” arXiv preprint arXiv:2307.15043 , 2023. [14] A. Wei, N. Haghtalab, and J. Steinhardt, “Jailbroken: How does LLM safety training fail?” in NeurIPS , vol. 36, 2023, arXiv:2307.02483. [15] Y. Mou, Z. Xue, L. Li, P. Liu, S. Zhang, W. Ye, and J. Shao, “Enhancing tool invocation safety of LLM-based agents via proactive step-level guardrail and feedback,” arXiv preprint arXiv:2601.10156 ,2026. [16] F. Jia, T. Wu, X. Qin, and A. Squicciarini, “The task shield: Enforcing task alignment to defend against indirect prompt injection in LLM agents,” in ACL , 2025, arXiv:2412.16682. [17] Z. Chen, M. Kang, and B. Li, “ShieldAgent: Shielding agents via verifiable safety policy reasoning,” in ICML , ser. Proceedings of Machine Learning Research, vol. 267, 2025, pp. 8313–8344. [18] S. Chennabasappa, C. Nikolaidis, D. Song, D. Molnar, S. Ding, S. Wan, S. Whitman, L. Deason, N. Doucette, A. Montilla et al. ,“LlamaFirewall: An open source guardrail system for building secure AI agents,” arXiv preprint arXiv:2505.03574 , 2025. [19] OWASP Foundation, “OWASP top 10 for large language model applications,” OWASP Foundation, Tech. Rep., 2023. [Online]. Available: https://owasp.org/ www-project-top-10-for-large-language-model-applications/ [20] OpenAI, “Introducing Codex,” https://openai.com/index/ introducing-codex/, 2025. [21] Anthropic, “Claude 3.7 Sonnet and Claude Code,” https://www. anthropic.com/news/claude-3-7-sonnet, 2025. [22] M. Andriushchenko, F. Croce, N. Flammarion et al. , “AgentHarm: A benchmark for measuring harmfulness of LLM agents,” arXiv preprint arXiv:2410.09024 , 2024. [23] E. Debenedetti, J. Zhang, M. Balunovi ´c, L. Beurer-Kellner, M. Fischer, and F. Tram `er, “AgentDojo: A dynamic environment to evaluate attacks and defenses for LLM agents,” in NeurIPS , vol. 37, 2024. [24] H. Zhang, J. Huang, K. Mei, Y. Yao, Z. Wang, C. Zhan, H. Wang, and Y. Zhang, “Agent security bench (ASB): Formalizing and bench-marking attacks and defenses in LLM-based agents,” arXiv preprint arXiv:2410.02644 , 2024. [25] Y. Liu, Y. Jia, R. Geng, J. Jia, and N. Z. Gong, “Formalizing and benchmarking prompt injection attacks and defenses,” in USENIX Security , 2024, arXiv:2310.12815. [26] M. Andriushchenko, F. Croce, and N. Flammarion, “Jailbreaking leading safety-aligned LLMs with simple adaptive attacks,” in ICLR ,2025, arXiv:2404.02151. [27] W. Hackett, L. Birch, S. Trawicki, N. Suri, and P. Garraghan, “Bypassing LLM guardrails: An empirical analysis of evasion attacks against prompt injection and jailbreak detection systems,” in LLMSec Workshop @ ACL , 2025, arXiv:2504.11168. [28] H. Inan, K. Upasani, J. Chi, R. Rungta, K. Iyer, Y. Mao, M. Tontchev, Q. Hu, B. Fuller, D. Testuggine, and M. Khabsa, “Llama Guard: LLM-based input-output safeguard for human-AI conversations,” arXiv preprint arXiv:2312.06674 , 2023. [29] ProtectAI, “DeBERTa-v3-base prompt injection v2,” https:// huggingface.co/protectai/deberta-v3-base-prompt-injection-v2, 2024. [30] N. Li, Z. Han, I. Steneker, W. Primack, R. Goodside et al. , “LLM defenses are not robust to multi-turn human jailbreaks yet,” arXiv preprint arXiv:2408.15221 , 2024. [31] E. Bassani and I. Sanchez, “On guardrail models’ robustness to mutations and adversarial attacks,” in EMNLP Findings , 2025. [32] M. Nasr, N. Carlini, C. Sitawarin, S. V. Schulhoff, J. Hayes et al. ,“The attacker moves second: Stronger adaptive attacks bypass de-fenses against LLM jailbreaks and prompt injections,” arXiv preprint arXiv:2510.09023 , 2025. [33] A. Kumar, J. Roh, A. Naseh, M. Karpinska, M. Iyyer, A. Houmansadr, and E. Bagdasarian, “OverThink: Slowdown attacks on reasoning LLMs,” in ICLR , 2026, arXiv:2502.02542. [34] X. Liu, X. Wang, Y. Zhang, S. Kariyappa, C. Xiang, M. Chen et al. ,“ReasoningBomb: A stealthy denial-of-service attack by inducing pathologically long reasoning in large reasoning models,” arXiv preprint arXiv:2602.00154 , 2026. [35] J. Dong, Z. Zhang, Q. Zhang, T. Zhang, H. Wang, H. Li, Q. Li, C. Zhang, K. Xu, and H. Qiu, “An Engorgio prompt makes large language model babble on,” in ICLR , 2025. [36] Y. Zhang, Z. Zhou, W. Zhang, X. Wang, X. Jia, Y. Liu, and S. Su, “Crabs: Consuming resource via auto-generation for LLM-DoS attack under black-box settings,” in ACL Findings , Vienna, Austria, 2025, pp. 11 128–11 150. [37] Z. Wang, Y. Zhang, J. Chen, Z. Zhou, R. Liang, R. Du, J. Jia, C. Wu, and Y. Liu, “RECUR: Resource exhaustion attack via recursive-entropy guided counterfactual utilization and reflection,” arXiv preprint arXiv:2602.08214 , 2026. [38] Y. Li, J. Wang, H. Zhu, J. Lin, S. Chang, and M. Guo, “ThinkTrap: Denial-of-service attacks against black-box LLM services via infinite thinking,” in NDSS , 2026. [39] K. Zhou, Y. Zheng, Y. He et al. , “Stealthy resource amplification via tool calling chains in LLM agents,” arXiv preprint arXiv:2601.10955 ,2026. [40] N. Jain, A. Schwarzschild, Y. Wen, G. Somepalli, J. Kirchenbauer, P.-y. Chiang, M. Goldblum, A. Saha, J. Geiping, and T. Goldstein, “Baseline defenses for adversarial attacks against aligned language models,” arXiv preprint arXiv:2309.00614 , 2023. [41] G. Alon and M. Kamfonas, “Detecting language model attacks with perplexity,” arXiv preprint arXiv:2308.14132 , 2023. [42] K. Zhu, X. Yang, J. Wang, W. Guo, and W. Y. Wang, “MELON: Provable defense against indirect prompt injection attacks in AI agents,” in ICML , ser. Proceedings of Machine Learning Research, vol. 267, 2025. [43] Z. Xiang, L. Zheng, Y. Li, J. Hong, Q. Li, H. Xie, J. Zhang, Z. Xiong, C. Xie, C. Yang, D. Song, and B. Li, “GuardAgent: Safeguard LLM agents by a guard agent via knowledge-enabled reasoning,” in ICML ,ser. Proceedings of Machine Learning Research, vol. 267, 2025. [44] OpenAI, “Introducing GPT-5.2,” https://openai.com/index/ introducing-gpt-5-2/, 2025. [45] GitHub, “GitHub Copilot Workspace: Welcome to the copilot-native de-veloper environment,” https://github.blog/news-insights/product-news/ github-copilot-workspace/, 2024. [46] Anysphere, “Cursor: AI code editor and coding agent,” https://cursor. com/, 2024. [47] DeepSeek-AI, “Deepseek-v3.2: Pushing the frontier of open large language models,” 2025, arXiv:2512.02556. [48] T. Rebedea, R. Dinu, M. Sreedhar, C. Parisien, and J. Cohen, “NeMo Guardrails: A toolkit for controllable and safe LLM applications with programmable rails,” in EMNLP System Demonstrations , 2023, pp. 431–445, arXiv:2310.10501. [49] Q. Team, “Qwen3 technical report,” 2025. [50] Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, M. Zhang, Y. K. Li, Y. Wu, and D. Guo, “Deepseekmath: Pushing the limits of mathematical reasoning in open language models,” arXiv preprint arXiv:2402.03300 ,2024. [51] D. Team, “An open-source llm reinforcement learning system at scale,” 
+
+arXiv preprint arXiv:2503.14476 , 2025. [52] Z. Liao, L. Mo, T. Xie, T. Yu et al. , “WebGuard: Building a gener-alizable guardrail for web agents,” arXiv preprint arXiv:2507.14293 ,2025. [53] X. Zhou, Y. Zheng, Y. Wang et al. , “Beyond max token: Stealthy resource amplification via tool calling chains in LLM agents,” arXiv preprint arXiv:2601.10955 , 2026. [54] Python Software Foundation, “difflib — helpers for computing deltas,” 2026, python 3.14.5 documentation. [Online]. Available: https://docs.python.org/3/library/difflib.html [55] S. Zhou, F. F. Xu, H. Zhu, X. Zhou, R. Lo, A. Sridhar, X. Cheng, T. Ou, Y. Bisk, D. Fried, U. Alon, and G. Neubig, “WebArena: A realistic web environment for building autonomous agents,” in ICLR ,2024, arXiv:2307.13854. 
+
+## Appendix 
+
+1. Instantiation I: LLM-as-Proposer Details 
+
+1.1. Variant Proposal Protocol. For each parent payload 
+
+p ∈ K (t), the proposer LLM M receives a structured prompt containing: 1) The parent payload p in full. 2) The guardrail’s complete response r = Gs(x), including the full <Think> reasoning section. This allows M to observe which structural elements in p triggered extended reasoning in r.A. Request decomposition 
+
+> • List assumptions
+> • Identify unknowns
+> • Clarify scope
+> B. Evidence ledger
+> • Claim
+> • Evidence
+> • Source / Basis Confidence
+> C. Counterfactual
+> adversary drill
+> • _____________________________________________
+> • _____________________________________________
+> • _____________________________________________
+> D. Scoring clinic
+> Category-by-category:
+> _____________________________________
+> Forced calibration: xxx
+> _________________________________
+> Claim Evidence Source / Basis Confidence Notes
+> Criterion Weight Score (0-1) Weighted Justification
+> Category-by-category: S1, S2, S3...
+> …
+> 0.0
+> ...
+
+>63x 
+
+> amplification
+> ~800
+> chars
+> (payload)
+> > 50,000
+> chars
+> (output)
+> Every scaffold stage may
+> trigger reasoning loops with
+> 10+ iterations.
+> Guardrail <Think> Output
+> Injected Payload
+> D. Scoring clinic
+> C. Counterfactual adversary drill
+> Forced calibration: argue 0.0, 0.5, 1.0
+> A. Request decomposition table
+> B. Evidence ledger
+> with
+> Loop
+> potential
+> 0.5
+> 1.0
+> S3
+> S2
+> S1
+> _________________________________
+> _________________________________
+
+Figure 8: The schema-following phenomenon. Left : a com-pact adversarial payload ( ∼800 chars) injects a structured analytical schema (sections A–D, categories S1–S9, forced calibration). Right : the guardrail dutifully mirrors and ex-pands every injected section in its <Think> output (over 50,000 chars), mechanically executing the injected scaffold as its own analytical template, reaching a 63 × amplification. 3) The top-m strategies are provided from the strategy bank 
+
+B, each with its name and running average fitness score, guiding M to amplify the patterns that triggered extended reasoning. 4) The parent’s strategy tags, enabling M to understand which structural patterns the parent already employs. The proposer generates b child variants (default b=5 ), each representing a distinct structural mutation of the parent. The proposer is instructed to analyze which patterns in the guardrail’s response indicate extended reasoning (e.g., repeated schema headers, exhaustive category enumeration, multi-pass calibration) and to amplify those patterns in the children. 
+
+1.2. Default Hyperparameters. Beam width k=5 , children per parent b=5 , diversity threshold as SequenceMatcher [54] ratio δ=0 .9, max iterations T =15 , early stopping patience 
+
+P =5 , strategy bank EMA coefficient α=0 .3, top strategies 
+
+m=10 .
+
+2. Instantiation II: Mechanism-Aware Details 
+
+2.1. Template-Slot Payload Representation. Figure 8 shows the schema-following phenomenon of guardrail mod-els. Rather than treating payloads as free-form text, we decompose them into a structured template with named slots, derived from the structural patterns discovered by Instantiation I. Each payload is defined by a slot state 
+
+s = ( s1, . . . , s d) specifying: 
+
+• s1: Category list . Safety schema’s risk categories and their descriptions; 
+
+• s2: Enumeration depth . Number of required sub-items per category like sub-questions and numbered steps; 
+
+• s3: Section schema . Analysis sections to include evidence ledger, branch analysis, calibration, hypothesis ranking, etc.; • s4: Anti-shortcut clauses . Anti-convergence directives like “do not shortcut,” “fill every bullet,” “even if N/A,” “restart if missing”;  
+
+> •
+
+s5: Calibration . Forced multi-rating argumentation, argue 0.0, 0.5, and 1.0 before choosing;  
+
+> •
+
+s6: Hypothesis count . Number of required ranked hypothe-ses with supporting/defeating evidence; A deterministic render RENDER (s) → p assembles the slot state into a natural-language payload. This representation constrains the search to structurally valid payloads while preserving the key dimensions that drive loop induction. 
+
+2.2. Structural Mutation Operators. Each mutation op-erator takes a slot state s and produces a mutated variant 
+
+s′: 
+
+> •
+
+CATEGORY EXPANSION : add or remove risk categories from the category list, e.g., add S4, S8 if currently only S1–S3 are included;  
+
+> •
+
+ENUMERATION DEPTH : increase or decrease required sub-items per category, e.g., from 4 to 11 authorized micro-actions;  
+
+> •
+
+SECTION REORDER : shuffle, add, or remove analysis sections, e.g., add “Branch Analysis” with 6 branches;  
+
+> •
+
+ANTI SHORTCUT INTENSITY : add, remove, or strengthen anti-convergence clauses, e.g., add “restart entire analysis if any bullet is missing”;  
+
+> •
+
+CALIBRATION TOGGLE : toggle forced multi-rating argu-mentation on/off;  
+
+> •
+
+HYPOTHESIS COUNT : adjust the number of required ranked hypotheses, e.g., from 3 to 7;  
+
+> •
+
+CROSS SLOT COMPOSE : apply 2–3 random operators in sequence for multi-dimensional mutations; For each beam parent, we apply c randomly selected operators to produce c children, with one child always using C ROSS SLOT COMPOSE to ensure multi-dimensional exploration. 
+
+2.3. Attention-Guided Fitness. The mechanism-aware fit-ness function augments base output length with an attention-cycling score: 
+
+Fmech (p) = Fbase (p) + ω · A (p). (9) The cycling score A(p) can be computed with limited resources. It is computed via teacher-forced inference on a HuggingFace model with forward hooks: 1) Generate the guardrail response r via vLLM. 2) Identify schema-header token positions in r (category labels S1–S9, section headers A–F, etc.). 3) Run teacher-forced inference with the full input+output sequence, extracting per-layer attention matrices via forward hooks. 4) Compute the mean attention weight from response tokens to schema-header tokens across all layers and heads. High cycling scores indicate the model is trapped in a self-reinforcing loop of re-reading its own structural output, while computing A(p) requires ∼2–5s per candidate. We first evaluate all candidates via vLLM for Fbase ; and then compute A(p) only for the top-N candidates by Fbase , which achieves faster inference. 
+
+2.4. Entropy-Based Early Rejection. According to our observation in Section 3.3, loop cases exhibit significantly lower token-level entropy (mean 0.132 bits vs. 0.264 bits for baselines). To utilize this, after each round vLLM evaluation, we compute mean Shannon entropy over the first ne tokens: reject (p) ⇐⇒ 1
+
+neneX
+
+> j=1
+
+H(tj ) > τ e. (10) High early entropy indicates the model is not in template-filling mode and is unlikely to sustain a loop. 
+
+3. More Real-World Attack Instantiation 
+
+3.1. Web Agents. Web agents represent one of the most ma-ture categories of autonomous LLM agents, with commercial deployments already handling tasks such as flight booking, price comparison, and form submission on behalf of users. These agents often interact with arbitrary third-party websites whose content can be controlled by attackers. Traditional web attacks target human users through visual deception, while attacks on web agents exploit the machine-readable representation of pages, such as the accessibility tree, ARIA attributes, and hidden DOM elements that agents rely on for structured page understanding. This creates a unique threat: content invisible to human oversight but fully processed by the agent’s safety infrastructure. 
+
+Setup and Guardrail Architecture. We instantiate this scenario with BrowserGym [3], a standard framework for web agent applications, paired with WebGuard [52], a state-of-the-art guardrail that evaluates each proposed browser action against the page’s accessibility tree. We-bGuard receives a fixed system prompt defining risk lev-els (SAFE , LOW , HIGH ), the full accessibility tree of the current page, and the agent’s proposed action, out-putting a structured JSON verdict: {"thought": "...", "risky_level": "SAFE|LOW|HIGH" }. Each action is evaluated independently with no cross-step memory, meaning the attack payload must be effective on every single guardrail invocation, which is a stronger requirement than attacks that accumulate state. 
+
+Injection Surface. The injection surface is a hid-den DOM element (<div style="display:none" role="complementary"> ) that is invisible to human users but appears in the accessibility tree that WebGuard pro-cesses. The payload uses WebGuard-aligned vocabulary (risk levels, reversibility analysis, stakeholder impact) structured as a 10-section “protocol” scaffold. 
+
+End-to-End Results. We deploy a custom Flask e-commerce site with 10 pages and evaluate 10 WebArena [55] shopping tasks (search, add to cart, checkout, account management). The agent is driven by GPT-4o-mini through BrowserGym, with the guardrail evaluating each action under four condi-tions: (1) baseline (clean site), (2) attack without timeout, (3) attack with 30-second timeout defaulting to allow, and TABLE 11: BrowserGym + WebGuard end-to-end results across 10 shopping tasks under four conditions.                     
+
+> Condition Success Latency/Step Tokens/Task Timeouts
+> Baseline 5/10 1.28s 793 0Attack (no timeout) 4/10 35.28s 31,203 5Attack + allow 6/10 22.30s 2,409 17 Attack + block 3/10 57.51s 5,644 34 search
+> product
+> add to
+> cart
+> checkout
+> form
+> view
+> orders
+> search
+> filter
+> remove
+> cart
+> browse
+> category
+> toggle
+> notif.
+> login
+> 0
+> 10 1
+> 10 2
+> 10 3
+> Total Guardrail Time (s)
+> timeout
+> Baseline
+> Attack
+
+Figure 9: Per-task guardrail latency under baseline and attack conditions. Tasks involving complex multi-step interactions (checkout, search) show disproportionate amplification. (4) attack with 30-second timeout defaulting to block. Ta-ble 11 summarizes the results. The attack achieves 27.6 × average latency amplification and 39.3 × token amplification per guardrail step. The worst case occurs on the checkout task: 168,045 tokens consumed across 15 steps in 1,310.8 seconds ( 131 × latency amplifi-cation). This extreme amplification on the checkout task is not coincidental. Checkout tasks often involve multi-field form submission like payment details, shipping address, and confirmation, generating complex action sequences that the guardrail must evaluate. The payload’s enumeration structure forces the guardrail to cross-reference each form field against multiple risk categories, creating combinatorial expansion in the reasoning trace. At 131 × amplification, a guardrail call that should complete in 10 seconds instead takes 21 minutes, far exceeding any practical timeout and rendering the safety system non-functional for the duration of the task. Figure 9 shows the per-task latency breakdown. The payload transfers across different model families as shown in Table 12 and Figure 10. Non-reasoning models like GPT-4o-mini show higher amplification than reasoning mod-els like DeepSeek-R1, suggesting that instruction-following compliance is the primary vulnerability factor, instead of reasoning depth. 
+
+Safety-Availability Dilemma. The safety-availability dilemma manifests concretely in the timeout conditions. Under timeout-allow, the checkout task succeeds with 11 steps and 10 timeouts, the agent fills payment information and submits a financial transaction without guardrail review. The task success rate under timeout-allow (6/10) exceeds the baseline (5/10), i.e. when the guardrail is TABLE 12: Cross-model transfer of WebGuard-aligned payload.             
+
+> Model Latency Amp. Token Amp.
+> Qwen3.5-9B 2.83 ×2.69 ×
+> DeepSeek-R1-0528 6.89 ×4.48 ×
+> Qwen3.5-9B ∼5–7 ×∼5–7 ×
+> GPT-4o-mini 27.6 ×39.3 ×Qwen3.5-9B
+> (reasoning)
+> DeepSeek-R1
+> (reasoning)
+> Qwen2.5-7B
+> (vLLM)
+> GPT-4o-mini
+> (API)
+> 0
+> 5
+> 10
+> 15
+> 20
+> 25
+> 30
+> 35
+> 40
+> Amplification Factor
+> 2.8x
+> 6.9x 6.0x
+> 27.6x
+> 2.7x
+> 4.5x 6.0x
+> 39.3x
+> Latency Amp.
+> Token Amp.
+
+Figure 10: Cross-model transfer of a single WebGuard-aligned payload. The payload was optimized against Qwen3.5-9B. confused by the payload, it produces false positives that block legitimate actions; bypassing it via timeout slightly improves agent functionality, with a sacrifice of security. Under timeout-block, 34 out of 55 total actions are blocked, reducing task success to 3/10 and effectively denying service. Any fixed timeout policy thus creates an exploitable binary outcome, the attacker wins regardless of which failure mode the defender chooses. This dilemma is particularly acute for e-commerce agents where both outcomes have direct financial consequences: fail-open enables unauthorized transactions, while fail-closed prevents legitimate purchases. 
+
+Takeaway. In web agents, any website can embed invisible content that forces the guardrail into extended reasoning, and the defender must choose between allowing unreviewed actions or denying service. The attack only requires the ability to serve a webpage. Combined with strong cross-model transfer, this means a single adversarial page can simultaneously attack all web agents that visit it, regardless of their underlying guardrail model. 
+
+3.2. Desktop Agents. Computer-use agents, also referred to as desktop agents, represent the next frontier of autonomous systems, agents that control full desktop environments, managing files, executing terminal commands, configuring applications, and browsing the web within virtual machines. They operate across software stack with the same privileges as a human user. This expanded capability surface demands TABLE 13: ShieldAgent amplification under exploitation (3 checks per action, Qwen2.5-7B fine-tuned).             
+
+> Condition Tokens Latency Token Amp. Lat. Amp.
+> Baseline 504 12.4s 1.0 ×1.0 ×
+> Schema payload 9,284 178.6s 18.42 ×14.4 ×
+
+correspondingly rigorous safety verification: a desktop agent that executes rm -rf / or exfiltrates credentials has far greater impact than a web agent that clicks the wrong button. 
+
+Setup and Guardrail Architecture. LLM-based guardrails emerge to solve this complicated problem of desktop agent safety. ShieldAgent [17] (ICML 2025) addresses this chal-lenge with a multi-check architecture that performs three independent verification passes per agent action: a Grounding Check (verifying the action targets real UI elements), an Action Check (validating against safety policies), and a State Check (confirming the resulting state remains safe). Because all three checks receive the full observation text (accessibility tree, file contents, terminal output) as input, a single injection into the observation enters all three check prompts simultaneously, creating a 3× attack multiplier from one injection point. The very architectural decision that makes ShieldAgent thorough, whose multi-perspective verification becomes its greatest liability under adversarial conditions. 
+
+Injection Surfaces and Evaluation. We evaluate using OSWorld [4], a benchmark of realistic desktop tasks spanning email (Thunderbird), web browsing (Firefox), file manage-ment, terminal operations, and text editing. We randomly select 20 representative scenarios and test four injection surfaces that span the desktop environment: (1) accessibility tree injection into UI element descriptions; (2) file content injection into configuration files, documents, and logs that the agent reads; (3) terminal output injection into command responses; and (4) GUI text injection into dialog boxes, notifications, and window titles. The guardrail model is ShieldAgent [17], a Qwen2.5-7B model fine-tuned for structured safety classification, served via vLLM. Improved from previous reasoning models that produce extended <Think> traces, ShieldAgent emits a brief [Analysis] followed by a binary [Answer] safe/unsafe verdict, which is its fine-tuned EOS natu-rally caps output at ∼170 tokens per check ( ∼504 total across three checks in 12.4 seconds). We exploit it by forcing contin-ued generation past its trained stopping point. Combined with schema-priming payloads that present ShieldAgent’s own safety taxonomy (S1–S9) as an enumerated checklist, the model fills forced output with structured analysis rather than degenerate repetition. Table 13 reports exploitation results. 
+
+Triple-Check Amplification. Under the condition min tokens=1024, the Grounding Check produces 4,096 tokens and hits the generation cap, consists of the Action Check 1,092 tokens, and the State Check 4,096 tokens, totaling 9,284 tokens and 178.6 seconds for a single action. For multi-step desktop tasks requiring 8–12 actions, the cumulative guardrail overhead reaches 24–36 minutes. 
+
+Fail-Open vs. Fail-Closed Dilemma. When defenders impose token budgets to mitigate the attack, they face an unwinnable choice. Under fail-closed semantics, truncated output removes the [Answer] tag, causing the parser to return safe=False , blocking legitimate actions (DoS). Under fail-open semantics, the agent proceeds without verification, disabling safety in an environment with shell access and credential stores. Any fixed threshold creates an exploitable boundary the attacker can tune against. 
+
+Cross-Application Propagation. A distinctive property of desktop environments is cross-application propagation. A payload injected into one application’s observation persists in the environment state and continues to trigger amplification in subsequent actions targeting different applications. The payload (6,766 characters, 11.5 × input amplification) is small enough to embed in any desktop artifact yet forces 178.6 seconds of guardrail computation per action. 
+
+Takeaway. Fine-tuned classifier guardrails resist payload-based amplification through trained output brevity, but remain vulnerable when generation infras-tructure is exploited. ShieldAgent’s 3× check architec-ture compounds this into 18.42 × token amplification per action, and exposes a fail-open/fail-closed dilemma where any token budget defense either blocks legitimate actions or allows unreviewed ones. Desktop persistence ensures the payload affects all subsequent actions across the session.
