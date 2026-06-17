@@ -1,0 +1,1202 @@
+Title: The Proxy Knows Too Much: Sealing LLM API Routers with Attested TEEs
+
+URL Source: https://arxiv.org/pdf/2606.16358v1
+
+Published Time: Tue, 16 Jun 2026 01:52:00 GMT
+
+Number of Pages: 16
+
+Markdown Content:
+> 1
+
+# The Proxy Knows Too Much: Sealing LLM API Routers with Attested TEEs 
+
+Sipeng Xie 1, Qianhong Wu 1, Hengrun Lu 1, Ziliang Sun 1, Qi Wu 1, Bo Qin 2, Qin Wang 31Beihang University | 2Renmin University of China | 3Independent 
+
+Abstract —Agents increasingly access large language models (LLMs) through API routers. A router terminates the client’s transport-layer security session and opens a separate upstream session, so it holds the full interaction in plaintext. This makes the router an application-layer man-in-the-middle: it can rewrite agent tool calls, swap dependencies for typosquatted packages, trigger attacks only under audit-evading conditions, and passively exfiltrate secrets. Existing client-side defenses are evadable. We propose AEGIS , a provider-transparent attested API router whose data path is a client-verified faithful passthrough. AEGIS confines plaintext handling to a small hardware-enclave component while leaving authentication, scheduling, accounting, and management on the untrusted host. The client verifies the enclave before releasing plaintext. The host can neither read nor alter the interaction, and plaintext leaves only toward destinations fixed by the measured image. We show that all four malicious-router attack classes succeed against a plaintext-access baseline and are blocked by A EGIS , including adaptive tests against the same boundary. The trusted path is 851 lines, carries three provider-native APIs without conversion, and completes every request under real-provider workload and concurrency. In a seeded audit pilot, two commodity coding agents find eight and ten of ten planted invariant violations. The local relay overhead is about six milliseconds per request. 
+
+Index Terms —LLM API Router, Agentic Security, Trusted Hardware, Remote Attestation, Prompt Confidentiality. 
+
+I. I NTRODUCTION 
+
+Agents, including command-line coding assistants, increas-ingly reach model providers through an intermediary. They point at an LLM API router, a gateway that authenticates the caller, selects an upstream account, and forwards the request to one of several providers. A single endpoint multiplexes many providers and hides their keys behind one gateway key, with quota and billing centralized. The most widely deployed open-source router template draws tens of thousands of installations [1]. This convenience hides a structural problem. A router terminates the client’s transport-layer security (TLS) session and opens a separate one to the provider. The full request and response exist as plaintext inside it. It sees the user’s prompts, the tool definitions and outputs the agent exchanges, the credentials in the traffic, and the tool-call payloads the provider returns. A router is an application-layer machine-in-the-middle by design, and the agent trusts it completely. Figure 1 contrasts what the host observes on a plaintext router with what it observes through A EGIS .
+
+The attack surface. A recent measurement study formalizes what a malicious router can do from this position and documents real abuse in the wild [1]. First, the router can rewrite a tool call before it reaches the client. The rewrite is schema-valid and the client never sees the original, so one altered shell command is enough for remote code execution on the developer’s machine. Second, it can swap a dependency for a typosquatted package inside an install command, slipping past allowlists that only check domains and planting a durable supply-chain foothold. Third, it can fire the rewrite only on a chosen trigger, such as a tool name, a keyword, or a request count; an auditor running a finite set of probes sees only benign behavior. Fourth, it can passively scan the traffic for credentials and exfiltrate them. The first three are response-side injection and its evasion variants; the fourth is passive request-path exfiltration. We label these attack classes AC-1 ,
+
+AC-1.a , AC-1.b , and AC-2 , following the study. The study also tests client-side defenses, including policy gates, anomaly screening, and a log of observed responses, and finds each evadable. It concludes that a sound fix must move response integrity to a party the client can trust, and that client-side mechanisms observing only the delivered responses cannot protect secrets on the request path. That conclusion creates a deployment gap. The trusted party is usually the provider, but clients and router operators cannot assume providers will add new APIs or infrastructure for them. 
+
+Sealing the router. We accept that conclusion but move the trusted boundary to a place the client can verify without provider cooperation. Rather than detect a malicious router after the fact, can we remove the operator’s ability to misbehave at all? We make the router an attested trust boundary. Only the data plane, the code path that carries the request and response bytes, runs inside a hardware enclave, and the client’s TLS session terminates there. The host never holds the interaction in the clear. A small client-side component checks the enclave’s measurement and refuses to send the body until the check passes. Authentication, account selection, and billing stay on the untrusted host and reach the enclave over a narrow channel that never carries the body. The provider sees an ordinary request, while the operator still schedules and bills but cannot read or modify the interaction, nor redirect it, since the provider and endpoint are fixed in the attested image. 
+
+One boundary suffices. These four classes are not independent mechanisms to patch. They share one enabling capability, plaintext access at the router, and removing it collapses the family. A host that cannot see the interaction can neither rewrite a tool call nor its typosquat variant ( AC-1 , AC-1.a ), has no hidden behavior left for trigger-gating to conceal ( AC-1.b ), and cannot scan the traffic for the client’s secrets ( AC-2 ), the                                                             
+
+> arXiv:2606.16358v1 [cs.CR] 15 Jun 2026 2
+> Plaintext router
+> TLS terminates on the host prompt: fix the failing build ×
+> tool call: run("npm install lodash") ×
+> api key: sk-ant-a1b2c3d4 ×
+> response: assistant text +tool calls ×
+> the host reads and can rewrite every field
+> Through A EGIS
+> TLS terminates in the attested enclave request: 0x9f2a3c... (ciphertext) ✓
+> tool call: inside the ciphertext ✓
+> credential: bound inside the enclave ✓
+> response: 0x7c1e8b... (ciphertext) ✓
+> the host sees 1240 tokens of usage only
+> Fig. 1. What the untrusted host observes for one coding-agent request. A plaintext router (top) holds every field in the clear; through A EGIS (bottom) the host sees only ciphertext bound to the attested enclave and usage telemetry.
+
+last without any cooperation from the provider. The host still holds only the gateway credential it issued (§III). 
+
+Closing the gap. Attested LLM gateways already exist [2]–[4], but they attest a larger or transforming service rather than a faithful relay, and they verify only after the client has released its body. A EGIS closes both gaps by construction. It releases the body only after the client verifies the measurement and pins the enclave certificate, and it relays the interaction faithfully over a small reproducible trusted base, so the measurement certifies that the bytes were carried unmodified. §VIII compares the two designs in detail. To our knowledge this is the first minimal trusted-code, reproducible enclave retrofit of a widely deployed open-source router template, evaluated against the attack classes above. 
+
+Contributions. We summarise our contributions as below.  
+
+> •
+
+A provider-transparent router design that closes the full malicious-router taxonomy ( AC-1 , AC-1.a , AC-1.b , AC-2) under a precise malicious-operator model, with stated coverage and scope (§III, §V).  
+
+> •
+
+A minimal trusted-code, confidentiality-first design. Only a faithful passthrough runs in the enclave, which keeps the trusted base small; the rest of the router stays on the untrusted host and reaches the enclave over a channel that never carries the body. The client refuses to release the interaction body until attestation verifies, so there is no after-the-fact check for the client to get wrong (§IV).  
+
+> •
+
+A measurement-equals-audited-code construction. A min-imal reproducibly built trusted base and a signed build manifest, with the ARPA (Audit, Reproduce, Pin, Attest) bootstrapping protocol that lets an end user or their coding agent anchor trust without a central auditor (§IV-C).  
+
+> •
+
+An empirical evaluation on four fronts. All four attack classes succeed on a plaintext-access baseline and are blocked by our design; adaptive malicious-router tests and a scoped model in the ProVerif protocol verifier [5] bound the host’s remaining influence; three provider-native workloads exercise the verified path; and seeded coding-agent audits check the auditability claim (§VI). We implement A EGIS on a widely available cloud enclave platform and report its security properties, provider support, auditability, and performance. II. T ECHNICAL WARM -UPS 
+
+A. LLM API Routers and Tool-Using Agents 
+
+An agent calls a language model in a loop, advertises tools the model may invoke, executes the tool calls it returns, and feeds the results back [6]. If a tool call is tampered with, the agent executes the tampered version, and how much harm follows depends on what its tools can reach. A coding agent is the sharpest case. Its tools run on the developer’s machine and include shell commands and package installation [7], so a tool call it executes carries the same authority as the developer. Many agents reach a provider through an intermediary that fronts one or more providers behind a single endpoint, an arrangement widely deployed as an LLM API gateway or aggregator [8]–[10]. We call it an LLM API router. A client sends provider-format requests to the router under a credential the router issues. The router then authenticates the caller, selects an upstream provider account from a pool it manages, attaches that account’s provider credential, forwards the request, relays the streamed response, and records token usage for accounting. Around this path deployments add load balancing and failover across the pool, per-account rate and concurrency limits, health-based selection, and session affinity. They expose every provider through one provider-compatible interface. An unmodified client switches providers by changing only the endpoint [8], [10]. Routing here means brokering each request to an upstream account, not the model-selection routing that picks which model answers a query. Brokering this way has one structural consequence the rest of the paper turns on. The router terminates the client’s transport-layer security session and opens a separate one to the provider. By construction the full plaintext interaction, including the prompt, the response, and every tool input and output, exists inside the router for the duration of each request, the intended behavior of a terminating reverse proxy. From the outside, the agent cannot tell whether the router returned the provider’s exact response or a substitute [1]. 
+
+B. Trusted Execution and Remote Attestation 
+
+A hardware trusted execution environment (TEE), or enclave, runs code in a processor-isolated region that even privileged host software, the operating system and the hypervisor included, cannot read or modify [11]. Isolation alone does not tell a remote party which code is running. The platform therefore computes a measurement, a cryptographic hash of the exact image loaded into the enclave, and a hardware root of trust issues an attestation, a signed document that carries the measurement and traces to the platform vendor [12]. The remote party checks the signature and compares the measurement against the value it expects, learning that a specific image runs inside a genuine enclave. The platform also lets the enclave embed caller-supplied bytes in that document. Binding a fresh nonce and the enclave’s transport key this way makes the attestation speak for the channel in use rather than some other 3
+
+session, the technique known as remote-attestation TLS (RA-TLS) [13]. § II-C states this platform as an attested-execution scheme with three security games. Two properties of this model matter for any system built on it. First, the trusted computing base (TCB), the code that must be correct for a guarantee to hold, spans both the code inside the enclave with the platform root and the relying party’s verifier that checks the attestation and pins the measurement [14]. A guarantee is therefore only as strong as both parts, and a smaller enclave is worth the effort. Second, attestation proves code identity, not benignity, and a measurement means known-good code only when it ties back to audited, reproducibly built source [15]. Two platform limits also bound the model. An enclave that persists sealed state must defend against host rollback to an older valid version. Hardware isolation is not absolute either, since physical and microarchitectural side channels can leak enclave state [16], [17]. 
+
+C. Cryptographic Primitives 
+
+We fix the cryptographic vocabulary the rest of the paper reuses, abstracting the enclave platform as an attested-execution scheme with three security properties and recalling the standard primitives the bootstrapping protocol relies on. Throughout, 
+
+A is a probabilistic polynomial-time adversary, λ the security parameter, and Adv X ≤ negl means the advantage is negligible in λ for every such A; for a guessing game the advantage is the distinguishing advantage Pr[ β′=β] − 12 .
+
+Attested execution. We model the enclave platform as an attested-execution scheme, following the standard abstraction of trusted hardware [18]. A scheme is a tuple of probabilistic polynomial-time algorithms 
+
+HW = ( Setup , Load , Run , Run &Quote , VrfyQuote ). 
+
+> •
+
+Setup (1 λ) fixes the platform root key and outputs the public parameters pms . 
+
+> •
+
+Load (pms , Q ) creates an enclave running program Q,measures the loaded image to m, and returns a handle.  
+
+> •
+
+Run (hdl , in ) runs Q on an input.  
+
+> •
+
+Run &Quote (hdl , in ) additionally returns a quote ρ binding the measurement, the input, the output, and caller-supplied bytes under the platform root.  
+
+> •
+
+VrfyQuote (ρ) checks a quote against the platform root. Binding the enclave’s transport key into the caller-supplied bytes makes a quote speak for the live session, the technique of attested transport-layer security. The scheme has three properties, each carrying one guarantee. 
+
+Definition 1 (Execution integrity) . Adv ExeInty  
+
+> A,HW
+
+≤ negl , where 
+
+A has oracle access to the loaded enclave and wins by forcing an accepted output or streamed transcript out ′̸ = Run (hdl , in )
+
+for some input. The loaded program runs faithfully on its inputs, its whole input-output transcript included; this gives execution integrity, not confidentiality. 
+
+Definition 2 (Memory confidentiality) . Adv Iso  
+
+> A,HW
+
+≤ negl in the guessing game where A submits an admissible pair of secret in-enclave inputs s0, s 1 with L(s0) = L(s1), the challenger runs Q on sβ , and A sees the entire host view. The host learns nothing of the enclave’s secret memory beyond L, the isolation property; this gives confidentiality. 
+
+Definition 3 (Attestation unforgeability) . Adv RA -unf  
+
+> A,HW
+
+≤ negl ,where A, given the public parameters and a Run &Quote ora-cle, wins by outputting an accepting quote on a measurement-input-output tuple no enclave ever produced. No party without the platform root can forge a quote. 
+
+Standard primitives. We recall four standard primitives:  
+
+> •
+
+A signature scheme is existentially unforgeable un-der chosen-message attack when no A with a sign-ing oracle forges a valid signature on a fresh message (Adv euf -cma ≤ negl ).  
+
+> •
+
+A measurement function Build maps a source or a build manifest under a fixed recipe R to a measurement m and is collision-resistant ( Adv cr ≤ negl ) when finding two distinct inputs with the same measurement is hard.  
+
+> •
+
+An authenticated channel, realized by authenticated encryp-tion with associated data, delivers each message intact and confidential to its authenticated endpoint or signals failure, with distinguishing advantage Adv ch ≤ negl from an ideal secure channel. The enclave-to-provider channel is endpoint-authenticated under the public certificate authorities, which we take as a trusted root; a certificate mis-issued for a pinned hostname is outside the model.  
+
+> •
+
+An append-only transparency log, under its public key pk log ,binds its contents to a signed tree head η, proves a recorded entry with an inclusion proof π, and relates an earlier head 
+
+η− to a later one with a consistency proof τ . It has inclusion soundness and consistency ( Adv log ≤ negl ), so no A makes an honest verifier accept an inclusion proof for an entry the log does not record, nor makes two honest readers accept divergent contents at the same position. III. S YSTEM AND THREAT MODEL 
+
+A. System Model 
+
+We target a self-hosted, single-operator router, where one entity owns the upstream provider accounts and the gateway logic. Three parties take part. A client runs a tool-using agent and a verifier that checks the router before trusting it. The operator runs the router on an untrusted host it fully controls. The providers are ordinary HTTPS upstreams the operator selects among. Several clients may share one operator, and the adversary is the operator. The security question is whether clients can distinguish an operator running audited, attested code from one that merely asks to be trusted. Attestation gives clients that choice. A client can require the expected measurement before releasing plaintext, and organizations can make that check a routing requirement. An operator that publishes a reproducible measurement gives clients a verifiable trust signal, and operators without one stay indistinguishable from plaintext routers. 
+
+B. Threat Model 
+
+Our adversary is a malicious router operator [1] that controls the untrusted host on which the router runs. It runs arbitrary 4
+
+TABLE I WHAT EACH TRUST BOUNDARY CARRIES . T HE HOST -FACING CONTROL CHANNEL (ROWS 2, 3, AND 5) CARRIES EIGHTEEN FIELDS ACROSS TWO CALLS ; NO FIELD CAN NAME A NETWORK ADDRESS OR CARRY BODY BYTES .
+
+Boundary Carries Never carries 
+
+Sidecar → enclave attested session; body plaintext after verification succeeds plaintext before verification Enclave → host (control) gateway credential; model, platform, and session labels; failed accounts body bytes; any destination Host → enclave (control) provider, policy, and account names; accounting label; provider credential address or path; body transform Enclave → provider verbatim body; provider credential; allowlisted headers gateway credential; host-chosen destination Enclave → host (telemetry) token counts, status, latency prompt, response, tool content 
+
+code in the router process, reads and writes the router’s datastores, observes and forwards all network traffic, and chooses which upstream account serves a request. Its goal is any of the four attack outcomes of §I, which Figure 2 places on the router’s two plaintext paths. We assume the provider and the model are honest, the boundary the measurement study draws [1]. The provider need not attest, sign responses, expose a new API, or run new infrastructure, and remains an ordinary HTTPS upstream selected by the router. Defending against a malicious provider, or a model that emits a malicious tool call on its own, is out of scope for both works. We assume the enclave platform’s hardware root of trust and attestation signing are sound, and place physical and microarchitectural side channels against the enclave out of scope. 
+
+C. Security Goals 
+
+AEGIS aims to let a malicious host carry the interaction with-out learning its body, altering it, or steering it off an approved path. Body-plaintext confidentiality hides the interaction body from the host and confines it to an approved destination. The gateway credential the caller authenticates with is disclosed to the host by design in the single-operator deployment. Router execution integrity fixes the code that touches the body to the attested image. Transport-level response integrity protects the bytes among the verified client, the enclave, and a validated provider. This covers the transported bytes rather than full semantic routing integrity, since account selection stays with the untrusted host. 
+
+Leakage profile. Confidentiality holds modulo an explicit     
+
+> Agent
+> developer authority
+> Malicious router
+> terminates TLS; holds plaintext
+> Provider
+> honest
+> prompts, tools, secrets
+> tool calls
+> fresh TLS
+> response
+> AC-1 rewrite a tool call
+> AC-1.a swap in a typosquat package
+> AC-1.b fire only on a trigger
+> AC-2 scan and exfiltrate secrets
+
+Fig. 2. The attack position. All four attack classes start from the terminating router’s plaintext access, response-side rewrites ( AC-1 , AC-1.a , AC-1.b ) on one path and request scanning ( AC-2 ) on the other. 
+
+profile evaluated on the realized interaction transcript, 
+
+L = ( |b|, |r|, timing , cadence , status , abort /retry , g, 
+
+acct , prov , SNI , IP , rec -sizes , usage ) ,
+
+splitting into an input-determined part fixed by the request, namely the body length |b|, the request timing, the gateway credential g, the account and provider identifiers, the server-name indication, the upstream address, and the request record sizes, and an interaction-determined part fixed by the honest provider’s reply, namely the response length |r|, the response timing, the streaming cadence, the completion status, the abort-and-retry pattern, the response record sizes, and the token usage. Treating the provider as a fixed oracle, L is a function of the body, so a pair is admissible when its two bodies induce the same leakage. Without padding or traffic shaping the design hides body content only up to L, not length or timing. Four operational games specify body-confidential routing against a malicious host, each naming only the specific host strategy it rules out. 
+
+Definition 4 (Confidentiality, equal-leakage) . The host A
+
+chooses which image to load and carries a session on bβ ,for a hidden bit β and an admissible pair b0, b 1; the client sidecar’s attest-and-verify step releases plaintext only when the live enclave binds the pinned measurement and its transport key. For the host’s guess β′,
+
+Adv conf  
+
+> A,ΠAEGIS
+
+= Pr β′=β − 12 ≤ negl (λ).
+
+The host cannot tell which body was sent, and its freedom to load a deviating image or forge a binding is an event the experiment exposes. 
+
+Definition 5 (Destination authority) . For a client body b and application destinations d, provider hostname and path pairs, 
+
+Adv dest  
+
+> A,ΠAEGIS
+
+= Pr  b in plaintext reaches d / ∈ ∆ ≤ negl (λ).
+
+No host strategy steers a plaintext body outside the baked set. 
+
+Definition 6 (Faithful relay) . For the submitted body b, the response r the chosen provider returned, the body b′ a provider receives, and the response r′ the client accepts, 
+
+Adv int  
+
+> A,ΠAEGIS
+
+= Pr  b′̸ = b ∨ r′̸ = r ≤ negl (λ).
+
+The host may force a request to fail, but cannot make a client accept a tampered success. 
+
+Definition 7 (Streaming integrity) .
+
+Adv str  
+
+> A,ΠAEGIS
+
+= Pr  truncated response accepted ≤ negl (λ).5
+
+A response completes only when its end-of-stream marker arrives intact, so a cut stream yields a rejection. 
+
+These four games state that a malicious host learns the body only through L, cannot alter a delivered or accepted body, and cannot steer plaintext outside ∆.IV. O UR SOLUTION : A EGIS 
+
+AEGIS turns the router into an attested trust boundary by splitting it along the line where plaintext lives, across the trust domains a request crosses (Figure 3). 
+
+A. Overview 
+
+What belongs inside the enclave fixes everything else, and the two extremes fail oppositely. Placing the entire transforming router inside protects the body but swells the trusted base to the whole application; its measurement then names a large, fast-moving image that no end user can tie to audited source (§ IV-C ). Keeping the body path on the host and attesting only a side component leaves the host terminating the client’s session, so the plaintext access behind every attack survives. A EGIS 
+
+takes the point between them, a construction of probabilistic polynomial-time algorithms 
+
+ΠAEGIS = ( Publish , Audit , Pin , Attest , Relay , Vrfy ). 
+
+> •
+
+Publish , run by the operator once per release, publishes an audited, reproducible build.  
+
+> •
+
+Audit , Pin , run once per client, audit the published build and pin its measurement.  
+
+> •
+
+Attest , Vrfy , run per session, attest the live enclave to the client sidecar before any plaintext leaves the client.  
+
+> •
+
+Relay , run per request, relays the interaction verbatim to a fixed provider and reports only usage to the host.                    
+
+> Attest
+> Release
+> Authorize
+> Relay
+> Report
+> Client sidecar
+> trusted
+> Host
+> untrusted
+> Enclave
+> attested
+> Provider
+> honest
+> plaintext only here
+> fresh nonce n
+> 1
+> quote binds m∗, k, n
+> verify m∗(fail-closed )
+> request (b, g ), sealed to k
+> 2ciphertext
+> authorize g3
+> policy p,c
+> 4
+> verbatim b, c
+> 5
+> response r
+> response r, attested session
+> ciphertext
+> usage 6
+> body / data control metadata attestation
+> Fig. 3. The A EGIS architecture across three trust domains. Numbered steps trace a request’s lifecycle (Algorithms 1–3).
+
+B. Minimal Trusted Base 
+
+The trusted base should contain only what confidentiality and integrity require, because a smaller base is both a smaller attack surface and, per § IV-C , a feasible audit target. We therefore keep three things in the enclave and nothing else, namely termination of the client session, faithful relay of the request and response, and the set of legitimate upstream destinations. Everything else stays on the host, including authentication, account selection and scheduling, credential storage, usage accounting, and the management interface. The host reaches the enclave over a narrow control channel, fixed in Table I, with two calls. One authenticates the caller and returns the routing decision, in which the destination appears only as a provider and a policy name. The other reports usage after the request completes and carries only numeric counters that cannot encode text. No field on either call can name a network address or carry a byte of the body. The enclave keeps no state across requests, so it writes nothing to disk and rollback attacks against stateful enclaves do not arise. 
+
+C. Anchoring the Measurement to Audited Source 
+
+Bootstrapping comes first in time. Attestation proves which code an enclave runs, so a measurement is trustworthy only when that code ties back to audited source. The operator commits a release with Publish , and each client runs Audit , Pin 
+
+(Algorithm 1) to audit and reproducibly rebuild that source, pinning the resulting measurement m∗ only when the rebuild matches the manifest (lines 11–12) and the manifest’s entry verifies against a public transparency log (lines 9–10). The pinned measurement is therefore one the operator has commit-ted to in the open, and a forked or rolled-back log fails closed. Pinning audited source closes the malicious-operator case by construction. The audit rests on review rather than proof. It raises the bar against a malicious author without ruling that case out. The code that first receives the plaintext is the code the client audited, and a measurement one client trusts is one every client can see in the public log. Because the trusted code is a small faithful passthrough, one end user or their coding agent can run this audit without a central auditor. 
+
+D. Fail Closed Before Releasing Plaintext 
+
+With a measurement pinned, each session begins by verifying the live enclave. The client points its agent at a thin local proxy, the sidecar, whose Vrfy procedure (Algorithm 2, lines 5–7; step 1 of Figure 3) enforces confidentiality. It releases the request body and gateway credential (line 7) only after the quote passes the platform-root and debugging checks (line 5) and binds the pinned measurement m∗, the fresh nonce, and the live session’s certificate (line 6), and it forwards nothing on any failure. Because plaintext reaches only a verified enclave, the host never sees the body. This ordering is the load-bearing choice. It separates two postures, refuse-before-send and verify-after-receive. A verify-after-receive router has already been given the plaintext. A client that follows a multi-step manual check can get a step wrong and believe it verified more than it did. A EGIS gives the 6
+
+Algorithm 1 Bootstrapping. The operator runs Publish once per release; each client then runs Audit , Pin once. 
+
+Input: s source, R recipe, mf manifest, σ signature, π
+
+inclusion proof, η tree head, τ consistency proof, η− last-seen head  
+
+> 1:
+
+procedure Publish (s, R ) ▷ operator  
+
+> 2:
+
+m ← Build (s, R ) 
+
+> 3:
+
+mf ← (s, R, m ); σ ← Sign sk O (mf ) 
+
+> 4:
+
+(π, η ) ← LogAppend (mf ) 
+
+> 5:
+
+return (mf , σ, π, η ) 
+
+> 6:
+
+procedure Audit , Pin (mf , σ, π, η, τ ) ▷ client  
+
+> 7:
+
+(s, R, m ) ← mf  
+
+> 8:
+
+assert SigVrfy pk O (σ; mf ) ∧ Faithful (s) 
+
+> 9:
+
+assert VrfyIncl pk log (mf ; π, η ) 
+
+> 10:
+
+assert VrfyCons pk log (η−, η ; τ ) 
+
+> 11:
+
+assert Build (s, R )= m 
+
+> 12:
+
+m∗ ← m; η− ← η
+
+client exactly one success path and makes releasing plaintext depend on it. There is no partial receipt to misread and no after-the-fact step to skip, and no signature is carried inside the response it is meant to protect. §VIII returns to why this removes a class of verification mistakes that a verify-after-receive design invites. Binding integrity to the live session rather than to a receipt also protects streamed responses byte by byte. A coding agent consumes a streamed response incrementally and may act on an early tool-call chunk before the response completes. An integrity check computed at end of stream arrives too late to gate that action. Because A EGIS carries every byte inside the attested session, each chunk is integrity-protected as it arrives. An agent that acts on an early chunk acts on bytes the host could neither read nor alter. 
+
+E. The In-Enclave Relay 
+
+Once a session is verified, the released body reaches Relay 
+
+(Algorithm 3, steps 3–6 of Figure 3), the only code that ever holds the plaintext (line 1). The relay performs no semantic transformation. It forwards the request body to the provider unchanged under the host-selected credential, dropping the caller’s gateway credential and forwarding only an allowlisted set of headers (line 7), relays the response bytes unchanged (line 12), and extracts token usage for the host to bill. It does not rewrite tool calls, reshape multimodal content, convert between protocols, or log bodies. From the provider’s perspective the enclave is the router endpoint making the request the router would have made. We call this a faithful passthrough. The end-of-stream marker is forwarded only on upstream completion (line 14), so a truncated upstream response reaches the client visibly incomplete. Faithfulness is a design commitment that serves three ends. It preserves agent semantics, because a coding agent depends on the provider’s exact tool calls and streamed structure, and any rewrite risks breaking the loop. It keeps the trusted base small, because a verbatim relay is far less code than a transformer. And it closes a gap that transformation opens. If the attested 
+
+Algorithm 2 Attest , Vrfy , the per-session attestation handshake (step 1 of Figure 3). 
+
+Input: n nonce, ρ quote, b request body, g gateway credential, 
+
+m∗ pinned measurement, cert E channel certificate  
+
+> 1:
+
+procedure Attest (n) ▷ enclave  
+
+> 2:
+
+ρ ← Run &Quote (hdl , (n, H (cert E )))  
+
+> 3:
+
+return ρ 
+
+> 4:
+
+procedure Vrfy (ρ, n, b, g ) ▷ client sidecar  
+
+> 5:
+
+assert VrfyQuote pk root (ρ) ∧ ¬ dbg (ρ) 
+
+> 6:
+
+assert mρ=m∗ ∧ nρ=n ∧ hρ=H(cert E ) 
+
+> 7:
+
+send cert E (b, g )
+
+code reshapes content, attestation and any response signature prove only that the mediating code ran, not that the client’s exact request reached the provider and the provider’s exact response reached the client. A faithful passthrough makes the attested code running equivalent to the bytes being carried unmodified, the property the client needs. The equivalence rests on the audit of § IV-C and the conformance tests of §VI. A verbatim relay also keeps the host from altering any byte between the verified enclave and the provider, and the client receives the provider’s exact response. 
+
+F. Enclave-Owned Destination 
+
+The host names the route but cannot choose the address. The enclave owns the set of legitimate destinations ∆, baked into the measured image, and the host’s routing decision references a provider and an endpoint policy p by name only (step 4 of Figure 3). The relay resolves that name to a fixed destination 
+
+d = ∆[ p] the host cannot influence (Algorithm 3, line 5), and it rejects a decision naming anything outside ∆ (line 6). Plaintext therefore leaves only over a session the enclave authenticates for a policy hostname, and the host cannot redirect it to an address of its choosing. For a first-party upstream the enclave pins the provider hostname and validates its certificate against the public certificate authorities, since it cannot attest a provider that is not an enclave. These trust roots live in the measured image the client verifies. When the next hop is another confidential router, the enclave can instead require attested transport and an allowlisted next-hop measurement, the attested-upstream direction §VII develops as future work. V. F ORMAL ANALYSIS 
+
+The guarantees stated plainly in §IV, body confidentiality (§ IV-D ), faithful relay and response integrity (§ IV-E ), and destination authority (§ IV-F ), are ordering and binding claims about what must already have happened before plaintext is released, dispatched toward a provider, or accepted back. We make each precise with a game-based reduction that bounds the data-path adversary’s advantage under standard cryptographic assumptions, and two paper-and-pencil lemmas anchor the runtime measurement to the source the client audited (§ IV-C ) and characterize what an honest verifier accepts. A machine-checked symbolic model independently cross-checks the protocol ordering and falsifies each check removal; we give it as supporting analysis in the supplementary material, since 7
+
+Algorithm 3 Relay , the enclave data path, run per request. 
+
+Input: hdl , ct , k, ∆, accounting label ℓ, failover bound β
+
+Output: ciphertext response stream, usage report  
+
+> 1:
+
+(b, g ) ← Dec k(ct ) 
+
+> 2:
+
+F ← ∅  
+
+> 3:
+
+repeat  
+
+> 4:
+
+(prov , p, c ) ← Authorize (g, ℓ, F ) 
+
+> 5:
+
+d ← ∆[ p] 
+
+> 6:
+
+assert d̸=⊥ 
+
+> 7:
+
+ok ← send d(b, hdr ⊕ c ⊖ g) 
+
+> 8:
+
+if ¬ok then  
+
+> 9:
+
+F ← F ∪ { prov } 
+
+> 10:
+
+until ok ∨ | F |=β 
+
+> 11:
+
+for all ri ∈ strm (r) do  
+
+> 12:
+
+emit Enc k(ri) 
+
+> 13:
+
+if eos (r) then  
+
+> 14:
+
+emit eos (r) 
+
+> 15:
+
+report use (r)
+
+its secrecy property overlaps the confidentiality theorem rather than reproving it. The full proofs are there as well. 
+
+A. Reduction Theorems 
+
+The analysis is over the construction ΠAEGIS of §IV, with 
+
+Relay the in-enclave data path of Algorithm 3 and Q its loaded program. Each theorem names only the assumptions its property consumes, drawn from the attested-execution scheme HW and primitives of § II-C , the faithfulness predicate below, and the leakage profile L, and bounds the corresponding advantage by a sum of the advantages an adversary would have to win to break it. Existential unforgeability and collision resistance do not appear here; they enter only the anchoring lemma below, which justifies treating Q as the audited one. 
+
+The faithfulness predicate. The relay protects the body only because the loaded program forwards it without leaking it; we state this as a predicate and decompose it into three machine-checkable parts. A loaded program Q is faithful when 
+
+Faithful (Q) = NonInt (Q, L)
+
+∧ Verbatim (Q) ∧ DestPolicy (Q, ∆) . 
+
+> •
+
+Host non-interference NonInt (Q, L) requires that every host-observable output of Q be a function of L alone, leaking no body-derived information through any host-facing channel, including logs and error or abort messages, outbound transport headers and request-line fields, metrics and control-message fields, name resolution and server-name indication, and transport framing, flush schedule, connection reuse, and retry behavior.  
+
+> •
+
+Verbatim relay Verbatim (Q) requires that Q forward the request body and return the response body byte for byte, including every streamed chunk through the end-of-stream marker, with no transformation path.  
+
+> •
+
+Destination policy DestPolicy (Q, ∆) requires that Q resolve every destination inside the baked set ∆, taking from the host a policy name and never a network address or path. Each enumerated channel maps to a concrete evidence item §VI supplies, and full machine-checked verification of NonInt 
+
+is future work. We write Faithful (s) for Faithful (Q) on the program Q that source s builds to under the fixed recipe. 
+
+Theorem 1 (Confidentiality) . Consider the equal-leakage confidentiality experiment in which the host chooses which image to load and the client sidecar runs the attest-and-verify step before any plaintext is released. Assume HW has memory confidentiality with respect to L and execution integrity, has remote-attestation unforgeability, the client-to-enclave and enclave-to-provider channels are secure channels, and the loaded data path Q satisfies NonInt (Q, L). Then 
+
+Adv conf  
+
+> A,ΠAEGIS
+
+(λ) ≤ Adv Iso 
+
+> A,HW
+
+(λ) + Adv ExeInty  
+
+> A,HW
+
+(λ)+ Adv RA -unf  
+
+> A,HW
+
+(λ) + Adv ch client  
+
+> A
+
+(λ)+ Adv ch prov  
+
+> A
+
+(λ).
+
+Theorem 2 (Faithful relay and integrity) . Assume HW has exe-cution integrity, the loaded data path Q satisfies Verbatim (Q)
+
+and emits the end-of-stream marker only on upstream comple-tion, and the client-to-enclave and enclave-to-provider channels are secure channels. Then 
+
+Adv int  
+
+> A,ΠAEGIS
+
+(λ) ≤ Adv ExeInty  
+
+> A,HW
+
+(λ)+ Adv ch client  
+
+> A
+
+(λ) + Adv ch prov  
+
+> A
+
+(λ).
+
+The same bound applies to Adv str  
+
+> A,ΠAEGIS
+
+; the provider-channel term is needed because a host that forges an end-of-stream marker on the provider channel would have the faithful Q
+
+relay it verbatim. The host may force a request to fail and may cut a stream, but cannot make the client accept a tampered chunk or treat a truncated stream as a completed response. 
+
+Theorem 3 (Destination authority) . Assume HW has execution integrity, the loaded data path Q satisfies DestPolicy (Q, ∆) ,and the enclave-to-provider channel is a secure channel endpoint-authenticated under the public certificate authorities, a trusted root. Then 
+
+Adv dest  
+
+> A,ΠAEGIS
+
+(λ) ≤ Adv ExeInty  
+
+> A,HW
+
+(λ) + Adv ch prov  
+
+> A
+
+(λ).
+
+The guarantee is application-layer, not network-layer egress confinement. The host carries every packet and may choose the transport-layer peer, but plaintext leaves only over a session the enclave authenticates for a policy hostname. 
+
+The three theorems share the assumption that the loaded program Q is the audited one and is faithful. The anchoring lemma below discharges the first half, tying the runtime measurement to source the client rebuilt; faithfulness rests on the predicate decomposition of §IV, supported by the implementation evidence of §VI and named as future machine-checked work for full information-flow verification. 
+
+B. Anchoring and Accountability 
+
+Lemma 1 (Measurement anchoring) . Assume the build is deterministic, the measurement function Build is collision-resistant over loaded images, the operator’s signature scheme is existentially unforgeable under chosen-message attack, and 8
+
+the platform root signs evidence only for images loaded into an enclave. If a client completes the audit-and-pin phase of § IV-C over source s and pins m∗ = Build (s, R ), then any plaintext its sidecar releases reaches only an enclave running the image built from the audited source s. Concretely, 
+
+Adv anch  
+
+> A
+
+(λ) ≤ Adv RA -unf  
+
+> A,HW
+
+(λ) + Adv cr  
+
+> A
+
+(λ) + Adv euf -cma  
+
+> A
+
+(λ),
+
+where the experiment returns 1 when a released plaintext reaches an enclave not running that image. 
+
+Anchoring composes with the three theorems. The lemma fixes which code first receives the plaintext, and the theorems bound what the host learns of and does to that plaintext while the audited code runs. The accountability lemma below characterizes what an honest verifier accepts when it binds a live measurement, and it is the second place existential unforgeability and collision resistance enter. The verifier binds the full build manifest of §IV-C, not a bare source hash. 
+
+Lemma 2 (Accountability) . Assume the operator’s signature scheme is existentially unforgeable under chosen-message attack, the measurement function Build is collision-resistant, and the append-only transparency log is inclusion-sound and consistent, so an accepted inclusion proof implies a recorded entry and no two honest verifiers read divergent contents at the same position. Then an honest verifier accepts a live measurement only when that measurement is bound to source that the operator has signed, that is recorded in the transparency log, and that reproducibly rebuilds to the measurement. Concretely, 
+
+Adv acc  
+
+> A
+
+(λ) ≤ Adv euf -cma  
+
+> A
+
+(λ) + Adv cr  
+
+> A
+
+(λ) + Adv log  
+
+> A
+
+(λ),
+
+where the experiment returns 1 iff an honest verifier accepts a measurement that is not so bound. 
+
+Scope. The reductions cover the data path under standard cryptographic assumptions and treat byte-for-byte faithfulness and the control-channel schemas as the named assumptions of §§ II-C and V-A ; neither covers the honesty of the audited source, the residual the review of § IV-C narrows but cannot close. §VI grounds the faithfulness predicates in implementation evidence, with a conformance suite for verbatim relay, source-derived schema tests for the body-free control channel, and a live ciphertext capture for the host hop. VI. I MPLEMENTATION AND EVALUATION 
+
+A. Prototype 
+
+We implement A EGIS on AWS Nitro Enclaves [12], [19], a widely available cloud enclave that isolates a virtual machine from its host and reaches it only over a virtual socket, with a hardware-signed attestation over the loaded image. Three binaries realize the split of §IV. The data plane runs inside the enclave under the nitriding toolkit [20], the host runs the rest of the router, and the client runs the verifying sidecar. We enforce the boundary at build time and fail the build if the data plane links any host service-layer package. 
+
+B. Evaluation Setup 
+
+The evaluation separates security properties from runtime cost. The security tests run against the boundary the deployed image exposes. The runtime measurements use an EC2 c5.4xlarge instance (Intel Xeon Platinum 8275CL at 3.00 GHz, 
+
+16 vCPUs over 8 physical cores), with the enclave allocated 
+
+2 dedicated vCPUs on 1 physical core and 3 GiB of memory. The runs use two enclave images. Every security test and every real-provider measurement uses the deployed security image through a verified sidecar and enclave. The steady-state overhead runs instead use a microbenchmark image that repoints the destination policy at a local upstream with pooled connections and trusts its certificate, which isolates the relay’s own cost from provider variance. This image has a different measurement and is not the security artifact. Per-run sample sizes appear in the figure captions. 
+
+C. Security-Property Evaluation 
+
+We evaluate A EGIS through deterministic security properties, the capabilities the design removes, rather than as a statistical detector. Table II is the central result. First, we replay each attack class against a plaintext-access baseline, the ordinary posture of a terminating router that the measurement study documents. Second, we mutate the host-controlled interfaces of A EGIS and check that each mutation is either outside the enclave’s authority or fails closed. The baseline column confirms each adversary action succeeds on a plaintext router; the A EGIS rows therefore measure a removed capability rather than an untried one, and the A EGIS column attributes each block to a concrete guard. The remaining checks cover the assumptions behind the harness. For confidentiality, we run the full path and capture the host-side network hop during a live streamed completion. The capture holds only ciphertext, with neither prompt nor response in the clear, and the check rejects an empty capture, which would otherwise pass vacuously. For execution integrity, the platform reports the enclave running with no debugging flags, so the attestation carries real rather than zeroed measurements; the client rejects an empty nonce, zeroed measurements, and any destination outside the enclave-owned policy. For faithfulness, a conformance suite drives the relay with inputs built to trip a naive transformer, including multimodal content, tool-call structures, a structured-output request, exotic field shapes, and a large body, and confirms request and response are carried byte for byte while the client’s authorization header is dropped. 
+
+D. Adaptive and Coverage-Oriented Evaluation 
+
+A second layer of checks asks how much room the untrusted host still has to influence the protected path, beyond the named attacks of Table II. The first test enumerates the host/enclave control-channel schemas from source and guards them in unit tests. The authorize request carries only credentials and labels, never a body, header, destination, or response byte, and the reply only allows or denies, selects an account, names an enclave-owned policy, and supplies a provider credential. With three valid provider-policy pairs in the current table, the allow-path 9                                                      
+
+> TABLE II ATTACK AND GUARD COVERAGE . A TTACK CLASSES REPRODUCE ON A PLAINTEXT -ACCESS BASELINE ;MALICIOUS -HOST MUTATIONS AGAINST AEGIS ARE ATTRIBUTED TO FAIL -CLOSED GUARDS .
+> Adversary action Plain router AEGIS Guard exercised
+> AC-1 tool-call rewrite ×attack succeeds ✓blocked Host has no response-body rewrite point.
+> AC-1.a typosquat rewrite ×attack succeeds ✓blocked Faithful relay; package names are never rewritten.
+> AC-1.b trigger-gated rewrite ×attack succeeds ✓blocked Rewrite impossible at source; trigger is moot.
+> AC-2 secret scan ×attack succeeds ✓blocked Body-free host RPC and ciphertext host hop. Unknown policy or provider ×host-chosen route ✓fails closed Enclave resolves only baked policy names. Redirect to attacker host ×attack succeeds ✓not followed Redirects are relayed, never replayed off-policy. Client auth passthrough ×leaks auth ✓dropped Header allowlist; enclave inserts provider credential. Upstream dispatch failure ▲host retry ✓enclave retry Failed account excluded before client-visible bytes. Mid-stream failure ×replay risk ✓no replay Retry disabled once response bytes are visible.
+
+destination choice is bounded by log 2 3 = 1 .58 bits per request, and those bits select among audited destinations. A separate test sets the host’s metadata model to a value different from the model inside the client body and confirms the body sent onward is unchanged. The host therefore retains availability, account, credential, provider, and telemetry influence, but not a body-derived control channel. The second test targets the check-to-use gap. The sidecar fails closed before constructing a proxy on any verification error, and after a successful check it pins the attested leaf certificate. A synthetic certificate-rotation test confirms that a different certificate fails during the TLS handshake before the rotated endpoint handles any request. The implemented contract is one verified sidecar session, not continuous re-attestation; on an enclave restart with a new certificate, the client establishes a new verified session. The third test measures the stream side channel rather than hiding it. A fuzz target compares both relay modes, line-at-a-time for server-sent events and whole-body otherwise, against the identity relation over generated JSON bodies and event chunks, covering tool-call structures, multimodal-shaped payloads, unusual encodings, oversized inputs, and chunk boundaries around JSON delimiters. A EGIS protects body contents but does not pad event sizes or add timing jitter, so a host observing ciphertext record sizes and timing can learn the event cadence and approximate line sizes. We treat this as an explicit residual leakage channel, not as a violation of the body-confidentiality claim. A machine-checked symbolic model cross-checks the pro-tocol ordering under ideal cryptography. Built in the applied pi calculus and checked with ProVerif, it confirms attested release, check-to-use binding, destination authority, response provenance, and a body-free host view against an adversary that controls every channel, and a falsification suite that removes one protocol check at a time confirms each check is load-bearing (supplementary material). The three tests above supply the facts the model assumes, with the schema tests anchoring the body-free control channel and the conformance and fuzz suites anchoring byte-for-byte faithfulness. 
+
+E. Auditability 
+
+The image builds reproducibly [21] to a signed measurement the sidecar pins, the binding the protocol of § IV-C relies on. The operator signs the build manifest and publishes it to a public append-only transparency log [22], and the sidecar pins a measurement only after it verifies the log’s inclusion proof, its signed tree head, and a consistency proof against the tree head it last saw. This deploys the accountability of Lemma 2 rather than assuming it. An operator cannot pin for one client a measurement it hides from the public log or shows differently to another. Against a live public log a genuine manifest verifies end to end, while an unlogged manifest, a manifest that mismatches its logged entry, and a forked or rolled-back log each fail closed before any pin; the entry and verification logs ship with the artifact. The audit target is the trusted relay, 851 lines across five files that link no package from the router’s service layer. Under a broader source-line count applied identically to both systems, AEGIS measures 1,236 lines against 10 ,434 for the nearest open enclave gateway [2] at revision afa7966 , which runs a transforming gateway inside the enclave. This is a source audit, not a running differential. To make the auditability claim testable, we seed ten isolated invariant violations. Codex [23] found 8/10 , missing a destination-host/path mismatch and a host-controlled model-in-body case; Claude Code [24] found 
+
+10 /10 on the same minimal fixture. Neither flagged the clean implementation. We treat these pilots as calibration evidence that a small faithful relay is reviewable by commodity coding agents, not as proof of human audit completeness. The toolkit, base image, and toolchain are shared and pinned, so the community audits them once. 
+
+F. Workload and Runtime Cost 
+
+The relay adds a few milliseconds per request in steady state, small against a model call of about a second. To measure the relay’s own cost without provider noise, we replace the provider with a zero-latency local upstream and reuse pooled connections, the common case for a router that keeps upstream sessions open. For a small request body the added latency has a median of 5.7 ms and a 95th percentile of 6.3 ms (Figure 4a). It stays near this floor up to about 10 KB. Beyond that it grows with the body, since every byte must be encrypted and carried across the extra hops, reaching 52 ms at a 1 MB body and 
+
+183 ms at a 4 MB multimodal-scale body (Figure 4b). A plain-router control isolates the boundary’s own cost. Running the identical relay logic as an ordinary host process 10 3 4 5 6 7 8                       
+
+> Overhead (ms)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> CDF
+> (a) Small-request CDF
+> protected path
+> plain host relay
+> 1KB 10KB 100KB 1MB 4MB
+> Payload size
+> 10 1
+> 10 2
+> Median overhead (ms)
+> (b) Payload sweep
+> protected path
+> plain host relay
+> 256B 1KB 10KB 100KB 1MB 4MB
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Share of p50 overhead (%)  5.6 5.6 6.3 11 52 183
+> (c) Overhead split
+> relay machinery
+> enclave term
+> Fig. 4. Steady-state relay overhead against a local upstream, for the protected path and for the identical relay running as a plain host process. (a) Overhead for a small body, medians 5.7and 3.7ms. (b) Median overhead against body size; the curve gap is the enclave term. (c) Its decomposition; the enclave term overtakes the relay machinery between 10 and 100 KB.
+
+costs 3.7 ms at a small body (Figure 4a, dashed), so the confidentiality boundary adds 2.0 ms over the plaintext router it replaces, covering the virtual-socket data path, the dedicated 
+
+2-vCPU allocation, and the verifying sidecar hop. As the body grows the gap widens (Figure 4b) and the split inverts (Fig-ure 4c), with the enclave term overtaking the relay machinery between 10 and 100 KB and dominating at multimodal scale. Large bodies are expensive because bytes must be carried and encrypted across the boundary, not because the relay logic is slow. Opening an attested session takes a further 12 ms, paid once per session. The remaining measurements use real providers. A EGIS 
+
+carries three provider-native endpoints with no in-enclave conversion layer, OpenAI Responses, OpenRouter Chat Com-pletions, and Gemini generateContent, and exercises each through the verified path. A direct-provider runner that only validates keys isolates provider variance, and a A EGIS -through runner sends synthetic requests through a verified sidecar; only the latter supports end-to-end claims. All 100 AEGIS -through requests per provider succeeded and returned the expected marker, and end-to-end latency is dominated by provider variance rather than by the relay (Figure 5a). Streaming through the boundary preserves the provider’s token cadence. Over 100 streamed completions through the verified path and 100 sent directly to the same provider, interleaved request by request, the inter-chunk arrival intervals coincide (Figure 5d), so the enclave hop adds no measurable jitter between tokens. On those paired runs the boundary adds a median of 5.3 ms to the first byte, matching the steady-state relay cost, and 19 .5 ms to the first token (Figure 5c), while the per-request first-token latency is set by the provider and varies by hundreds of milliseconds. The 2-vCPU enclave is not a bottleneck at moderate parallelism. In the three-provider concurrency run all 600 
+
+requests succeeded and median latency stays within 20% of its single-request value through concurrency 16 (Figure 5b). In short, confidentiality and integrity cost a small constant on small requests and a bounded copy cost on large ones, well under the latency of the model call they protect. VII. D ISCUSSION AND LIMITATIONS 
+
+An unavoidable trust anchor. When the upstream is an ordinary first-party provider that speaks plaintext, some party between the client and that provider must terminate the client’s session and hold the body in the clear, so a trust anchor on that relay code is unavoidable. Only its form is open, not its existence. Ours today is a per-release human audit of a minimal relay, with its measurement anchored in a public append-only log; an accepted measurement is then one the operator has publicly committed to (§ IV-C ). The audit can still move toward a machine-checked non-interference property, which remains future work. Undecidability rules out a complete automatic check of arbitrary code, so a plaintext-holding relay always rests on reading its code or machine-checking a restricted property of it. 
+
+Removing plaintext access. The relay holds plaintext only because a first-party upstream cannot. When the next hop is another attested router, the relay can require attested transport from it and forward only to an allowlisted measurement, the attested-upstream direction of §IV. It then becomes a blind ciphertext forwarder that needs no body-confidentiality anchor, and trust extends per attested hop rather than resting on the first relay. This path eliminates the plaintext anchor, and our single-hop prototype does not yet take it. 
+
+Residual leakage. AEGIS protects body contents only up to the explicit leakage profile of § III-C , the sizes, timing, cadence, account, provider, and usage the host still observes. This residual is exploitable. An observer who records only ciphertext record sizes and timing can recover the per-token length sequence of a streamed response and reconstruct text from it [25]. For a remote eavesdropper the obstacles are reaching an on-path vantage and training a per-target reconstruction model. The router operator faces neither. It terminates every connection, reads record sizes from the buffers it forwards, and its upstream accounts supply known-plaintext training data. The relay also re-frames each response toward the client, so transport-level padding or batching applied upstream does not survive the hop. The enclave is the one place on the path where a defense sits outside the operator’s control. Traffic shaping baked into the measured image is attested and the host cannot disable it, a guarantee no plaintext gateway can make. Record-level padding would close the size dimension while preserving byte-for-byte faithfulness, and timing defenses fit at a larger trusted base. We leave this defense and its trusted-base cost to future work. 11 0 1500 3000                               
+
+> End-to-end latency (ms)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> CDF
+> (a) Latency CDF
+> OpenAI
+> OpenRouter
+> Gemini
+> 14816
+> Concurrency
+> 1000
+> 1500
+> 2000
+> 2500
+> Latency (ms)
+> (b) Concurrency sweep
+> p50
+> p95
+> −10 3−10 2010 210 3
+> Per-request overhead (ms)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> CDF
+> (c) Streaming overhead
+> First byte (+5.3)
+> First token (+19.5)
+> 10 −1 10 010 110 2
+> Inter-chunk interval (ms)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> CDF
+> (d) Streaming cadence
+> Direct
+> Aegis
+> Fig. 5. Real-provider workloads and streaming through the verified path. (a) End-to-end latency CDFs, 100 provider-native requests per provider, medians
+> 902 to 1175 ms. (b) Median (solid) and 95th-percentile (dashed) latency against concurrency; all 600 requests succeed, each median within 20% of its single-request value. (c) Paired per-request overhead on a fixed 256 -token streamed completion, median 5.3ms to the first byte and 19 .5ms to the first token. (d) Inter-chunk intervals through A EGIS and direct coincide (medians 3.5and 3.0ms).
+
+Boundaries. The enclave checks a real provider’s certificate in the usual way, against public certificate authorities and the expected hostname. It does not pin the provider’s specific key. A compromised authority could therefore issue a fake certificate that the enclave accepts. Pinning would close this gap, but routine key rotation would then break requests until the enclave image is rebuilt and its measurement is republished. We leave this as follow-on hardening. The transparency-log check rests on a trusted external anchor in the same way. The sidecar verifies an inclusion proof and a signed tree head at each pin and checks consistency against the head it last saw, which rules out a log that drops or rewrites the operator’s entry across one client’s repeated observations. A log that shows different clients different views is ruled out by the external witnesses and gossip that monitor a public log, not by any single client’s check. Egress confinement is platform-dependent. The relay resolves every destination inside its measured image, so a compromised host cannot redirect plaintext at the application layer, but forcing that confinement below the image is a platform property. On the current platform the host process performs the enclave’s outbound networking, which makes below-image egress control hard to enforce. We leave it out of the present prototype. Because A EGIS keeps no security-relevant state in the enclave across requests, the rollback and forking attacks that target stateful enclaves do not apply. The host can still roll back its own usage records, which we leave unprotected; a deployment that needs tamper-proof accounting can add state continuity on top. A new enclave version needs a new check before the client trusts it, but the split keeps this cheap. Provider, billing, scheduling, authentication, and management changes stay on the host and leave the measurement untouched; only changes to the small relay core require a fresh check (§ IV-C ). A client that does not rebuild locally can accept a new measurement signed by a key it already trusts. 
+
+Comparison. §VIII compares A EGIS with the closest open gateway in detail. The design difference that matters here is the integrity anchor. Ours rides the live attested session, fresh and non-replayable by construction, while the open gateway offers portable signed receipts and network-level unlinkability that we do not target. A deployment that wants offline checking can add receipts bound to fresh client nonces. A further extension would encrypt provider keys under an enclave-held key, letting one router serve mutually distrusting tenants, an isolation our single-operator design does not need. VIII. R ELATED WORK 
+
+AEGIS spans attested LLM gateways, client-side defenses, enclave-shielded systems, and attested deployment. Table III summarizes the comparison. 
+
+The closest prior art. An open-source enclave gateway [2] is our nearest neighbor. It routes to third-party providers from a cloud enclave, and attests its image and signs response hashes. Its posture is verify-after-receive, while A EGIS refuses before sending. The gateway also runs a transforming router inside the enclave, with provider selection and payment logic. AEGIS keeps only a faithful passthrough there, so the audited measurement stays small. The gateway covers more providers and offers network-level unlinkability and portable receipts. Portcullis [26] is the closest peer-reviewed system. It rewrites prompts to mask sensitive fields and restores them on return, mainly protecting privacy against the provider, and lighter-weight sanitizers share the posture [27]. A EGIS passes content through faithfully because rewriting would break tool-call semantics. A EGIS protects integrity and confidentiality against the router operator. 
+
+Guardrails and signed responses. Agent-side systems screen prompts and tool calls at the client, including guardrail frameworks [28] and control-flow integrity for agents [29]. They observe only what the router delivers, so a schema-valid rewrite passes and request-path secrets stay exposed. Signature-based provenance for LLM APIs verifies responses after receipt and needs the serving side to cooperate [30]. A EGIS removes the rewrite point instead. 
+
+Enclave-shielded systems. Prior work shields network interme-diaries inside enclaves, including cloud network functions [35] and anonymity relays [36]. These systems show that an enclave can protect an intermediary. A EGIS applies the same idea to LLM application traffic. Confidential-AI work protects the model pipeline, including confidential LLM serving [37] and verifiable private execu-tion [38]. Production systems deploy the same posture for 12 
+
+TABLE III COMPARISON WITH PRIOR APPROACHES AGAINST A MALICIOUS LLM API ROUTER .
+
+Approach Trusted component Client verification Faithful relay Anchored measurement Attack coverage 
+
+Plaintext routers [8]–[10], [31] operator honesty none may rewrite – all four succeed 
+
+Client-side defenses [1], [28], [29] client-side filters after receive unenforced – evadable 
+
+Provider-signed responses [1], [30] provider signatures after receive response only – provider opt-in 
+
+Prompt-masking proxies [26], [27] masking proxy a none rewrites by design – targets the provider 
+
+Attested gateways [2]–[4] enclave, transforming router after receive transforms image only after the fact 
+
+Attested model serving [32]–[34] enclave, whole serving stack before release – serves own models binaries, log forfeits provider choice 
+
+Direct provider access provider only provider TLS no intermediary – forfeits routing 
+
+AEGIS enclave, faithful passthrough before release byte-for-byte audit, rebuild, log all four, routing kept      
+
+> yes partial no – not applicable aPortcullis attests its masking gateway; ProSan runs as a local sanitizer.
+
+assistant features [39], and attested model serving lets a client verify the serving stack before releasing a prompt, anchored to published binaries and a transparency log [32] or reproducibly built images [33], [34]; the client adopts the hosted models. These are first-party or platform-controlled settings. A EGIS 
+
+places no model in the enclave and targets a third-party router that relays to the client’s chosen provider. Shielding only part of a model is not automatically safe. Attacks recover models or inputs from partitioned deploy-ments [40], [41]. The enclave in A EGIS holds only a faithful-passthrough data plane, with no weight or tensor to attack. 
+
+Attestation. This part of A EGIS builds on attested deployment and supply-chain transparency. We use an enclave toolkit [20] and platform support for in-enclave TLS termination, certificate binding, attestation, and reproducible measurements [12], [19], [21]. We draw on attestation bound into transport security [13], software signing with transparency logs [22], and enclave-built verifiable binaries [15]. Remote-attestation work covers time-of-check to time-of-use gaps [42], and state-continuity systems address rollback and forked state [43]. A EGIS avoids that problem by holding no cross-request state in the enclave. Hardware trust is conditional. Prior work breaks enclave roots through side channels [17] and transient execution [16]. Confidential-virtual-machine attacks [44] target other platforms; attestation is not proof of absolute security. IX. C ONCLUSION 
+
+Malicious LLM API routers are dangerous. Plaintext at the TLS-terminating router makes tool-call rewrites, trigger-gated attacks, and passive secret exfiltration possible. We propose AEGIS , an attested faithful-passthrough router that makes the enclave the only component touching plaintext. We empirically demonstrate that A EGIS blocks all four malicious-router attacks while preserving provider-native routing with low overhead. REFERENCES [1] H. Liu, C. Shou, H. Wen, Y. Chen, R. J. Fang, and Y. Feng, “Your agent is mine: Measuring malicious intermediary attacks on the LLM supply chain,” 2026, arXiv:2604.08407. [2] OpenGradient, “tee-gateway: A TEE-secured inference node for third-party LLM inference requests,” https://github.com/OpenGradient/tee-gateway, 2026, industry open-source system, accessed 2026-05-28. [3] RedPill, “RedPill: Confidential AI model gateway,” https://red-pill.ai, 2026, industry system. [4] Phala Network, “Confidential AI models: Private LLM API on TEE,” https://phala.com/confidential-ai-models, 2026, industry system. [5] B. Blanchet, “Modeling and verifying security protocols with the applied pi calculus and ProVerif,” Foundations and Trends in Privacy and Security ,vol. 1, no. 1–2, pp. 1–135, 2016. [6] S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. Narasimhan, and Y. Cao, “ReAct: Synergizing reasoning and acting in language models,” in 
+
+International Conference on Learning Representations (ICLR) , 2023, arXiv:2210.03629. [7] J. Yang, C. E. Jimenez, A. Wettig, K. Lieret, S. Yao, K. Narasimhan, and O. Press, “SWE-agent: Agent-computer interfaces enable automated software engineering,” in Advances in Neural Information Processing Systems (NeurIPS) , 2024, arXiv:2405.15793. [8] BerriAI, “LiteLLM: Proxy server (AI gateway) to call 100+ LLM APIs in OpenAI format, with cost tracking, load balancing, and logging,” https://github.com/BerriAI/litellm, 2026, open-source software, accessed 2026. [9] OpenRouter, “OpenRouter: A unified interface for LLMs,” https : / / openrouter.ai, 2026, commercial service, accessed 2026. [10] Portkey AI, “Portkey AI gateway: Route to 250+ LLMs with one fast, reliable API,” https://github.com/Portkey-AI/gateway, 2026, open-source software, accessed 2026. [11] V. Costan and S. Devadas, “Intel SGX explained,” Cryptology ePrint Archive, Paper 2016/086, 2016, https://eprint.iacr.org/2016/086. [12] Amazon Web Services, “AWS nitro enclaves: Cryptographic attestation,” https://docs.aws.amazon.com/enclaves/latest/user/set- up- attestation. html, 2024, platform documentation. [13] T. Knauth, M. Steiner, S. Chakrabarti, L. Lei, C. Xing, and M. Vij, “Integrating remote attestation with transport layer security,” 2018, intel Labs white paper, not peer-reviewed. [14] J. M. McCune, B. J. Parno, A. Perrig, M. K. Reiter, and H. Isozaki, “Flicker: An execution infrastructure for TCB minimization,” in ACM SIGOPS/EuroSys European Conference on Computer Systems (EuroSys) ,2008, pp. 315–328. [15] D. Hugenroth, M. Lins, R. Mayrhofer, and A. R. Beresford, “Attestable builds: Compiling verifiable binaries on untrusted systems using trusted execution environments,” in ACM SIGSAC Conference on Computer and Communications Security (CCS) , 2025. [16] J. Van Bulck, M. Minkin, O. Weisse, D. Genkin, B. Kasikci, F. Piessens, M. Silberstein, T. F. Wenisch, Y. Yarom, and R. Strackx, “Foreshadow: Extracting the keys to the Intel SGX kingdom with transient out-of-order execution,” in USENIX Security Symposium (USENIX Sec) , 2018. [17] Y. Xu, W. Cui, and M. Peinado, “Controlled-channel attacks: Determin-istic side channels for untrusted operating systems,” in IEEE Symposium on Security and Privacy (S&P) , 2015. [18] R. Pass, E. Shi, and F. Tram `er, “Formal abstractions for attested execution secure processors,” in Advances in Cryptology (EUROCRYPT) . Springer, 2017, pp. 260–289. [19] D.-P. Dornseifer, “Securing applications with AWS nitro enclaves: TLS termination, TAP networking, and IMDSv2,” https://aws.amazon.com/ blogs/compute/, 2025, aWS Compute Blog. [20] P. Winter, R. Giles, M. Schafhuber, and H. Haddadi, “Nitriding: A tool kit for building scalable, networked, secure enclaves,” 2023. [21] Amazon Web Services, “Verify enclave counterparties with reproducible builds and cryptographic attestation using AWS nitro enclaves,” https: //aws.amazon.com/blogs/web3/, 2025, aWS blog. 13 
+
+[22] Z. Newman, J. S. Meyers, and S. Torres-Arias, “Sigstore: Software signing for everybody,” in ACM SIGSAC Conference on Computer and Communications Security (CCS) , 2022. [23] OpenAI, “Codex CLI: Openai’s coding agent,” https://github.com/openai/ codex, 2025, commodity coding agent. [24] Anthropic, “Claude code: Anthropic’s coding agent,” https : / / www. anthropic.com/claude-code, 2025, commodity coding agent. [25] R. Weiss, D. Ayzenshteyn, G. Amit, and Y. Mirsky, “What was your prompt? A remote keylogging attack on AI assistants,” in USENIX Security Symposium (USENIX Sec) , 2024. [26] J. Zhan, W. Zhang, Z. Zhang, H. Xue, Y. Zhang, and Y. Wu, “Portcullis: A scalable and verifiable privacy gateway for third-party LLM inference,” in 
+
+AAAI Conference on Artificial Intelligence (AAAI) , 2025, pp. 1022–1030. [27] Z. Shen, Z. Xi, Y. He, W. Tong, J. Hua, and S. Zhong, “ProSan: Utility-based prompt privacy sanitizer,” IEEE Transactions on Information Forensics and Security (TIFS) , vol. 21, pp. 1198–1212, 2026. [28] S. Chennabasappa, C. Nikolaidis, D. Song, D. Molnar, S. Ding, S. Wan, S. Whitman, L. Deason, N. Doucette, A. Montilla, A. Gampa, B. de Paola, D. Gabi, J. Crnkovich, J.-C. Testud, K. He, R. Chaturvedi, W. Zhou, and J. Saxe, “LlamaFirewall: An open source guardrail system for building secure AI agents,” 2025, arXiv:2505.03574. [29] E. Debenedetti, I. Shumailov, T. Fan, J. Hayes, N. Carlini, D. Fabian, C. Kern, C. Shi, A. Terzis, and F. Tram `er, “Defeating prompt injections by design,” in IEEE Conference on Secure and Trustworthy Machine Learning (SaTML) , 2026, arXiv:2503.18813. [30] Y. Guan, “AEX: Non-intrusive multi-hop attestation and provenance for LLM APIs,” 2026, arXiv:2603.14283, preprint. [31] Kong Inc., “Kong AI Gateway: AI connectivity and governance layer for AI-native applications,” https://developer.konghq.com/ai-gateway/, 2026, commercial software with open-source core, accessed 2026. [32] Apple, “Private cloud compute: A new frontier for AI privacy in the cloud,” https://security.apple.com/blog/private-cloud-compute/, 2024, apple Security Research blog, June 10, 2024. Industry system. [33] Tinfoil, “Tinfoil: Detailed attestation architecture for confidential AI inference,” https://docs.tinfoil.sh/verification/attestation- architecture, 2026, industry system, accessed 2026-06-10. [34] Edgeless Systems, “Privatemode documentation: Architecture overview,” https://docs.privatemode.ai/architecture/overview, 2025, industry system, launched February 2025; accessed 2026-06-10. [35] R. Poddar, C. Lan, R. A. Popa, and S. Ratnasamy, “SafeBricks: Shielding network functions in the cloud,” in USENIX Symposium on Networked Systems Design and Implementation (NSDI) , 2018. [36] S. Kim, J. Han, J. Ha, T. Kim, and D. Han, “SGX-Tor: A secure and practical Tor anonymity network with SGX enclaves,” IEEE/ACM Transactions on Networking (TON) , vol. 26, no. 5, 2018. [37] Y. Tan, C. Tan, Z. Mi, and H. Chen, “PipeLLM: Fast and confidential large language model services with speculative pipelined encryption,” in 
+
+ACM International Conference on Architectural Support for Programming Languages and Operating Systems (ASPLOS) , 2025. [38] F. Tram `er and D. Boneh, “Slalom: Fast, verifiable and private execution of neural networks in trusted hardware,” in International Conference on Learning Representations (ICLR) , 2019. [39] Meta, “Building private processing for AI tools on WhatsApp,” https: //engineering.fb.com/2025/04/29/security/, 2025, industry system. [40] Z. Zhang, C. Gong, Y. Cai, Y. Yuan, B. Liu, D. Li, Y. Guo, and X. Chen, “No privacy left outside: On the (in-)security of TEE-shielded DNN partition for on-device ML,” in IEEE Symposium on Security and Privacy (S&P) , 2024. [41] P. Wang, B. Dong, Y. Cai, Z. Zhang, J. Liu, H. Xue, Y. Wu, Y. Zhang, and Z. Zhang, “Game of arrows: On the (in-)security of weight obfuscation for on-device TEE-shielded LLM partition algorithms,” in USENIX Security Symposium (USENIX Sec) , 2025. [42] I. De Oliveira Nunes, S. Jakkamsetti, N. Rattanavipanon, and G. Tsudik, “On the TOCTOU problem in remote attestation,” in ACM SIGSAC Conference on Computer and Communications Security (CCS) , 2021. [43] B. Parno, J. R. Lorch, J. R. Douceur, J. W. Mickens, and J. M. McCune, “Memoir: Practical state continuity for protected modules,” in IEEE Symposium on Security and Privacy (S&P) , 2011. [44] R. Zhang, L. Gerlach, D. Weber, L. Hetterich, Y. L ¨u, A. Kogler, and M. Schwarz, “CacheWarp: Software-based fault injection using selective state reset,” in USENIX Security Symposium (USENIX Sec) , 2024. [45] V. Shoup, “Sequences of games: A tool for taming complexity in security proofs,” Cryptology ePrint Archive, Paper 2004/332, 2004, https://eprint. iacr.org/2004/332. 
+
+APPENDIX APROOFS 
+
+We give each reduction as an explicit sequence of games on a common probability space, following the methodology of Shoup [45]. Write Si for the event that Game i returns the value favorable to the adversary, the guess β′=β for the confidentiality experiment and the bad event for the integrity, authority, and accountability experiments. Each step is one of three kinds: a bridging step that rewrites the game with Pr[ Si]
+
+unchanged; a failure-event step, where two games coincide unless an event F occurs and | Pr[ Si] − Pr[ Si+1 ]| ≤ Pr[ F ] by the difference lemma; or an indistinguishability step bounded by a primitive’s distinguishing advantage. The advantage symbols are those of §II-C. Figure 6 renders the six experiments as games. Each proof below starts from the corresponding box as its Game 0 and transforms it by the steps the headings name. 
+
+Definition 8 (Verified-session oracle) . Sess A(b) runs one protocol session on body b with A controlling the host. The adversary chooses the image to load, obtaining a handle hdl ,and drives every host-side channel, the account selection, and the host control channel. The honest sidecar runs Attest , Vrfy 
+
+and releases the encrypted body to the enclave only when Vrfy 
+
+accepts a quote binding the pinned measurement m∗, the fresh nonce n, and the channel key k, and otherwise releases ⊥. The honest provider at the resolved destination returns response 
+
+r. The oracle exposes the body ˆb the provider receives, the response ˆr the client accepts, the destination d a plaintext body reaches, the completion flag acc , the provider end-of-stream flag eos , and the handle hdl , and the entire host view of the session. 
+
+Definition 9 (Release oracle) . Rel (bβ ) is Sess A specialized to the confidentiality challenge. It releases Enc k(bβ ) to the enclave only on a quote that Vrfy accepts, and returns to A the entire host view of the resulting session, namely the channel ciphertexts, the host control-channel fields, and the running enclave’s host-observable memory. The adversary queries Rel 
+
+and outputs a guess β′.
+
+The games separate what each reduction proves from what it assumes. The confidentiality, integrity, and destina-tion games take the loaded program’s faithfulness as an assumption on Q, its host non-interference NonInt (Q, L),verbatim relay Verbatim (Q), and baked-destination resolution 
+
+DestPolicy (Q, ∆) , rather than as a conclusion. Lemma 1 discharges that Q is the audited program, and the audit, the conformance and schema tests of §VI, and the symbolic model of Appendix B are the present evidence that the audited program is faithful, with full machine-checked non-interference left to future work. 
+
+Confidentiality (Theorem 1). Game 0 is the equal-leakage confidentiality experiment Gconf of Figure 6. The challenger samples β $
+
+←− { 0, 1} and runs ΠAEGIS on bβ against the A-controlled host, which chooses the image loaded into the enclave; the sidecar releases the encrypted body only after attest-and-verify binds the pinned measurement m∗, the fresh nonce, and the session’s channel key. Then Adv conf  
+
+> A,ΠAEGIS
+
+= | Pr[ S0]− 12 |.14 
+
+Game Gconf ΠAEGIS ,A(λ):1. pp ← HW .Setup (1 λ)
+
+2. (b0, b 1, st ) ← A (pp ); L(b0)= L(b1)
+
+3. β $
+
+←− { 0, 1}
+
+4. β′ ← A Rel (bβ )(st )
+
+5. return [β′=β]
+
+Game Gint ΠAEGIS ,A(λ):1. pp ← HW .Setup (1 λ)
+
+2. (b, st ) ← A (pp )
+
+3. (ˆb, ˆr, r ) ← Sess A(b)
+
+4. return [ˆb̸=b ∨ ˆr̸ =r]
+
+Game Gstr ΠAEGIS ,A(λ):1. pp ← HW .Setup (1 λ)
+
+2. (b, st ) ← A (pp )
+
+3. (acc , eos ) ← Sess A(b)
+
+4. return [acc =done ∧ ¬ eos ]
+
+Game Gdest ΠAEGIS ,A(λ):1. pp ← HW .Setup (1 λ)
+
+2. (b, st ) ← A (pp )
+
+3. d ← Sess A(b)
+
+4. return [d / ∈ ∆] 
+
+Game Ganch  
+
+> A
+
+(λ):1. pp ← HW .Setup (1 λ)
+
+2. Audit , Pin (s); m∗←Build (s, R )
+
+3. hdl ← Sess A
+
+4. return [img (hdl )̸ = img s]
+
+Game Gacc  
+
+> A
+
+(λ):1. pp ← HW .Setup (1 λ)
+
+2. (mf , σ, π, η, m ) ← A (pp )
+
+3. if ¬Vrfy acc (mf , σ, π, η, m ): ret 0
+
+4. return [m unbound to signed/logged s]             
+
+> Fig. 6. The six experiments as games. The adversary Ais the host; Sess A(b)and Rel (bβ)are the oracles of Definitions 8 and 9, img sthe image reproducibly built from source s, and Vrfy acc the honest accountability check.
+
+Game 1 (failure event, RA-unforgeability). Abort and output a random bit if the sidecar accepts evidence on a measurement-input-output tuple no enclave produced. Games 0 and 1 coincide unless this event F1 occurs, and Pr[ F1] ≤ Adv RA -unf  
+
+> A,HW
+
+, so 
+
+| Pr[ S0] − Pr[ S1]| ≤ Adv RA -unf  
+
+> A,HW
+
+. Hereafter an accepted session runs an enclave whose loaded image measures m∗, the pinned data path Q, which the theorem assumes satisfies NonInt (Q, L)
+
+(Lemma 1 ties m∗ to the audited source, a separate result whose terms are not summed here). 
+
+Game 2 (failure event, execution integrity). Abort if the running enclave produces an accepted output or transcript other than that of the honest Q, that is, the host drives Q off its semantics. Then Pr[ F2] ≤ Adv ExeInty  
+
+> A,HW
+
+, so | Pr[ S1] − Pr[ S2]| ≤ 
+
+Adv ExeInty  
+
+> A,HW
+
+. Hereafter every host-facing output of Q is the honest one. 
+
+Game 3 (bridging, non-interference). Rewrite those outputs as NonInt (Q, L) specifies, a function of L alone. By the hypothesis NonInt (Q, L) this is the same distribution, so 
+
+Pr[ S3] = Pr[ S2]; the step uses no computational assumption. 
+
+Game 4 (indistinguishability, client channel). Idealize the client-to-enclave secure channel, replacing the host’s view of every message in the session, the request ciphertext up and the response ciphertext down, by the ideal-channel transcript that reveals only message lengths and timing; the enclave still receives the real body. A distinguisher breaks that secure channel, so | Pr[ S3] − Pr[ S4]| ≤ Adv ch client  
+
+> A
+
+.
+
+Game 5 (indistinguishability, provider channel). Idealize the enclave-to-provider secure channel the same way, in both directions, so the host’s view of the forwarded body and the returned response reduces to lengths and timing; | Pr[ S4] −
+
+Pr[ S5]| ≤ Adv ch prov  
+
+> A
+
+.
+
+Game 6 (indistinguishability, memory confidentiality). After Games 4 and 5 the host’s only β-dependent view is the enclave’s running memory, which holds the body and the provider’s reply. Run the enclave through the isolation challenger on the admissible pair b0, b 1, the provider acting as the fixed oracle of the leakage profile so its observable reply is equal across the pair, and swap the secret from bβ to the fixed b0;this is a left-or-right isolation step whose distinguisher is an isolation distinguisher, so | Pr[ S5] − Pr[ S6]| ≤ Adv Iso 
+
+> A,HW
+
+. The reduction holds no plaintext bβ , since every wire view is now the length-only ideal-channel transcript and the challenger runs the enclave on the secret. In Game 6 nothing depends on β, so Pr[ S6] = 12 . Summing the six transitions gives the bound of Theorem 1. 
+
+Faithful relay and integrity (Theorem 2). Game 0 is the faithful-relay experiment Gint on a submitted body b, with r
+
+the response the chosen provider returns; S0 is the bad event that the provider receives some b′̸ = b or the client accepts some r′̸ = r, and Adv int  
+
+> A,ΠAEGIS
+
+= Pr[ S0].
+
+Game 1 (failure event, execution integrity). Abort if the host drives Q off the verbatim-relay semantics Verbatim (Q),so | Pr[ S0] − Pr[ S1]| ≤ Adv ExeInty  
+
+> A,HW
+
+. Hereafter Q forwards the request and relays the response, including every chunk through the end-of-stream marker, byte for byte, emitting the marker to the client only when it relays one from the provider. 
+
+Game 2 (failure event, enclave-to-provider channel). Abort if any message on the enclave-to-provider channel is altered in either direction, the request body delivered to the provider differing from the one Q sent, or a response chunk or end-of-stream marker Q receives differing from the one the provider sent; both break that secure channel, so | Pr[ S1] − Pr[ S2]| ≤ 
+
+Adv ch prov  
+
+> A
+
+.
+
+Game 3 (failure event, client-to-enclave channel). Abort if the response the client accepts differs from the one Q returned, or the client accepts as completed a stream whose marker Q
+
+never relayed; both break the client-to-enclave secure channel, so | Pr[ S2] − Pr[ S3]| ≤ Adv ch client  
+
+> A
+
+.In Game 3 the provider receives exactly b, the client accepts exactly r, and a stream lacking the provider’s marker is treated as incomplete, so Pr[ S3] = 0 and Adv int  
+
+> A,ΠAEGIS
+
+≤ Adv ExeInty  
+
+> A,HW
+
++
+
+Adv ch client  
+
+> A
+
++ Adv ch prov  
+
+> A
+
+. The same three transitions rule out 15 
+
+the streaming-integrity bad event Gstr , a client accepting a truncated response as completed: a false completion needs a forged end-of-stream marker, emitted by a deviating Q (Game 1), forged on the provider channel and relayed (Game 2), or forged on the client channel (Game 3). Hence Adv str  
+
+> A,ΠAEGIS
+
+≤
+
+Adv ExeInty  
+
+> A,HW
+
++ Adv ch client  
+
+> A
+
++ Adv ch prov  
+
+> A
+
+.
+
+Destination authority (Theorem 3). Game 0 is the destination-authority experiment Gdest ; S0 is the bad event that a plaintext body reaches some d / ∈ ∆, and Adv dest  
+
+> A,ΠAEGIS
+
+= Pr[ S0].
+
+Game 1 (failure event, execution integrity). Abort if the host drives Q off DestPolicy (Q, ∆) , so that Q resolves a destination outside the baked set; then | Pr[ S0] − Pr[ S1]| ≤ Adv ExeInty  
+
+> A,HW
+
+.Hereafter every session Q opens names a hostname in ∆.
+
+Game 2 (failure event, endpoint-authenticated provider channel). Abort if plaintext reaches a peer that is not the authenticated endpoint for the resolved hostname; redirecting the session to a different peer breaks the channel’s endpoint authentication, so | Pr[ S1] − Pr[ S2]| ≤ Adv ch prov  
+
+> A
+
+.In Game 2 plaintext reaches only the certificate-authenticated endpoint for a hostname in ∆, so Pr[ S2] = 0 . The sole remaining strategy, a certificate authority that mis-issues for a pinned hostname, is excluded by the trusted public-key-infrastructure assumption of § II-C and contributes no term. Hence Adv dest  
+
+> A,ΠAEGIS
+
+≤ Adv ExeInty  
+
+> A,HW
+
++ Adv ch prov  
+
+> A
+
+.
+
+Measurement anchoring (Lemma 1). Game 0 (Ganch ) runs the audit-and-pin phase over source s with m∗ = Build (s, R ),then a session in which the sidecar releases plaintext; S0 is the bad event that the release reaches an enclave not running the image built from s.
+
+Game 1 (failure event, RA-unforgeability and platform soundness). Abort if the sidecar accepts evidence not produced by a genuine enclave session running an image measuring m∗.Since the platform root signs only for genuinely loaded images, 
+
+| Pr[ S0] − Pr[ S1]| ≤ Adv RA -unf  
+
+> A,HW
+
+, and hereafter the accepting session runs an image measuring m∗.
+
+Game 2 (failure event, collision resistance). Abort if that image differs from the one the client rebuilt from s while both measure to m∗, so | Pr[ S1] − Pr[ S2]| ≤ Adv cr  
+
+> A
+
+.
+
+Game 3 (failure event, EUF-CMA). Abort if the client pinned 
+
+m∗ from an operator signature on source other than s, so 
+
+| Pr[ S2] − Pr[ S3]| ≤ Adv euf -cma  
+
+> A
+
+.In Game 3 the release reaches an enclave running the image built from s, and because the sidecar encrypts to the attested channel key the secure channel carries it to that enclave alone, so Pr[ S3] = 0 . A release thus reaches only the audited image except with probability at most Adv RA -unf  
+
+> A,HW
+
++Adv cr  
+
+> A
+
++Adv euf -cma  
+
+> A
+
+,the bound of Lemma 1. 
+
+Accountability (Lemma 2). Game 0 (Gacc ) returns 1 iff an honest verifier accepts a live measurement not bound to source the operator signed, that the log records, and that reproducibly rebuilds to it; Adv acc  
+
+> A
+
+= Pr[ S0].
+
+Game 1 (failure event, EUF-CMA). Abort if the manifest’s operator signature verifies on source the operator never signed, so | Pr[ S0] − Pr[ S1]| ≤ Adv euf -cma  
+
+> A
+
+.
+
+Game 2 (failure event, collision resistance). Abort if two distinct manifests rebuild to the same measurement, so 
+
+| Pr[ S1] − Pr[ S2]| ≤ Adv cr  
+
+> A
+
+.
+
+Game 3 (failure event, log inclusion and consistency). Abort if the verifier accepts an inclusion proof for a manifest the log does not record, or reads a position whose contents differ from another honest verifier’s; both break the log assumption, so 
+
+| Pr[ S2] − Pr[ S3]| ≤ Adv log  
+
+> A
+
+.In Game 3 none of the three events occurs, so acceptance implies the binding and Pr[ S3] = 0 . Summing gives the bound of Lemma 2. 
+
+Security summary. Table IV collects each result with the advantage terms its bound sums and the structural assumptions its reduction takes on the loaded program Q and the trust roots. The three reduction theorems each consume one clause of the faithfulness predicate, while the two anchoring lemmas consume none. APPENDIX BSYMBOLIC PROTOCOL MODEL 
+
+This supporting analysis cross-checks the protocol ordering of the game-based reductions of §V against a network adversary under ideal cryptography. It machine-checks the abstract protocol state machine, the bootstrapping protocol of § IV-C followed by the data path of Figure 3, modeled in the applied pi calculus and verified with ProVerif [5]; the model, the falsification variants, and all verification logs ship with the artifact. 
+
+Model and adversary. The adversary is the untrusted host. Every channel is a public Dolev–Yao channel, including the sidecar-to-enclave network, the host control channel, and the enclave-to-provider network, so the adversary reads, injects, replays, drops, and reorders all traffic, speaks the control protocol, and runs client sessions of its own. Encrypted payloads are protected by ideal public-key and authenticated encryption, so a public channel means adversary-controlled transport, not plaintext transport; lengths, timing, and traffic shape are not represented. The adversary holds a platform oracle that signs attestation evidence for any measurement other than the pinned m∗, modeling a host free to load and attest arbitrary images, and it chooses the policy name and the provider credential on every control reply, since account and policy selection are host authority. The honest parties are the sidecar holding the body and the pin, the enclave whose every session generates an ephemeral channel key bound into its quote, and the providers at the destinations in ∆.
+
+Event vocabulary. The model marks an event at each step the properties constrain, placed after the checks that step performs, so each event asserts that its checks succeeded. 
+
+Qt (m, k, n ) records that the platform attests measurement m
+
+inside an enclave session, binding the session’s channel key k
+
+and the nonce n. Vrf (m, k, n ) records that the sidecar accepts evidence, after the signature, measurement, nonce, and channel-key checks. Rel (b, k, n, q ) records that the sidecar releases body 
+
+b toward k under request identifier q, and Acc (b, k, n, q ) that an enclave session accepts b after decryption under its own key. 
+
+Res (p, d ) records that the enclave resolves policy name p to destination d by lookup in ∆. PrvR (b, d, q ) and PrvS (b, d, q, r )
+
+record that the provider at d receives b and answers with token 
+
+r, and Fin (b, q, r ) that the client accepts r for its own request 16                              
+
+> TABLE IV SECURITY SUMMARY . E ACH ADVANTAGE IS BOUNDED BY THE SUM OF THE LISTED TERMS OF §II-C; THE STRUCTURAL ASSUMPTIONS ARE THE NON -PROBABILISTIC CONDITIONS ON THE LOADED PROGRAM QAND THE TRUST ROOTS .
+> Result Advantage terms Structural assumptions
+> Confidentiality (Thm 1) Iso ,ExeInty ,RA -unf ,ch client ,ch prov NonInt (Q, L)
+> Faithful relay and streaming (Thm 2) ExeInty ,ch client ,ch prov Verbatim (Q)
+> Destination authority (Thm 3) ExeInty ,ch prov DestPolicy (Q, ∆) , trusted public-key infrastructure Measurement anchoring (Lem 1) RA -unf ,cr ,euf -cma deterministic build, platform soundness Accountability (Lem 2) euf -cma ,cr ,log none
+
+q after the authenticity check on the relayed response. The sidecar issues a fresh nonce n per session and a fresh request identifier q per release, and a provider answers with a fresh response token r bound to q.
+
+Bridging invariants. Five invariants connect the construction to the operational properties of § V-A , formalizing the ordering and authority those theorems assume the loaded code enforces. They are stated as follows. 
+
+P1, attested release. 
+
+Vrf (m∗, k, n ) ⇒inj Qt (m∗, k, n ),
+
+Rel (b, k, n, q ) ⇒inj Vrf (m∗, k, n ).
+
+The first rules out evidence the platform never issued for the pinned image; the second rules out release without verification, and its injectivity rules out replay, since a captured document justifies no second release. 
+
+P2, check-to-use binding. 
+
+Acc (b∗, k, n, q ) ⇒inj Rel (b∗, k, n, q ).
+
+No party interposes between the check and the use, and no released request is accepted twice. The property is stated for bodies a verifying sidecar protects; the enclave also serves the host’s own client sessions, whose bodies the host already knows. 
+
+P3, destination authority. 
+
+PrvR (b∗, d, q ) ⇒ ∃ p. Res (p, d ) ∧ d ∈ ∆.
+
+A name the host mints resolves to nothing, so the host chooses among destinations but never invents one. 
+
+P4, response provenance. 
+
+Fin (b∗, q, r ) ⇒ ∃ d ∈ ∆. PrvR (b∗, d, q ) ∧ PrvS (b∗, d, q, r ).         
+
+> TABLE V FALSIFICATION VARIANTS . E ACH REMOVES ONE CHECK ;THE RIGHT COLUMN LISTS THE PROPERTIES WHOSE PROOFS BREAK ,AND ALL OTHER PROOFS STILL VERIFY .
+> Removed check Proofs that break
+> Oracle refuses pinned measurement P1 (agreement), P2, P3, P4, P5 Channel key bound in evidence P1 (agreement), P2, P3, P4, P5 Nonce bound in evidence P1 (agreement), P2 Destination resolved in baked table P2, P3, P4, P5 Provider response authenticated P4 Body-free control channel P5 (equivalence)
+
+P5, secrecy and a body-free host view. The adversary never derives the body, and its entire view, the two control-channel messages included, is observationally equivalent under a change of the body, so no host-visible field is body-derived. 
+
+Theorem 4 (Symbolic invariants) . In the symbolic model above, with ideal cryptography, unforgeable platform signatures, hon-est providers at every destination listed in ∆, and the platform soundness assumption of §III, properties P1 through P5 hold against a host adversary that controls every channel, speaks the control protocol, chooses policy names and credentials, and holds an attestation oracle for every measurement other than the pinned one. Proof. Machine-checked with ProVerif. The five properties compile into ten queries, correspondence assertions for P1 through P4 with the agreement and binding forms injective, and a secrecy query plus an observational-equivalence query for P5; all ten verify. Three further queries check the model rather than the protocol: two reachability queries confirm the honest pipeline completes, so the correspondences are not vacuously true, and one documents the single disclosure by design, that the host learns the gateway credential g it issued (§III). 
+
+Falsification. The model also detects the attacks it is meant to rule out. We re-ran all queries on six variants, each removing exactly one protocol check, and Table V lists what breaks. The two checks that anchor the attested channel, and the baked-table resolution, fail broadly, body secrecy included; each narrower check breaks exactly the properties it carries. 
+
+Abstractions. The model abstracts the enclave platform, the quote-verification library, the cipher layer, memory safety, provider behavior, and side channels, and it treats byte-for-byte faithfulness and the control-channel field schemas as assumptions, which the computational theorems of §V carry as named hardware and faithfulness assumptions.
