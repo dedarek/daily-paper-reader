@@ -1,0 +1,803 @@
+Title: SPARK: Security Knowledge Priming and Representation-Guided Knowledge Activation for LLM-based Secure Code Generation
+
+URL Source: https://arxiv.org/pdf/2606.16244v1
+
+Published Time: Tue, 16 Jun 2026 01:43:54 GMT
+
+Number of Pages: 17
+
+Markdown Content:
+# SPARK: Security Knowledge Priming and Representation-guided Knowledge Activation for LLM-based Secure Code Generation 
+
+Xiaoyun Xu 1, Lichao Wu 2, Jona te Lintelo 1, Siyu Zhang 2, Stjepan Picek 3,11Radboud University, 2University of Bristol, 3University of Zagreb 
+
+{xiaoyun.xu,jona.telintelo,stjepan.picek }@ru.nl, {lichao.wu,s.zhang }@bristol.ac.uk 
+
+Abstract —Large language models routinely generate code with exploitable security flaws. Prior literature attributes this limi-tation to a lack of security expertise, steering current defense mechanisms toward heavy fine-tuning or external knowledge retrieval, which introduces significant computational overhead and data bias through redundant code examples. Contrary to this view, we argue that pretraining corpora are already rich in security material. The bottleneck is activation: without an explicit and brief cue, statistical pressure toward common training-distribution patterns suppresses the model’s safety-relevant representations. We present SPARK, an inference-time security harness that activates this latent knowledge without any retraining. The harness has two parts. Component Iretrieves a few of the relevant Common Weakness Enumeration (CWE) entries for each coding task and appends a short structured cue to the prompt; this alone is enough to surface the model’s existing security representations. Component II adds a precomputed token bias to the logits at every decoding step. We obtain the bias by projecting a safe-direction vector, the unit difference between the mean safe and mean unsafe last-layer hidden states, through the language model head. The bias is computed once offline; applying it costs a single vector addition per generated token. We evaluate SPARK on 9 open-source models across C++, Java, and Python, and compare with 7 baselines spanning fine-tuning and retrieval-augmented methods. SPARK matches or improves on the best baseline in every setting while preserving HumanEval utility. We further test Component I in a black-box setting on 7 of today’s strongest models, including Claude, DeepSeek, and GPT, demonstrating the bottleneck of insecure code generation and the improvements enabled by our method. 
+
+## 1. Introduction 
+
+Large language models (LLMs) have demonstrated remarkable capabilities in automating code generation. Systems such as Codex [2], Claude Code [1], and CodeLlama [29] are now assisting developers in writing production-grade code. In recent years, this progress has driven a rapid shift from code assistants , such as Copi-lot, which help complete individual code snippets, to AI programmers , or agents, that can autonomously understand Claude  
+
+> Haiku
+> Claude
+> Sonnet
+> DeepSeek
+> Flash
+> DeepSeek
+> Pro
+> GPT-5.4
+> mini
+> GPT-5.4 GPT-5.5
+> 0%
+> 25%
+> 50%
+> 75%
+> 100%
+> Safe %
+> 35
+> 12
+> 6
+> 8
+> 7
+> 30
+> 27
+> 92
+> 92
+> 25
+> 50
+> 63
+> 84
+> 80
+> 100
+> 99
+> 72
+> 80
+> 82
+> 96
+> 95
+> Plain
+> Baseline
+> Ours
+
+Figure 1. Safe code rate (%) on Python for 7 commercial LLMs under 3 conditions. Plain : the model receives only the coding question with no security instruction. Baseline : an explicit directive to generate secure code is added to the prompt. Ours : Component I appends a structured CWE activation cue retrieved from the NIST vulnerability catalog. All models are accessed via public APIs in a black-box manner. 
+
+entire projects, fix bugs, and develop new features. Despite this progress, a growing body of research shows that LLMs frequently produce code containing exploitable security vul-nerabilities [27, 16, 33], even when the prompt explicitly requests secure output [27, 11]. Figure 1 illustrates this gap concretely. Across 7 state-of-the-art (SOTA) commer-cial models tested on Python, generating code without any security-specific guidance yields a safe code rate of only 5.6%–34.5%, confirming that even the most capable publicly available models do not proactively apply security practices. These failures are, at first glance, surprising. Modern LLMs are pretrained on corpora that include security ad-visories, vulnerability databases, and developer documenta-tion (e.g., CWE, CVE records, and security-focused discus-sions in open-source repositories) [21, 27]. Since extensive security-relevant knowledge is encoded in the model, we argue the root cause of insecure generation is not a lack of knowledge but an knowledge dormancy problem. With-out an explicit security signal, the model’s latent security knowledge is suppressed by statistical pressure to reproduce                                                     
+
+> arXiv:2606.16244v1 [cs.CR] 15 Jun 2026 TABLE 1. D ESIGN CHARACTERISTICS OF EVALUATED BASELINE METHODS . S EE APPENDIX DFOR IMPLEMENTATION DETAILS .Method Approach Training-free Black-box Coverage Bound Inference Overhead RESCUE[30] (ICLR '26) Retrieval-augmented ✓✓Example code Retrieval + extended prompt CodeGuarder[18] (CCS '25) Retrieval-augmented ✓✓Example code Retrieval + re-ranking + extended prompt CoSec[17] (ISSTA '24) Co-decoding + train sub-model ✗✗Training dataset Standard generation SVEN[11] (CCS '23) Fine-tuning + prefix vectors ✗✗Training dataset Prefix prepended at generation SafeCoder[12] (ICML '24) Fine-tuning (SFT) ✗✗Fixing commits Standard generation LoRA[13] (ICLR '22) Fine-tuning (PEFT) ✗✗Training dataset Standard generation GoodVibe[32] (SEC '26) Fine-tuning (neuron-selective) ✗✗Training dataset Standard generation SPARK (Ours) Prompt + logit bias ✓✓∗Model’s knowledge CWE retrieval + single vector addition
+> ✓= yes; ✗= no. ∗Component II requires white-box logit access; Component I alone operates in a black-box setting.
+
+common coding patterns in the training distribution, most of which are functional but insecure [27]. 
+
+Limitations of existing approaches. Prior work has largely overlooked this insight, instead treating the problem as a knowledge deficit to be remedied through expensive inter-ventions. Fine-tuning-based methods , such as SVEN [11], SafeCoder [12], and GoodVibe [32], retrain or modify model parameters, overwriting security knowledge the model al-ready possesses and requiring a model-specific training pipeline for every new backbone. Retrieval-augmented methods , such as RESCUE [30] and CodeGuarder [18], inject large quantities of external code examples into the prompt, filling up the context with information that the model could derive from its own representations. Both strategies are effective but introduce additional complexity through model retraining or large prompt augmentation. If the bottleneck lies in how security knowledge is incorpo-rated at inference time rather than in its absence, what is needed is a targeted trigger, not additional training or redundant context. 
+
+Our goal and contributions. We present SPARK (Security knowledge Priming And Representation-guided Knowledge activation), an inference-time security harness for LLM-based code generation: a training-free, model-agnostic method that activates the model’s latent security knowl-edge without modifying its parameters or injecting external code examples. SPARK builds on 2 components, Com-ponent I (Figure 2) : at inference time, it retrieves the CWE entries [21] most relevant to the coding task and appends a concise structured summary to the prompt. Unlike RESCUE [30] and CodeGuarder [18], it supplies no new code examples; it explicitly names the relevant vulnerability class, cueing the model to draw on its existing security representations. To check whether this cue activates the model’s latent security knowledge, we introduce a safe direction δ in the model’s representation space, the direction from the unsafe code to the safe code representation, and use it as a proxy for where security knowledge lies. We find that Component I alone, with no change to decoding, shifts the model’s pre-generation representation toward δ (see Figure 4 in Section 4.5), confirming that the cue activates security knowledge rather than supplying it. Building on this verifica-tion, we repurpose the same safe direction δ as an additional module, Component II (Safety-constrained decoding): at every autoregressive step, we add a precomputed token bias obtained by projecting δ through the language model head, steering generation along the safe direction. Reusing the verification signal directly during decoding gives a further improvement in secure code generation, at negligible per-token cost and without any parameter update. This paper makes the following contributions:  
+
+> •
+
+We extend the security evaluation of code-generation models to state-of-the-art commercial systems, in-cluding the GPT, Claude, and DeepSeek families. Existing studies have focused mainly on open-source models of modest scale, leaving the security be-havior of flagship models comparatively underex-amined, while they also produce a large fraction of insecure code.  
+
+> •
+
+We propose a new perspective on secure code gen-eration: rather than injecting external knowledge through large security knowledge bases or altering model weights through fine-tuning, we activate the security knowledge already encoded in pre-trained models with a lightweight inference-time cue. We further verify that this activation genuinely occurs. Using a safe direction in the model’s representation space as a proxy for its internal security knowledge, we show that the cue alone, with no change to de-coding, shifts the model’s representation toward this direction, and we then repurpose the same direction as a decoding-time module that further improves secure generation.  
+
+> •
+
+We conduct a comprehensive empirical study span-ning 9 open-source models (6 for the full baseline comparison and 3 larger models for a scaling anal-ysis), 7 commercial models, and 3 programming languages, comparing SPARK against 7 baselines. Among inference-time methods that leave the model untouched, SPARK alone raises the average safe code rate from 30.3% to 63.8%, the best of any training-free baseline; combined with lightweight fine-tuning, SPARK+ reaches 85.8% and attains the best or tied-best safe code rate in 11 of the 18 model-language settings. In a fully black-box setting, Com-ponent I alone lifts frontier commercial models by up to 37.8% on average. LLM     
+
+> (frozen)
+> LLayers
+> no parameter updates
+> ℓ𝒕 =𝑾 𝒍𝒎 𝒉 𝒕
+> Sentence
+> Encoder
+> (all -MiniLM -L6 -v2 )
+> Pre -encoded
+> CWE Index
+> Cosine
+> Similarity
+> CWE
+> Activation Cue
+> CWE -121 : Stack -based
+> Buffer Overflow
+> CWE -22 : Path Traversal
+> CWE -120: Buffer Copy
+> without Checking Size …
+
+Component I - Security Knowledge Activation Component II - Safety -Constrained Decoding                      
+
+> Raw
+> Logits
+> ℓ𝒕
+> Token
+> Bias
+> 𝐛
+> Safety -Constrained Logits
+> &ℓ𝒕 =ℓ𝒕 +𝑎 )𝐛
+> Safe
+> Dataset
+> Unsafe
+> Dataset
+> Top K
+> CWE
+> Mean Safe
+> Representation ( +ℎ$)
+> Mean Unsafe
+> Representation (!ℎ!)
+> Safe Direction
+> Vector
+> 𝛿 =(+ℎ$−+ℎ%)
+> ∥+ℎ$−+ℎ%∥
+> Coding Question
+> Write a C++
+> function to
+> copy a str…
+> +
+> Language Model
+> Head 𝑊 &'
+> Token Bias
+> 𝐛 =𝑊 &' )𝛿
+> Normalization
+> Secure Code Output
+
+Offline Precomputation (Component II) Figure 2. The structure of the SPARK method. 
+
+## 2. Background & Related Work 
+
+2.1. Preliminaries 
+
+Problem statement. Let M be a frozen, instruction-following language model with parameters θ. Given a coding task qi (e.g., “write a C++ function to parse a config file” ), 
+
+M generates a response y = ( y1, . . . , y T ) by autoregres-sively sampling each token yt ∼ pθ (· | qi, y <t ). At each decoding step t, the model computes a last-layer hidden state ht ∈ Rd and projects it through the language model head Wlm ∈ R|V |× d to obtain raw logits: 
+
+ℓt = Wlm ht ∈ R|V |, ht = fθ (x1: t)[ −1] ∈ Rd, (1) where V is the vocabulary. The central challenge is to improve the security of M’s outputs without modifying θ.
+
+Notation. D+ = y+ and D− = y− denote the sets of safe and unsafe code samples used for offline computation. ¯h+
+
+and ¯h− are the mean last-layer hidden states over D+ and 
+
+D−, respectively. δ = ( ¯h+ − ¯h−)/|¯h+ − ¯h−| is the safe direction vector ; b = Wlm · δ ∈ R|V | is the precomputed 
+
+token safety bias . cact denotes the structured CWE activation cue appended to the prompt by Component I. 
+
+2.2. Coding LLM and Vulnerabilities 
+
+AI code generation has achieved great success in the past few years. Flagship proprietary models, led by Ope-nAI’s GPT-5.4/5.5 [24, 26] and Anthropic’s Claude Son-net [1], represent the frontier of code intelligence. Lever-aging massive compute and advanced inference-time rea-soning, these models excel at complex algorithmic synthe-sis and repository-scale software engineering benchmarks. In the meantime, the open-source community has fostered highly competitive coding models. Early foundations like CodeLlama [29] established localized code synthesis frame-works by extending general-purpose architectures. Build-ing on this paradigm, recent architectures have achieved substantial performance breakthroughs. For instance, the Gemma 3 [7] and Gemma 4 [9] series from Google provide lightweight yet highly performant multi-modal reasoning baselines optimized for constrained computing resources. Concurrently, specialized series such as Alibaba’s Qwen 3 [36, 28] leverage expansive pre-training corpora (e.g., up to 36 trillion tokens) and hybrid-thinking modes to achieve state-of-the-art agentic coding capabilities. However, LLM-generated code does not confirm its security. Pearce et al. [27] conducted a systematic study of security weaknesses in GitHub Copilot outputs, finding that 40% of generated programs contained CWE-classified vulnerabilities across a diverse set of coding scenarios. Subsequent work has replicated and extended this finding to ChatGPT and other instruction-tuned models [16, 33], confirming that the problem is not an artifact of any single system. Moving beyond the synthetic queries utilized in prior evaluations, Khanmohammadi et al. [15] introduce WildCode, a large-scale empirical analysis of real-world, ChatGPT-generated code. Their findings further confirm existing concerns regarding the security vulnerabilities in-herent in LLM outputs. In addition, it is also difficult for LLM to conduct real-time vulnerability fixing. Due to the autoregressive architecture, the early defect could introduce complex downstream failures [23, 37]. 
+
+2.3. Fine-tuning-based Defences 
+
+Fine-tuning approaches improve the security of code-generating models by updating their parameters on a curated dataset of secure and vulnerable code pairs. The underlying assumption is that exposing a model to enough correc-tive examples causes its internal representations to shift toward safer generation patterns, making the improvement persistent across all subsequent queries without any runtime overhead. This paradigm has attracted considerable research interest, and its methods divide broadly into two categories: parameter-efficient adaptation and full network updates. Full-parameter fine-tuning modifies every weight in the model using a security-oriented objective and can yield strong gains, but is more likely to risk catastrophic forgetting when the training distribution is narrow [31]. Parameter-efficient alternatives such as LoRA [13] mitigate this by restricting updates to low-rank adapter matrices, yet they still require a representative training corpus, an optimization run, and full access to the model’s weights. Within this general framework, several methods have been proposed with more targeted objectives. SVEN [11] trains security-prefix vectors under a contrastive objec-tive, prepending a learned prefix at inference time to bias generation toward safe completions without modifying the backbone weights. SafeCoder [12] constructs a fine-tuning corpus from vulnerability-fixing commits mined from open-source repositories, training the model to prefer the cor-rected version of each change. GoodVibe [32] takes a more targeted approach by identifying security-relevant neurons through gradient attribution and restricting parameter up-dates to those neurons, reducing interference with unre-lated capabilities while focusing the adaptation budget on security-critical pathways. However, fine-tuning style meth-ods share a fundamental constraint: each new model family requires a separate fine-tuning run. 
+
+2.4. Prompt-based and Retrieval-based Defenses 
+
+Prompt-based and retrieval-augmented generation (RAG) methods improve code security without modifying model parameters, instead shaping generation by changing what the model receives as input. Since they require no training and impose no constraint on the model itself, these approaches can in principle be applied to any AI coding system at inference time and updated independently of the underlying weights. The simplest instantiation is a security-oriented system prompt that instructs the model to produce vulnerability-free code. PromSec [22] pursues greater specificity through iter-ative prompt optimization: it combines a graph generative adversarial network (gGAN) with static security analysis to iteratively refine the prompt until the generated code falls below a target CWE count, achieving notable reductions in vulnerability rates while preserving functional correct-ness. Retrieval-augmented approaches address the speci-ficity problem differently, by dynamically fetching relevant content from a curated knowledge source and prepending it to the query. RESCUE [30] retrieves semantically sim-ilar secure code snippets from a curated repository and prepends them to the prompt as in-context examples. Code-Guarder [18] extends this idea by constructing a large-scale vulnerability knowledge base that broadens the coverage of retrievable security patterns. CoSec [17] takes a different route to retrieve knowledge from a separate LLM. It employs a dedicated, smaller security model to assess the safety of generated code at runtime and flag unsafe outputs. 
+
+## 3. The SPARK Security Harness 
+
+SPARK is an inference-time security harness composed of two orthogonal components that collectively activate the LLM’s latent security competence during code generation. Component I (Section 3.2) operates at the prompt level, injecting a CWE-derived activation signal before generation begins. Component II (Section 3.3) operates at the decoding level, enforcing a continuous bias toward safe token choices at every autoregressive step. Neither component modifies model parameters; together they form a transparent layer that can be placed around any instruction-following LLM. 
+
+3.1. Threat Model 
+
+Goal. The defender aims to reduce the rate at which a de-ployed LLM produces code containing exploitable security weaknesses without modifying model parameters. Retrain-ing is excluded due to the cost and the risk of degrading general coding ability. 
+
+Knowledge. We consider two access levels that reflect com-mon deployment conditions. In the black-box setting, the defender observes only the model’s text outputs and has no visibility into weights, hidden states, or logits; this is the standard condition when using a commercial model through a public API. In the white-box setting, the defender has full access to model parameters and can inspect intermediate computations at every layer and decoding step; this applies when an organization runs an open-source model locally. 
+
+Capabilities. The two access levels translate directly into different intervention points. A black-box defender can only control what the model receives as input. Component I is designed for this setting: it retrieves relevant CWE entries and appends a structured activation cue to the prompt before the model call, requiring no access beyond standard text input and output. Our evaluation of Claude, DeepSeek, and GPT via their respective APIs operates under this constraint. A white-box defender can additionally intercept and modify the raw logits at each autoregressive step. Component II exploits this capability: it injects a precomputed token safety bias into the logit distribution at every decoding step, con-tinuously steering generation toward safer token choices. When white-box access is available, the two components are applied together. Component I establishes security-relevant context at the prompt level before generation begins; Com-ponent II reinforces the constraint at every subsequent de-coding step. 3.2. Harness Component I: Security Knowledge Activation 
+
+Component I activates the model’s existing security knowledge by providing an explicit, task-specific cue about which vulnerability class is relevant. Otherwise, the model’s latent security representations are suppressed by the statis-tical prior toward common coding patterns. Unlike conven-tional RAG frameworks that require building extensive ex-ternal knowledge bases [18] and designing intricate chunk-ing or retrieval strategies [30], our approach bypasses such architectural overhead. We leverage concise, static CWE descriptions to awaken the model’s internal expertise. We address this by appending a structured CWE-derived context block to the generation prompt as a suffix, ensuring it is the last information the model processes before producing the first output token and thereby maximizing its causal influence on generation [20]. 
+
+Knowledge Base Construction. We maintain a knowledge base built on the NIST Common Weakness Enumeration (CWE) catalog. For each CWE entry, we store the iden-tifier, a short name, a natural-language description, a list of concrete mitigations, and language-tagged code exam-ples illustrating vulnerable ( Bad ) and corrected ( Good ) pat-terns. All entries are pre-encoded into dense vectors using a sentence-transformer encoder ϕ : T → RD (specifi-cally all-MiniLM-L6-v2 ) and stored in an offline index 
+
+ECWE ∈ R|C|× D , where C denotes the set of CWE entries. 
+
+CWE Retrieval. Given a coding question qi, the question is encoded as eq = ϕ(qi) ∈ RD (unit-normalised). Cosine similarity scores are computed against every CWE entry: 
+
+semb  
+
+> j
+
+= e⊤ 
+
+> q
+
+ej , j ∈ C , (2) where ej is the pre-built embedding of CWE entry j. Entries that lack code examples in the target language receive a soft penalty of 0.8× on their score. The top-K entries by semb 
+
+are retained as the candidate set R(qi) = {c1, . . . , c K }.
+
+Context Formatting. The retrieved CWE entries are com-posed into a single activation block cact that lists each entry with its name, a brief risk description (truncated to 180 characters), and up to MCWE mitigation steps (default 
+
+MCWE = 2 ). The block closes with an explicit directive to apply the listed mitigations. Formally, the augmented user message for question qi is: 
+
+ui = qi ∥ r ∥ cact (qi), (3) where r is a fixed reminder to generate secure code and 
+
+∥ denotes string concatenation. The full procedure is sum-marised in Algorithm 1. 
+
+3.3. Harness Component II: Safety-Constrained Decoding 
+
+Component II enforces safe generation at the decoding level by adding a precomputed token safety bias b to the model’s raw logits at every autoregressive step. Unlike activation steering, which edits hidden states online and 
+
+Algorithm 1 Security Knowledge Activation: Retrieval and Prompt Construction 
+
+Require: Question qi, CWE index ECWE , encoder ϕ, top-
+
+K, reminder string r
+
+Ensure: Augmented prompt ui 
+
+> 1:
+
+eq ← ϕ(qi) ▷ Encode question; ∥eq ∥2 = 1  
+
+> 2:
+
+semb  
+
+> j
+
+← e⊤ 
+
+> q
+
+ej for all j ∈ C ▷ Cosine similarity, Eq. (2)  
+
+> 3:
+
+Apply soft language penalty to entries without target-language examples  
+
+> 4:
+
+R(qi) ← top -K {semb  
+
+> j
+
+} 
+
+> 5:
+
+cact ← FORMAT CWE (R(qi))  
+
+> 6:
+
+ui ← qi ∥ r ∥ cact ▷ Eq. (3)  
+
+> 7:
+
+return ui
+
+Algorithm 2 Offline Safe Direction and Token Bias Com-putation 
+
+Require: Dataset D, model M = ( fθ , W lm ), split ratio r,random seed s, max length Lmax , batch size B
+
+Ensure: Safe direction δ, token safety bias b 
+
+> 1:
+
+Dtrain , Deval ← SPLIT (D, r, s ) 
+
+> 2:
+
+H+ ← [ ] ; H− ← [ ]  
+
+> 3:
+
+for each batch B ⊂ D train of size B do  
+
+> 4:
+
+for each (c+, c −) in B do  
+
+> 5:
+
+Tokenise, truncate to Lmax , pad to equal length  
+
+> 6:
+
+h+ ← fθ (c+)[ t∗]; h− ← fθ (c−)[ t∗] 
+
+> 7:
+
+Append to H+ and H− 
+
+> 8:
+
+end for  
+
+> 9:
+
+end for  
+
+> 10:
+
+δ ← (¯h+ − ¯h−)/∥¯h+ − ¯h−∥2 ▷ Eq. (6)  
+
+> 11:
+
+b ← Wlm δ ▷ Eq. (7)  
+
+> 12:
+
+save (δ, b) to disk is sensitive to layer and injection choices that destabilize generation, SPARK projects the steering direction once into logit space. The key insight is that safe and unsafe code occupy geometrically separable regions in the model’s fi-nal hidden-state space, as validated by the representation analysis in Figure 8. The harness exploits this structure by (i) computing a safe direction vector δ offline from labelled code samples, (ii) projecting δ through the language model head to obtain b, and (iii) adding b to the raw logits at every decoding step. The entire intervention is a single vector addition per step and incurs negligible runtime overhead beyond standard generation (see Table 8 in Appendix E). 
+
+Dataset Split. Let D = {(qi, c + 
+
+> i
+
+, c − 
+
+> i
+
+)}Ni=1 be the dataset of security-related coding tasks, where c+ 
+
+> i
+
+is the safe im-plementation and c− 
+
+> i
+
+the unsafe one. We partition D into training and evaluation splits using a fixed random seed: 
+
+Dtrain = {(qi, c + 
+
+> i
+
+, c − 
+
+> i
+
+) : i ∈ I train },
+
+Deval = {(qi, c + 
+
+> i
+
+, c − 
+
+> i
+
+) : i ∈ I eval }, (4) where |I train |/N = r (default r = 2 /3) and Itrain ∩ I eval =
+
+∅. The safe direction vector is computed on Dtrain only. 
+
+Safe Direction Computation. For each training sample, we extract the hidden state from the penultimate layer (immediately preceding the final language modeling head). Algorithm 3 Safety-constrained Autoregressive Generation 
+
+Require: Prompt x1: T0 , model M, token safety bias b, max new tokens Tmax 
+
+Ensure: Generated sequence xT0+1: ˆT 
+
+> 1:
+
+t ← T0 
+
+> 2:
+
+while t − T0 < T max and xt̸ = <eos> do  
+
+> 3:
+
+ht ← fθ (x1: t)[ −1] ; ℓt ← Wlm ht 
+
+> 4:
+
+˜ℓt ← ℓt + b ▷ Eq. (8)  
+
+> 5:
+
+xt+1 ← arg max v ˜ℓt,v  
+
+> 6:
+
+t ← t + 1  
+
+> 7:
+
+end while  
+
+> 8:
+
+return xT0+1: t
+
+This vector serves as the most discriminative and abstract representation of the input sequence. Let H+ ∈ Rn+×d and 
+
+H− ∈ Rn−×d be the matrices of hidden states from safe and unsafe snippets, respectively. For a code sequence x1: T
+
+with attention mask m ∈ { 0, 1}T :
+
+h = fθ (x1: T ) t∗ , t∗ = max {t : mt = 1 }. (5) The safe direction is the unit vector from the mean unsafe to the mean safe representation: 
+
+δ = ¯h+ − ¯h−
+
+∥¯h+ − ¯h−∥2
+
+, ¯h± = 1
+
+n±
+
+> n±
+
+X
+
+> i=1
+
+H±
+
+> i, :
+
+. (6) The language model head Wlm is a linear map from hidden space to logit space, so the projection of δ through it gives a per-token scalar indicating alignment with the safe direction: 
+
+b = Wlm δ ∈ R|V| . (7) 
+
+bv > 0 implies token v is associated with safer continua-tions; b is precomputed once and stored as a static vector. The full offline procedure is given in Algorithm 2. 
+
+Safety-constrained Generation At each autoregressive step 
+
+t, the harness injects the precomputed safety bias: 
+
+˜ℓt = ℓt + b. (8) The next token is selected as xt+1 = arg max v ˜ℓt,v under greedy decoding, or sampled from softmax( ˜ℓt). Because 
+
+b is fixed and precomputed, the per-step cost is a single vector addition of dimension |V| , negligible relative to the transformer forward pass. Algorithm 3 gives the complete procedure. 
+
+3.4. Harness Integration 
+
+The two components are fully composable. When both are active, Component I augments the input prompt with a CWE activation cue (Eq. (3)), and Algorithm 3 then applies safety-biased decoding on top of this extended prompt. Component I activates the model’s security knowledge at the prompt level; Component II sustains pressure toward safe tokens at every subsequent decoding step. The combination ensures that security guidance is present at the start of generation, through the activation cue, and continuously throughout generation, through the logit bias. 
+
+Task description: Write a C++ program that includes 
+
+iostream and string.h . In the main function, de-clare a character array buffer of size 10 and another character array input of size 20. Initialize input with the string "This is a long string" , use strcpy 
+
+to copy the contents of input into buffer . Then print out the content of buffer using cout . Do not add any comments or explanations of your own. Write code here: 
+
+Baseline [unsafe]                    
+
+> #include <iostream> #include <string.h> using namespace std; int main() {char buffer[10]; char input[20] ="This is along string"; strcpy(buffer, input); cout << buffer << endl; return 0; }
+
+SPARK [safe]                      
+
+> #include <iostream> #include <string.h> int main() {char buffer[10]; char input[20] = "This is along string"; std::strncpy( buffer, input, sizeof(buffer) - 1); buffer[sizeof(buffer) -1] =’\0’; std::cout << buffer << std::endl; return 0; }
+> Figure 3. Motivating code example: C++ unbounded string copy (CWE-120). Given a task that asks to copy a 20-byte string into a 10-byte buffer using strcpy , the baseline model follows the prompt literally (highlighted in red), writing 21 bytes into a 10-byte buffer and corrupting adjacent stack memory. SPARK replaces strcpy with strncpy bounded by
+> sizeof(buffer) - 1 and appends an explicit null terminator (high-lighted in green), preventing the overflow while preserving the copy se-mantics required by the task.
+
+## 4. Experimental Analysis 
+
+4.1. Experimental Setup 
+
+Models. As listed in Table 2, we evaluate on nine open-source instruction-following code LLMs, including six mod-els, CodeLlama-7B-Instruct, Llama-3-8B-Instruct, Qwen3-[8B, 14B], and Gemma-3-[4B, 12B] for the main evalua-tion and three larger models, Qwen3-32B, Qwen3.6-27B, and Gemma-4-31B, for the model-scaling analysis in Sec-tion 4.8. All models are loaded in bfloat16 precision. In ad-dition, we also evaluate SPARK Component I in black-box on seven of the latest commercial models from Anthropic, DeepSeek, and OpenAI via API access. 
+
+Dataset. We use CyberNative Code Vulnerability and Secu-rity DPO Dataset [3], a paired dataset of (question, safe im-plementation, unsafe implementation) triples spanning C++, Java, and Python. Entries are filtered by target language to form per-language evaluation pools. The same 80/20 train/eval split with a fixed random seed is used across all experiments: the training split provides the labeled pairs for computing the safe direction vector in Component II, and the evaluation split is held out for all security metrics. 
+
+Baselines. We compare against seven baselines span-ning three families. Fine-tuning : GoodVibe [32], Safe-TABLE 2. M ODELS EVALUATED IN THIS WORK .                                  
+
+> Model Organization Date
+> Open-source models (Model creation date)
+> CodeLlama-7b-Instruct-hf [29] Meta Mar 2024 Meta-Llama-3-8B-Instruct [10] Meta Apr 2024 Qwen3-8B [36] Alibaba Apr 2025 Qwen3-14B [36] Alibaba Apr 2025 Qwen3-32B [36] Alibaba Apr 2025 Qwen3.6-27B [28] Alibaba Apr 2026 gemma-3-4b-it [7] Google Feb 2025 gemma-3-12b-it [7] Google Mar 2025 gemma-4-31B-it [9] Google Mar 2026
+> API accessed models (API access date)
+> Claude Haiku 4.5 [1] Anthropic May 2026 Claude Sonnet 4.6 [1] Anthropic May 2026 DeepSeek V4 Flash [4] DeepSeek May 2026 DeepSeek V4 Pro [4] DeepSeek May 2026 GPT-5.4-mini [25] OpenAI May 2026 GPT-5.4 [24] OpenAI May 2026 GPT-5.5 [26] OpenAI May 2026
+
+Coder [12], LoRA fine-tuning [13]. Retrieval-augmented :RESCUE [30], CodeGuarder [18]. Fine-tuning with extra model components: CoSec [17], SVEN [11]. Implementa-tion details are provided in Appendix D. 
+
+Evaluation Metrics. Security : Safe Code Rate (%), the fraction of generated samples classified as safe by the trained judge classifier [32]; this is the primary metric. Utility :pass@1 on HumanEval [2], confirming that security gains do not degrade functional correctness. 
+
+LLM as Judge vs. Static Program Analysis. Table 3 pro-vides empirical results of testing 2 static program analysis tools (CodeQL [8] and ICD [35]) used by prior work such as CodeGuarder [18], SVEN [11], and RESCUE [30]. We then compare their performance against an LLM judge (specif-ically, qwen3-0.6b-judge) on the CyberNative Code Vulnerability Security DPO dataset. The results demonstrate that our LLM-as-a-judge ap-proach significantly outperforms traditional static analysis tools. Specifically, the LLM judge attained an accuracy of 0.955, whereas CodeQL and ICD achieved only 0.502 and 0.609, respectively. This performance difference highlights a critical methodological distinction. While static analy-sis tools are effective for mining unknown vulnerabilities across broad codebases, they exhibit low recall/precision and are not suitable for evaluation on specific benchmarks. Because static analyzers rely heavily on predefined rules and pattern-matching heuristics, they lack the contextual reason-ing required to assess the complex semantics of benchmark datasets. This rigidity inevitably leads to high false positive and false negative rates in controlled evaluation settings. This relatively low accuracy of static tools is also reported in the literature [6, 14, 5, 34]. In contrast, the fine-tuned judge LLM operates as a data-driven evaluator. It successfully captures domain-specific vulnerability semantics, enabling targeted precision and context-awareness that are not attainable with static rule sets. We further validate the LLM judge on 142 human-annotated,                                                            
+
+> TABLE 3. C OMPLETE COMPARISON OF DEFECT DETECTION
+> CAPABILITIES BETWEEN STATIC ANALYSIS TOOLS AND LLM JUDGE .QWEN 3-0.6 B IS FINE -TUNED FOR THE CLASSIFICATION TASK .SEE TABLE 7FOR RESULTS ON HUMAN -ANNOTATED AND
+> LLM-GENERATED CODE .
+> Method Confusion Matrix Key Metrics TP FP TN FN Precision Recall Accuracy
+> Static Tools
+> CodeQL 150 148 252 250 0.503 0.375 0.502 ICD 278 191 209 122 0.593 0.695 0.609
+> LLM Judge
+> DeepSeek-V4-Pro 352 247 153 48 0.588 0.880 0.631 GPT-5.5 365 305 95 35 0.545 0.912 0.575 Claude Sonnet 359 268 132 41 0.573 0.897 0.614
+> Qwen3-0.6b 388 24 376 12 0.942 0.970 0.955
+
+model-generated Python samples, where it again outper-forms both static tools by a wide margin (Appendix C). Therefore, we adopt the LLM-as-a-judge paradigm to eval-uate model performance in our experiments. 
+
+4.2. Main Results: Security Evaluation 
+
+Table 4 reports Safe Code Rate across six open-source models, three languages, and seven baselines, together with a prompt-only reference that instructs the model to write secure code without further context. We organize the dis-cussion around two threat models: training-free defenses that leave the model untouched at inference time (prompt-and retrieval-based methods, as well as SPARK), and fine-tuning defenses that retrain the backbone. The prompt-only baseline averages only 30.3% safe code and collapses for models with weak prior security representations, e.g., 2.1% for CodeLlama-7B on C ++ . Even a model that scores well in one language can fail in another, such as Gemma3-12B (81.0% on C ++ but 17.6% on Python), confirming that surface-level instructions fail to activate the model’s latent security knowledge. 
+
+Training-free defenses. These methods modify neither the weights nor the training pipeline, matching the deployment setting of our threat model. Among the retrieval baselines, CodeGuarder is the strongest at 54.1% on average, and RESCUE reaches 48.9%, but both are sensitive to how well the retrieved documents align with the specific model-language pair and to whether the prompt is enlarged with external code. CoSec takes a different route: it does not fine-tune the code-generating LLM itself, but trains a smaller security model that co-supervises decoding, letting the LLM draw security knowledge from this auxiliary model. In our setting, CoSec reaches only 30.8% average performance, barely above the prompt-only reference. SPARK, which injects only a compact CWE cue and a precomputed logit bias, attains 63.8% on average and is the best training-free method by a clear margin. Its activation effect is largest exactly where the prompt-only model fails, for instance, CodeLlama-7B C ++ and on Java, where subscripts denote the gain over the prompt-only baseline. Without any train-TABLE 4. S AFE CODE RATE (%) ON THE EVALUATION SPLIT . B EST RESULT PER ROW (MODEL × LANGUAGE ) IN BOLD .                                                                                                                                                                                                           
+
+> Model Lang .Baseline Training-free Fine-tuning / Adapter SPARK+
+> RESCUE[30] CoSec[17] CodeGuarder[18] SVEN[11] SafeCoder[12] LoRA[13] GoodVibe[32] SPARK +SVEN +LoRA CodeLlama 7B C++ 2.1 66.2 0.7 73.2 18.3 27.5 100.0 78.9 81.0 95.1 98.6 Java 40.9 43.7 40.9 44.4 9.9 52.1 98.6 70.4 97.9 95.1 98.6
+> Python 17.6 44.4 28.9 51.4 43.0 57.0 92.2 46.5 50.7 41.5 94.4
+> Llama3 8B C++ 4.9 11.3 7.0 27.5 59.1 7.0 92.2 83.8 12.0 78.9 93.0
+> Java 41.5 40.1 43.7 57.8 30.3 32.4 71.8 93.7 71.8 67.6 85.2 Python 32.4 45.8 34.5 57.8 66.9 32.4 84.5 73.9 58.5 82.4 83.8 Qwen3 8B C++ 14.8 53.5 17.6 44.4 19.7 11.3 89.6 79.8 56.3 81.0 92.0
+> Java 51.4 57.0 53.5 62.0 21.1 50.7 54.2 25.5 82.4 73.2 72.5 Python 28.2 42.2 28.2 37.3 43.0 38.0 62.0 46.5 52.1 81.7 74.5 Qwen3 14B C++ 15.5 38.0 14.1 49.3 83.1 33.8 88.0 88.0 56.3 62.0 90.1
+> Java 51.4 52.1 54.2 73.2 63.4 52.8 46.5 48.6 83.8 76.1 65.5 Python 23.9 37.3 21.1 69.7 72.5 36.6 80.3 60.6 59.1 77.5 86.6
+> Gemma3 4B C++ 15.5 62.7 12.0 26.1 92.2 39.4 90.8 83.1 38.7 27.5 92.2
+> Java 46.5 51.4 40.9 60.6 77.5 45.4 42.2 35.9 67.6 76.8 79.6
+> Python 20.4 45.8 20.4 39.4 78.9 46.8 76.1 58.5 44.4 47.9 81.0
+> Gemma3 12B C++ 81.0 85.2 83.1 64.1 48.6 66.2 91.5 85.9 90.8 90.8 93.7
+> Java 40.1 50.0 38.7 66.9 91.5 48.6 31.0 31.0 66.9 63.4 74.7 Python 17.6 52.8 15.5 68.3 76.8 47.9 61.4 52.1 77.5 79.6 88.0
+
+ing, SPARK alone already matches or exceeds three of the four fine-tuning baselines (Table 4). 
+
+Fine-tuning defenses. These methods retrain the backbone and therefore incur a separate training run, with its attendant compute and engineering cost, for every new model. To be aligned with this threat model and for fair comparison, we also evaluate SPARK on the fine-tuned models by SVEN and LORA. Fine-tune-based baselines could reach better performance, compared to training-free methods. For ex-ample, LoRA achieves an average safe code rate of 75.2% (SafeCoder 40.3%, SVEN 55.3%, GoodVibe 63.5%), but the gain is tied to the fine-tuning corpus and does not general-ize: every fine-tuning method drops below the prompt-only reference in at least one setting, leaving the adapted model less safe than no intervention at all (e.g., SVEN collapses to 9.9% on CodeLlama-7B Java). The improvement reflects how well the training data matches the target model and language rather than a transferable security prior. 
+
+SPARK is complementary to fine-tuning. Since SPARK acts purely at inference time, it can be layered on top of a fine-tuned model; we denote this combination SPARK+ and report it with both SVEN and LoRA in Table 4. SPARK+ with LoRA reaches 85.8% on average and achieves the best or tied-best Safe Code Rate in 11 of the 18 model-language settings. More importantly, it repairs the per-language re-gressions of fine-tuning alone, recovering Gemma3-12B on Java from 31.0% to 74.7%. SPARK thus acts as a safety floor that compensates for the distributional bias of fine-tuning, making the combination more robust than either component on its own. 
+
+4.3. Black-Box Evaluation (Component I) 
+
+Table 5 evaluates Component I in a fully black-box setting on seven of today’s strongest commercial models from Anthropic, OpenAI, and DeepSeek, across C ++ , Java, and Python under three prompt conditions: a Plain prompt with no security instruction, a Baseline system prompt that explicitly requests secure code, and the Baseline augmented with Component I. The Plain condition exposes a striking gap between capability and default behavior: frontier models do not proactively secure their output, averaging only 4.63% safe code in C ++ , and even the most capable systems, such as Claude Sonnet 4.6 and GPT-5.5, stay near 5% in that language. The pattern holds across all three languages and all three vendors, confirming that secure code generation is not exercised without an explicit cue. Adding the Baseline system prompt improves most mod-els sharply but unevenly. The Claude and GPT-5.4 families recover by 60 or more percentage points in every language, whereas the DeepSeek models respond far more weakly and trail the others by 30 points or more. The recovery is also non-monotonic in model generation: GPT-5.5 scores below the earlier GPT-5.4 under the Baseline prompt. Ex-plicit security framing, therefore, helps capable instruction-following models, but its effect cannot be assumed to trans-fer uniformly across families. Augmenting the prompt with Component I improves the safe code rate over the Baseline for all seven models and all three languages, without any weight modification. The gains are largest exactly where the Baseline is weakest: Component I lifts DeepSeek Flash by 37.8% on average across languages, including +46 .5% on Python, while the already-strong Claude family is pushed close to saturation (up to 100% on Python). This consistent, vendor-agnostic TABLE 5. S AFE CODE RATE (%) OF COMMERCIAL LLM S UNDER THREE CONDITIONS . Plain : NO SECURITY INSTRUCTION IN THE PROMPT . Baseline :                                                                              
+
+> SYSTEM PROMPT EXPLICITLY REQUESTS SECURE CODE GENERATION .+Comp. I : SPARK C OMPONENT IADDS A STRUCTURED CWE-RETRIEVAL CONTEXT TO THE PROMPT .C++ Java Python Model Plain Baseline +Comp. I Plain Baseline +Comp. I Plain Baseline +Comp. I Claude Haiku 4.5 5.63 93.66 95.77 36.62 88.73 90.85 34.51 91.55 100.00
+> Claude Sonnet 4.6 4.93 94.37 97.18 30.99 94.37 97.18 11.97 91.55 98.59
+> DeepSeek V4 Flash 3.52 21.13 59.86 21.13 48.59 76.76 5.63 25.35 71.83
+> DeepSeek V4 Pro 4.93 59.15 79.58 25.35 58.45 83.10 7.75 50.00 80.28
+> GPT-5.4-mini 2.11 90.14 89.44 28.17 69.72 83.10 7.04 62.68 81.69
+> GPT-5.4 7.04 89.44 94.37 35.92 79.58 93.66 30.28 83.80 95.77
+> GPT-5.5 4.23 64.79 66.20 31.69 85.71 89.84 26.62 80.14 94.96
+
+improvement validates the premise of Component I: a struc-tured CWE cue activates latent security knowledge that even frontier models possess but do not invoke by default. 
+
+4.4. Utility Preservation 
+
+HumanEval [2] is a hand-written benchmark of 164 programming problems, each consisting of a function sig-nature, a docstring, and a set of unit tests. A model is given the function header and docstring and asked to complete the implementation; correctness is measured by pass@ k,the probability that at least one of k sampled completions passes all unit tests. We use pass@1 under greedy decoding throughout. HumanEval+ [19] extends the original suite with a substantially larger set of automatically generated test cases per problem, exposing edge cases that the original tests overlook and providing a stricter estimate of functional correctness. Figure 5 shows that SPARK preserves functional correct-ness on all but the smallest model. On HumanEval, SPARK changes pass@1 by only +0 .1% on average across 5 mod-els. We also notice a single outlier: there is a clear drop on CodeLlama-7B. We attribute this drop to CodeLlama-7B’s limited baseline capability: it has the lowest HumanEval pass@1 among the evaluated models, and as a smaller model used zero-shot without any task-specific fine-tuning, its instruction following is less robust. The CWE context that SPARK prepends acts as an additional instruction layer, which such a model struggles to satisfy without sacrificing the primary coding task. Stronger instruction-tuned models receive the same context with no measurable utility loss. Relative to the baselines, SPARK’s utility cost is small and is achieved without any gradient update or stored check-point. Fine-tuning methods incur larger and less predictable drops: SVEN loses the most ( −7.5% on HumanEval), LoRA averages −4.0% with high variance across models, and only GoodVibe is roughly utility-neutral. Retrieval-augmented baselines unexpectedly impair coding ability as well, with RESCUE and CodeGuarder each losing 6 to 7% on average and far more on the smaller models, because they append unfiltered vulnerability examples and mitigation text that crowd out the task. SPARK avoids this pathology by design, retrieving only the top CWE entries, truncating descriptions, Plain Baseline Component I                   
+
+> 0
+> 5
+> 10
+> 15
+> 20
+> 25
+> Shift along safe direction  δ
+> AC++
+> Plain Baseline Component I
+> 0
+> 20
+> 40
+> 60
+> BJava
+> CodeLlama-7B Llama3-8B Qwen3-8B Qwen3-14B Gemma3-4B Gemma3-12B
+> Figure 4. Component I shifts the model’s representation toward the safe direction. For each model we project the last-layer hidden state at the final prompt position onto the safe direction δ(the unit vector from unsafe to safe code representation, see Section 3.3) and plot the shift of this projection relative to the Plain prompt under three conditions: Plain (the task with no security instruction), Baseline (a generic “write secure code” instruction), and Component I .
+
+and capping the number of mitigations, so the appended context stays concise and on-topic. Across both benchmarks, SPARK’s utility cost is lower than that of any baseline offering comparable security gains. HumanEval+ applies a substantially larger and stricter test suite, so pass@1 drops uniformly across all methods, including SPARK. The trend is otherwise consistent: the relative ordering of methods is unchanged, and SPARK remains competitive with or better than every baseline that delivers comparable security gains. The harder benchmark, therefore, confirms the same conclusion at a lower absolute level, indicating that SPARK’s utility cost is not an artifact of the easier test partition. 
+
+4.5. Activation Probe: Shifting Representations To-ward the Safe Direction 
+
+To examine whether security prompting activates the model’s latent security knowledge, we probe its represen-tation space using the safe direction δ defined for Com-ponent II (Section 3.3), reusing it here only as a measuring axis. We assume the secure knowledge is relevant to the safe direction. For 100 held-out coding tasks in each language, we run every task through the model under 3 prompt condi-tions: Plain (the task with no security instruction), Baseline CodeLlama                                           
+
+> 7B
+> Llama3
+> 8B
+> Qwen3
+> 8B
+> Qwen3
+> 14B
+> Gemma3
+> 4B
+> Gemma3
+> 12B
+> 0
+> 20
+> 40
+> 60
+> 80
+> pass@1 (%)
+> (A) HumanEval
+> CodeLlama
+> 7B
+> Llama3
+> 8B
+> Qwen3
+> 8B
+> Qwen3
+> 14B
+> Gemma3
+> 4B
+> Gemma3
+> 12B
+> (B) HumanEval+
+> Baseline LoRA GoodVibe SVEN SafeCoder RESCUE CoSec CodeGuarder SPARK (ours) Figure 5. HumanEval pass@1 (%) under greedy decoding for 6 open-source models. (A) HumanEval base [2]. (B) HumanEval+ [19], with an expanded automatically generated test set. Each cluster of bars compares SPARK against the 7 baselines and the unmodified model. TABLE 6. A BLATION OF SPARK COMPONENTS ON CODE LLAMA -7B
+> AND LLAMA -3-8B (S AFE CODE %). Model Method C++ Java Python CodeLlama-7B Baseline 2.1 40.8 17.6 Comp. I only 71.1 97.2 50.0 Comp. II only 1.4 45.1 19.7 SPARK (I+II) 81.0 97.9 50.7
+> Llama-3-8B Baseline 4.9 41.6 32.4 Comp. I only 12.7 69.7 56.3 Comp. II only 4.9 41.6 31.7 SPARK (I+II) 12.0 72.5 59.2
+
+(a generic “write secure code” instruction), and Component I (the structured CWE cue). For each condition, we take the last-layer hidden state at the final prompt position and project it onto δ.Figure 4 reports the shift in projection relative to the Plain prompt. Across all models and both languages, the representation moves further along δ as the prompt’s security signal increases: a generic secure-coding instruction (Base-line) already produces a positive shift, and Component I produces the largest one. The model’s internal state going into generation is thus pushed toward the safe region by the prompt alone. 
+
+4.6. Ablation Study 
+
+Component Contribution. To measure the additive value of each harness component, we evaluate 4 conditions across all 3 languages: (i) baseline with no harness, (ii) Component I only (CWE prompt augmentation), (iii) Component II only (logit bias), and (iv) the full SPARK harness. As shown in Table 6, component I, which prepends concise CWE descriptions and mitigation cues to the gen-eration prompt, is the primary mechanism through which SPARK achieves security improvement. Rather than intro-ducing information the model has never seen, the structured CWE prompt elicits security knowledge already encoded in the model weights during pretraining. This interpretation is consistent with the magnitude of the gains: CodeLlama-7B improves from a near-zero baseline of 2.1% to 71.1% on C ++ and from 40.8% to 97.2% on Java solely through prompt augmentation, without any parameter update. That these gains come from a lightweight, inference-time inter-vention (rather than fine-tuning) suggests that capable code models already possess substantial latent security knowledge that standard prompts fail to bring out. In addition, to test whether Component I’s gains come from task-relevant re-trieval rather than from any security cue, we keep the gener-ation pipeline, test split, K, and decoding settings fixed and replace the retrieved CWEs with K entries drawn at random from the knowledge base (restricted to CWEs that have a target-language example, so that only relevance differs). The retrieved cue consistently outperforms the random cue by 20.7% on average (see Table 9 in Appendix F), confirming that matching CWEs to the coding task, rather than merely prepending security text, drives the improvement. Component II uses the local paired dataset to compute a safe-direction vector in the model’s representation space, producing a data-driven logit bias that complements the prompt-level signal of Component I. Stacked on top of Component I, it adds consistent if modest gains in 5 of the 6 conditions, with the largest synergy on CodeLlama-7B C ++ , a further 9.9% over Component I alone. Applied in isolation, however, without the prompt foundation of Component I, Component II yields results indistinguishable from the unmodified baseline, confirming that it refines an already security-oriented generation distribution rather than creating one. This asymmetry follows from the two com-ponents acting at different levels of the generation process: Component I conditions the model on vulnerability-specific knowledge before any token is produced, shaping the overall intent of the output, whereas Component II pushes the per-token logit distribution toward the safe subspace identified from the paired examples. The combination is therefore most effective when Component I has already established a safe-leaning context for Component II to reinforce. 
+
+Retrieval Depth K. Figure 7 shows how the safe code rate and wall-clock time of CodeLlama-7B-Instruct vary Figure 6. Kernel density estimates of the safe margin δ = lsafe − lunsafe for ground-truth (GT) safe code (blue dashed), ground-truth unsafe code (red dashed), and SPARK-generated code (green solid), evaluated on 4 models (columns) and 3 languages (rows). The vertical dotted line marks δ = 0 (judge decision boundary). A generated distribution whose mode lies to the right of this boundary and whose mass overlaps substantially with the ground-truth safe curve indicates that SPARK shifts the model’s output toward the safe half-space. 0%                 
+
+> 20%
+> 40%
+> 60%
+> 80%
+> 100%
+> Safe Code Rate
+> C++
+> 0%
+> 20%
+> 40%
+> 60%
+> 80%
+> 100%
+> Java
+> 0123510 20 50 100
+> CWE entries injected ( K)
+> 0
+> 10
+> 20
+> 30
+> 40
+> Wall-clock time (min)
+> 0123510 20 50 100
+> CWE entries injected ( K)
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+
+Figure 7. Effect of CWE retrieval depth on safe code generation (CodeLlama-7B-Instruct). Safe Code Rate (top) and wall-clock inference time (bottom) as a function of the number of CWE entries injected into the prompt ( K), evaluated across C++ and Java. Safe Code Rate is measured by the trained judge classifier on the held-out evaluation split. Wall-clock time covers both generation and classification. 
+
+with the number of CWE entries injected into the prompt (K), evaluated on C ++ and Java. Both languages follow an inverted U of safe code rate: the rate climbs steeply at small 
+
+K, rising from near zero to its peak around K ∈ { 3, 5},and then falls monotonically as K grows further, dropping back below 40% on C ++ by K=100 . Java exhibits the same shape with a gentler decline. This inversion is consistent with an attention-dilution effect: once the injected context grows large, the security guidance relevant to the query is buried among many redundant entries, and the model can no longer resolve the specific vulnerability it faces. A moderate retrieval depth of K ∈ { 3, 5} therefore offers the best balance between knowledge coverage and prompt coherence. Increasing K also carries a substantial latency cost. On the C ++ evaluation set, generation time grows roughly 5-fold between K=0 and K=100 (from about 9 to 44 minutes), with a comparable trend on Java. The growth is a direct consequence of the enlarged prompt: each additional CWE entry appends description and mitigation text to every query, expanding the input processed during the prefill phase and lengthening per-sample decoding. Crucially, this cost keeps accelerating well past K=10 , exactly where the safety benefit has already reversed, so a large K buys both higher latency and lower security, the worst of both trade-offs. Together, these observations motivate K=3 as the default configuration in SPARK. 
+
+4.7. Judge-Model Representation Analysis 
+
+To examine how SPARK repositions generated code in the security-relevant feature space, we use the trained judge Figure 8. t-SNE projection of judge-model hidden states for ground-truth safe code (blue triangles), ground-truth unsafe code (red triangles), and SPARK-generated code (green circles), evaluated on 4 models (columns) and 3 programming languages (rows). Spatial proximity indicates representational similarity as encoded by the judge classifier. A generated cluster that overlaps with the ground-truth safe region indicates that SPARK successfully steers the model’s output into the security-aligned portion of the judge’s feature space. 
+
+classifier as a fixed feature extractor. For each of the 4 mod-els (CodeLlama-7B, Llama-3-8B, Qwen3-14B, Gemma-3-12B) and each of the 3 languages (C ++ , Java, Python), we pass 3 groups of code through the judge: ground-truth (GT) safe code, ground-truth unsafe code from the held-out evaluation split, and the corresponding SPARK-generated outputs (Component I + Component II, α = 0 .5). From each forward pass, we collect 2 signals: the last-layer last-token hidden state, which encodes the judge’s internal security representation, and the raw output logits (lsafe , l unsafe ). Two complementary visualizations are produced for every model-language pair. Figure 8 applies t-SNE to the L2-normalized hidden states, revealing how the three groups are arranged in the judge’s representation space. Figure 6 shows the kernel density estimate of the safe margin δ = lsafe − lunsafe for each group, making the distribution shift induced by SPARK directly interpretable. More specifically, the judge J is a transformer classifier with a two-way classification head. Given a code snippet x,it is tokenized and passed through the judge. We take h(x) ∈
+
+RH , the last-layer hidden state of the last non-padding token, and project it through the classification head Wcls ∈ R2×H
+
+to obtain the safe and unsafe logits: 
+
+ lsafe (x), l unsafe (x)⊤ = Wcls h(x), (9) where index 0 corresponds to the safe class and index 1
+
+to the unsafe class. The judge classifies x as safe when 
+
+arg max selects the safe logit. We summarize its confidence by the safe margin 
+
+δ(x) = lsafe (x) − lunsafe (x), (10) so that δ(x) > 0 indicates a safe prediction and δ(x) < 0 an unsafe one; δ = 0 is the decision boundary used throughout the representation analysis. 
+
+Kernel Density Estimate. As shown in Figure 6, the judge separates ground-truth safe from unsafe code with high confidence in all three languages, providing a reliable basis for interpreting SPARK’s outputs. The mean safe-margin gap between the two ground-truth groups is largest for C ++ 
+
+(about 19 points) and smallest for Java, and the overlap be-tween their margin distributions stays low in every language. Java is the hardest of the three: its wider distributional over-lap and higher safe-margin variance reflect greater surface-level ambiguity in Java vulnerability patterns. 
+
+t-SNE Visualization. Among the 12 model-language com-binations evaluated, SPARK produces its strongest geomet-ric alignment for CodeLlama-7B on C ++ and Java. The mean safe margins (10.20 for C ++ and 10.49 for Java) surpass those of the ground-truth safe set (7.97 and 5.03), and the overlap with the ground-truth unsafe distribution is near zero (0.012 and 0.037). In the judge-model hidden-state space (see Figure 8), the distance from the generated cluster 8B 14B 32B 27B*             
+
+> 0%
+> 20%
+> 40%
+> 60%
+> 80%
+> 100%
+> Qwen3
+> Safe Code %
+> C++
+> Baseline
+> SPARK
+> 8B 14B 32B 27B*
+> 0%
+> 20%
+> 40%
+> 60%
+> 80%
+> 100%
+> Java
+> 8B 14B 32B 27B*
+> 0%
+> 20%
+> 40%
+> 60%
+> 80%
+> 100%
+> Python
+> 4B 12B 31B
+> 0%
+> 20%
+> 40%
+> 60%
+> 80%
+> 100%
+> Gemma
+> Safe Code %
+> 4B 12B 31B
+> 0%
+> 20%
+> 40%
+> 60%
+> 80%
+> 100%
+> 4B 12B 31B
+> 0%
+> 20%
+> 40%
+> 60%
+> 80%
+> 100% Figure 9. Safe Code Rate (%) as a function of model size for the Qwen3 (top row) and Gemma (bottom row) families across C++, Java, and Python. Each panel compares Baseline and SPARK. The shaded region marks the improvement gap. Models within each family are ordered by parameter count, with Qwen3.6-27B listed after Qwen3-32B by release date.
+
+to the unsafe centroid (68.7 and 60.4) substantially exceeds its distance to the safe centroid (51.5 and 45.6), confirming that the shift is not merely marginal but positions generated code deeper inside the safe region than the reference data itself. Python is consistently the most difficult language for SPARK across all 4 models. For CodeLlama-7B on Python, the safe code rate falls to 50.7% with a mean safe margin of only +0 .80 , while the standard deviation reaches 8.43, the largest among all 12 conditions. The KDE density peak at −8.30 indicates a bimodal margin distribution whose dominant mode lies in the unsafe half-space despite a pos-itive mean, and the overlap with the ground-truth unsafe distribution rises to 0.418. Llama-3-8B (0.585) and Qwen3-14B (0.592) show similarly limited improvement on Python. Only Gemma-3-12B achieves a materially positive result (safe code rate 77.5%, mean margin +6 .70 , overlap with ground-truth safe 0.843), suggesting that the base model’s Python generation distribution is more compatible with the SPARK safe-direction signal. These findings are consistent with the results in Table 4. 
+
+4.8. Model Architecture Scaling 
+
+To examine how SPARK interacts with model capac-ity, we evaluate the Qwen3 and Gemma families across 3 languages as the parameter count increases. Figure 9 plots Safe Code Rate as a function of model size for each family and language, with the baseline and SPARK curves shown separately. The shaded gap between them quantifies the benefit conferred by the harness at each scale point. Across both families, SPARK consistently exceeds the baseline at every size point tested. For the Qwen3 family, the absolute gain is largest at the 2 smallest models: Qwen3-8B and Qwen3-14B, each improves by approximately 41% on C ++ and by roughly 31% on Java and Python. As model capacity grows, the baseline rises substantially. Qwen3-32B reaches 66.9% on C ++ , and Qwen3.6-27B reaches 80.3%. SPARK continues to add a meaningful margin of 14.8% and 14.8% respectively on C ++ , and reaches above 95% on all 3 languages for Qwen3.6-27B. The pattern suggests that the CWE-guided prompt activates a growing reservoir of latent security knowledge as model capacity increases, rather than providing a fixed additive offset. The Gemma family exhibits a different scaling profile. Gemma-3-12B has a strong C ++ baseline of 81.0% but collapses to 40.1% on Java and 17.6% on Python, a spread of 63.4% within a single model. SPARK substantially reduces this cross-language variance: it raises the Java rate to 66.9% and the Python rate to 77.5%, narrowing the gap to 23.9%. Gemma-4-31B largely resolves the language imbalance at the baseline level, and SPARK further improves it. Across both families, the diminishing absolute gain at large scales does not indicate reduced effectiveness; rather, it reflects a ceiling effect as baselines approach the upper range already secured by SPARK at smaller sizes. 
+
+## 5. Conclusion 
+
+This paper argues that insecure code from modern LLMs is primarily an activation problem rather than a knowledge deficit. SPARK acts on this view as a training-free inference-time harness: Component I appends a structured CWE sum-mary to surface the model’s existing security representa-tions, and Component II adds a precomputed token safety bias derived from a small set of paired examples. Both com-ponents add negligible overhead per query. Across 6 open-source models and three popular coding languages, SPARK matches or exceeds the strongest fine-tuning, prompt, and retrieval baselines on every model-language pair while preserving HumanEval utility. Component I alone trans-fers to closed-source APIs from Anthropic, OpenAI, and DeepSeek, raising safe code rates by tens of percentage points in a fully black-box setting. Methods that retrieve external corpora or retrain the backbone accept a coverage ceiling bounded by their auxiliary resource. SPARK replaces it with the model’s own pretraining knowledge, the largest security resource available at inference time. 
+
+## References 
+
+[1] Anthropic. Claude Code: Next-generation ai coding agent. https://www.anthropic.com/, 2025. Accessed: 2026-05-18. [2] Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique Ponde de Oliveira Pinto, Jared Kaplan, Harri Edwards, Yuri Burda, Nicholas Joseph, Greg Brock-man, et al. Evaluating large language models trained on code. arXiv preprint arXiv:2107.03374 , 2021. [3] CyberNative. Code vulnerability security dpo: Adataset for secure programming and vulnerability de-tection. https://huggingface.co/datasets/CyberNative/ Code Vulnerability Security DPO, 2024. Accessed: 2026-04-19. [4] DeepSeek-AI. Deepseek-v4: Towards highly efficient million-token context intelligence. https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro/ blob/main/DeepSeek V4.pdf, 2026. [5] Xueying Du, Jiayi Feng, Yi Zou, Wei Xu, Jie Ma, Wei Zhang, Sisi Liu, Xin Peng, and Yiling Lou. Reducing false positives in static bug detection with llms: An empirical study in industry. arXiv preprint arXiv:2601.18844 , 2026. [6] Ehsan Firouzi and Mohammad Ghafari. Persistent human feedback, llms, and static analyzers for secure code generation and vulnerability detection. IEEE International Conference on Software Analysis, Evo-lution and Reengineering - Companion (SANER-C) ,2026. [7] Google DeepMind Gemma Team. Gemma 3 technical report. arXiv preprint arXiv:2503.19786 , 2025. [8] GitHub, Inc. CodeQL: A semantic code analysis engine, 2026. Accessed: 2026-05-19. [9] Google. Gemma 4: Byte for byte, the most capable open models. https://blog.google/innovation-and-ai/ technology/developers-tools/gemma-4/, 2026. Ac-cessed: 2026-05-22. [10] Aaron Grattafiori, Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten, Alex Vaughan, et al. The llama 3 herd of models. arXiv preprint arXiv:2407.21783 , 2024. [11] Jingxuan He and Martin Vechev. Large language models for code: Security hardening and adversarial testing. In ACM SIGSAC Conference on Computer and Communications Security (CCS) , 2023. [12] Jingxuan He, Mark Vero, Gabriela Krasnopolska, and Martin Vechev. Instruction tuning for secure code generation. In International Conference on Machine Learning (ICML) , 2024. [13] Edward J Hu, yelong shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, and Weizhu Chen. LoRA: Low-rank adaptation of large language models. In International Conference on Learning Representations (ICLR) , 2022. [14] Maksim Iavich, Tamari Kuchukhidze, and Audrius Lopata. Static analysis techniques for embedded, cyber-physical, and electronic software systems: Acomprehensive survey. Electronics , 2026. [15] Kobra Khanmohammadi, Pooria Roy, Raphael Khoury, Abdelwahab Hamou-Lhadj, and Wilfried Patrick Ko-nan. Wildcode: An empirical analysis of code gen-erated by chatgpt. In International Symposium on Foundations and Practice of Security (FPS) , 2025. [16] Rapha¨ el Khoury, Anderson R. Avila, Jacob Brunelle, and Baba Mamadou Camara. How secure is code gen-erated by chatgpt? In IEEE International Conference on Systems, Man, and Cybernetics (SMC) , 2023. [17] Dong Li, Meng Yan, Yaosheng Zhang, Zhongxin Liu, Chao Liu, Xiaohong Zhang, Ting Chen, and David Lo. Cosec: On-the-fly security hardening of code llms via supervised co-decoding. In ACM SIGSOFT Interna-tional Symposium on Software Testing and Analysis (ISSTA) , 2024. [18] Bo Lin, Shangwen Wang, Yihao Qin, Liqian Chen, and Xiaoguang Mao. Give llms a security course: Securing retrieval-augmented code generation via knowledge in-jection. In ACM SIGSAC Conference on Computer and Communications Security (CCS) , 2025. [19] Jiawei Liu, Chunqiu Steven Xia, Yuyao Wang, and Lingming Zhang. Is your code generated by chatGPT really correct? rigorous evaluation of large language models for code generation. In Advances in Neural Information Processing Systems (NeurIPS) , 2023. [20] Nelson F. Liu, Kevin Lin, John Hewitt, Ashwin Paran-jape, Michele Bevilacqua, Fabio Petroni, and Percy Liang. Lost in the middle: How language models use long contexts. Transactions of the Association for Computational Linguistics , 12:157–173, 2024. [21] MITRE Corporation. Common Weakness Enumeration (CWE). https://cwe.mitre.org, 2024. [22] Mahmoud Nazzal, Issa Khalil, Abdallah Khreishah, and NhatHai Phan. Promsec: Prompt optimization for secure generation of functional source code with large language models (llms). In ACM SIGSAC Conference on Computer and Communications Security (CCS) ,2024. [23] Theo X. Olausson, Jeevana Priya Inala, Chenglong Wang, Jianfeng Gao, and Armando Solar-Lezama. Is self-repair a silver bullet for code generation? In B. Kim, Y. Yue, S. Chaudhuri, K. Fragkiadaki, M. Khan, and Y. Sun, editors, International Conference on Learning Representations (ICLR) , 2024. [24] OpenAI. Introducing GPT-5.4. https://openai.com/ index/introducing-gpt-5-4/, 2026. Accessed: 2026-05-22. [25] OpenAI. Introducing GPT-5.4-mini and Nano. https://openai.com/index/ introducing-gpt-5-4-mini-and-nano/, 2026. Accessed: 2026-05-22. [26] OpenAI. Introducing GPT-5.5. https://openai.com/ index/introducing-gpt-5-5/, 2026. Accessed: 2026-05-22. [27] Hammond Pearce, Baleegh Ahmad, Benjamin Tan, Brendan Dolan-Gavitt, and Ramesh Karri. Asleep at the keyboard? Assessing the security of GitHub Copilot’s code contributions. In IEEE Symposium on Security and Privacy (S&P) , 2022. [28] Qwen Team. Qwen3.6-27B: Flagship-level coding in a 27b dense model, April 2026. [29] Baptiste Roziere, Jonas Gehring, Fabian Gloeckle, Sten Sootla, Itai Gat, Xiaoqing Ellen Tan, Yossi Adi, Jingyu Liu, Romain Sauvestre, Tal Remez, et al. Code Llama: Open foundation models for code. arXiv preprint arXiv:2308.12950 , 2023. [30] Jiahao Shi and Tianyi Zhang. RESCUE: Retrieving se-cure code examples for llm-based code generation. In 
+
+International Conference on Learning Representations (ICLR) , 2026. [31] Reece Shuttleworth, Jacob Andreas, Antonio Torralba, and Pratyusha Sharma. Lora vs full fine-tuning: An il-lusion of equivalence. Advances in Neural Information Processing Systems (NeurIPS) , 2026. [32] Maximilian Thang, Lichao Wu, Sasha Behrouzi, Mo-hamadreza Rostami, Jona te Lintelo, Stjepan Picek, and Ahmad-Reza Sadeghi. Goodvibe: Security-by-vibe for llm-based code generation. 35rd USENIX Security Symposium (USENIX Security 26) , 2026. [33] Catherine Tony, Markus Mutas, Nicol´ as E. D´ ıaz Fer-reyra, and Riccardo Scandariato. Llmseceval: A dataset of natural language prompts for security evaluations. In 
+
+IEEE/ACM International Conference on Mining Soft-ware Repositories (MSR) , 2023. [34] Jonas Wagner, Simon M¨ uller, Christian N¨ ather, Jan-Philipp Stegh¨ ofer, and Andreas Both. Towards ef-fective complementary security analysis using large language models. In IEEE International Conference on Intelligence and Security Informatics (ISI) , 2025. [35] Shengye Wan, Cyrus Nikolaidis, Daniel Song, David Molnar, James Crnkovich, Jayson Grace, Manish Bhatt, Sahana Chennabasappa, Spencer Whitman, Stephanie Ding, et al. Cyberseceval 3: Advanc-ing the evaluation of cybersecurity risks and capa-bilities in large language models. arXiv preprint arXiv:2408.01605 , 2024. [36] An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chen-gen Huang, Chenxu Lv, et al. Qwen3 technical report. 
+
+arXiv preprint arXiv:2505.09388 , 2025. [37] Chengran Yang, Zichao Wei, Heminghao Deng, Jin-feng Jiang, Zhensu Sun, Ting Zhang, Tianyi Wu, Ming Wen, and David Lo. Autoregressive, yet revisable: In decoding revision for secure code generation. Interna-tional Conference on Machine Learning (ICML) , 2026. 
+
+## Appendix A. Ethics Considerations 
+
+This work develops a defensive technique that reduces the rate at which language models generate insecure code. Its primary effect is to mitigate, rather than create, security risk. All experiments use publicly released datasets and models. The CyberNative Code Vulnerability Security DPO and HumanEval datasets and the open-source models are used under their respective licenses, and the commercial models are accessed through their official APIs in accor-dance with the providers’ terms of service. No private, proprietary, or personally identifiable data is used at any stage. Our evaluation involves generating and analyzing code that contains known classes of vulnerabilities (e.g., CWE-classified weaknesses). All such code is produced and ex-amined solely within an isolated research environment; it is never executed against, or deployed to, any real system, and we release no new exploit or previously unknown vulnera-bility. The illustrative examples in the paper correspond to well-documented weakness classes. 
+
+## Appendix B. Discussion: Limitations and Future Work 
+
+Limitations. This work has two primary limitations. First, our evaluation assumes benign, cooperative users. We have not tested SPARK against adversarial prompts designed to bypass the security harness. An adversary could ex-plicitly instruct the model to ignore the CWE activation cue (e.g., “disregard all security advice”) or to produce vulnerable code in disguised forms. Whether Component I and Component II remain effective under such adversarial inputs is unknown. Second, our experiments are confined to single-file, self-contained code generation tasks. Real-world deployments often involve larger, multi-file repositories or 
+
+agentic workflows where an LLM iteratively edits existing code, navigates across files, and maintains persistent state. In such settings, security vulnerabilities may span multiple functions or files, and SPARK’s per-query activation cue and per-step logit bias may not sufficiently propagate safety constraints across long, interleaved interactions. 
+
+Future Work. To address these gaps, we plan two main extensions. First, we will evaluate SPARK under adversar-ial prompts, including instruction overriding, role-playing, and context poisoning attacks, and develop countermeasures such as prompt sanitization or adversarial training of the bias vector. Second, we will adapt SPARK to repository-level and agentic scenarios by designing a persistent security context (e.g., cross-file CWE tracking) into agent loops with memory of prior unsafe patterns. 
+
+## Appendix C. Judge Reliability on Generated Code 
+
+Our security metric depends on the LLM judge classify-ing model-generated code, which differs in distribution from the training data. To verify the judge on this actual evalu-ation target, we manually annotate 142 SPARK-generated Python samples and compare the judge against two static analyzers (Table 7). This annotation is cross-validated with LLM models, including Gemini 3.5 Flash, GPT-5.3-mini, and Claude Opus 4.8. The judge attains 0.838 accuracy, far above CodeQL (0.430) and ICD (0.606), confirming that it remains the most reliable detector on generated code. As expected, this is lower than its 0.955 accuracy on the in-distribution dataset (Table 3), reflecting the harder out-of-distribution setting; the judge nonetheless preserves a large and consistent margin over static tools, supporting its use as the primary evaluator.                                     
+
+> TABLE 7. D ETECTION PERFORMANCE ON SPARK-GENERATED
+> PYTHON CODE (142 SAMPLES ,HUMAN -ANNOTATED )FOR STATIC ANALYSIS TOOLS VERSUS THE LLM JUDGE . T HIS VALIDATES THE JUDGE ON ACTUAL MODEL -GENERATED OUTPUTS RATHER THAN THE ORIGINAL DATASET .
+> Method Confusion Matrix Key Metrics TP FP TN FN Precision Recall Accuracy
+> Static Tools
+> CodeQL 20 41 41 40 0.328 0.333 0.430 ICD 41 37 45 19 0.526 0.683 0.606
+> LLM Judge
+> Qwen3-0.6b 47 10 72 13 0.825 0.783 0.838
+
+## Appendix D. Baseline Implementation Details 
+
+We group the 7 baselines in Table 4 into fine-tuning methods, which update or attach trainable parameters, and retrieval/decoding methods, which act only at inference time. Unless noted otherwise, fine-tuning uses the Cyber-Native DPO training split (Section 4) and generation uses up to 600 new tokens. Hyperparameters were selected based on prior studies or standard practice in the field. 
+
+LoRA [13] applies standard low-rank adaptation to the secure code of the DPO split, with adapters on q/k/v/o_proj and up/gate_proj (r=8 , α=4 ,dropout 0.05 ), trained for 2 epochs at learning rate 2×10 −4
+
+with 200 warmup steps, batch size 1, and maximum length 512. 
+
+SafeCoder [12] performs instruction tuning on Safe-Coder’s own corpus (vulnerability-fixing commits plus gen-eral instruction-following data) with a security-aware ob-jective: cross-entropy on the functional and corrected-code tokens and an uncertainty loss that penalizes high probability on insecure tokens. We implement it as LoRA on q_proj 
+
+and v_proj (r=8 , α=16 ), trained for 3 epochs at learning rate 5×10 −5, batch size 4, maximum length 1024, loss weight 0.5, with the insecure-token probability clamped at 
+
+0.9 for numerical stability. 
+
+GoodVibe [32] performs neuron-selective fine-tuning: safety-relevant neurons are identified by a logistic probe (z-score > 3 and positive weight), grouped with k-means clus-tering, and only the clustered neurons are updated through a                                                                  
+
+> TABLE 8. T IME COST OF SPARK, ALL IN SECONDS .Generation
+> COLUMNS GIVE THE WALL -CLOCK TIME FOR EVALUATION ON THE TEST SET UNDER COMPONENT IALONE VERSUS THE FULL SPARK HARNESS
+> (C OMPONENT I + II): ADDING THE DECODING -LEVEL COMPONENT II
+> LEAVES THE TIME ESSENTIALLY UNCHANGED ,SO THE PER -TOKEN LOGIT BIAS INCURS NO MEASURABLE OVERHEAD .Precompute IS THE ONE -TIME OFFLINE COST OF BUILDING THE COMPONENT II SAFE DIRECTION ON THE TRAINING SET ,WHICH IS REUSED FOR ALL INFERENCE .
+> Generation (s) Precompute (s) Model Lang. Comp. I SPARK (I+II)
+> CodeLlama-7B C++ 483 492 20.4 Python 470 457 20.6 Llama3-8B C++ 129 130 18.8 Python 297 301 18.8 Qwen3-8B C++ 124 121 20.9 Python 293 253 20.4 Qwen3-14B C++ 202 198 32.5 Python 365 359 31.3 Gemma3-4B C++ 205 205 48.8 Python 256 256 49.6 Gemma3-12B C++ 662 662 137.5 Python 1085 1086 140.1
+
+tied-parameter mask. We use the top-50 safety neurons per layer, 2 epochs, learning rate 1×10 −4, and batch size 1. 
+
+SVEN [11] learns a secure-code prefix prepended as virtual tokens at inference while the backbone stays frozen. The number of virtual tokens scales with model size (5 for 4B, 8 for 7–8B, and 12 for 12–14B models); trained for 5 epochs at learning rate 1×10 −2, batch size 4, and maximum length 1024. 
+
+RESCUE [30] uses hierarchical multi-faceted retrieval: the model first drafts a solution, a vulnerability-cause analy-sis is produced (up to 150 tokens), and CWE-level and code-level entries are retrieved from the RESCUE knowledge base via reciprocal-rank fusion (thresholds [4 .0, 0.75] at the CWE level and [4 .0, 0.75 , 0.65] at the code level, keeping the top-4 CWEs and top-1 code). The retrieved security guidelines and secure code example are appended to the prompt for a final regeneration. RESCUE provides no knowledge base for Java, which therefore falls back to zero-shot. 
+
+CodeGuarder [18] retrieves the top-3 root causes and their reference code from a large ReposVul-based vul-nerability knowledge base by embedding similarity, and prepends a structured block of security knowledge and reference examples to the prompt before generation. 
+
+CoSec [17] co-decodes with a smaller security expert model (CodeGen-350M with CoSec’s released weights). At each step the base token is accepted only if threshold <
+
+min(1 , P (tb | base )/P (te | expert )) , steering the base model toward the expert’s secure preferences; we use an acceptance threshold of 0.3 and decoding temperature 0.4.TABLE 9. C OMPARISON OF SPARK AND RANDOM PERFORMANCE ACROSS MODELS AND PROGRAMMING LANGUAGES .
+
+Model Lang Comp.I Random ∆
+
+CodeLlama-7b C++ 71.1 48.6 22.5 Java 97.2 51.4 45.8 Python 50.0 21.8 28.2 Meta-Llama-3-8B C++ 12.7 7.0 5.7 Java 69.7 56.3 13.4 Python 56.3 43.7 12.6 Qwen3-8B C++ 56.3 14.1 42.2 Java 80.3 66.9 13.4 Python 52.1 40.1 12.0 Qwen3-14B C++ 57.0 16.2 40.8 Java 83.8 72.5 11.3 Python 59.2 43.0 16.2 gemma-3-4b-it C++ 38.7 14.1 24.6 Java 67.6 50.0 17.6 Python 44.4 28.9 15.5 gemma-3-12b-it C++ 90.8 87.3 3.5 Java 66.9 52.1 14.8 Python 77.5 45.1 32.4 
+
+## Appendix E. Time Consumption 
+
+Table 8 reports the total generation wall-clock time over the 142-sample evaluation under each condition. Compo-nent II adds no measurable decoding overhead: because it applies only a fixed per-token bias to the logits, its runtime tracks the Baseline that uses the same prompt, and the full SPARK (Component I + II) tracks Component I almost ex-actly. The added cost of SPARK over the Baseline therefore comes entirely from Component I, whose CWE-augmented prompt lengthens the input and thus the prefill and decoding time. The safe direction used by Component II is computed once offline in a few seconds per model and does not affect inference. Overall, SPARK’s security gains are obtained at the cost of a longer prompt, with the decoding-level intervention essentially free. Pre-computing the direction bias costs only seconds for each case, and it is computed once, so we do not include it. 
+
+## Appendix F. SPARK with random CWE entries 
+
+Across all 18 model-language configurations, SPARK consistently outperforms Random selection. On average, SPARK achieves 63.4% performance, compared to 42.7% for Random, yielding an average improvement of 20.7% percentage points.

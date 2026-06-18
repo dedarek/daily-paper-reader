@@ -6,53 +6,47 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-17
-- 运行时间：2026-06-17 07:21:46 UTC
+- 最新运行日期：2026-06-18
+- 运行时间：2026-06-18 07:21:03 UTC
 - 运行状态：成功
-- 本次总论文数：11
-- 精读区：6
+- 本次总论文数：9
+- 精读区：4
 - 速读区：5
 
 ### 今日简报（AI）
-今日聚焦大语言模型安全对齐与防御攻击，精读高分论文提出细粒度中文安全护栏CHILLGuard和应对自适应提示注入的推理对齐防御。最值得关注的是中文场景下的安全护栏构建与防御提示注入的推理对齐方法。建议普通读者优先了解CHILLGuard的细粒度安全管控思路，以及如何通过推理对齐抵御复杂攻击。
-- 详情：[/202606/17/README](/202606/17/README)
+今日精读聚焦两大黑盒安全攻防突破：GAS-Leak-LLM遗传算法越狱与PARSE专业领域代理安全净化。最值得关注的两篇9分论文分别从黑盒大模型越狱（遗传算法后缀优化）和检索增强代理的安全消毒（来源追踪）给出新方法。建议优先理解大模型攻击面与防御的平衡，尤其关注专业场景下代理系统的数据安全性。
+- 详情：[/202606/18/README](/202606/18/README)
 
 ### 精读区论文标签
-1. [CHILLGuard: Towards Fine-Grained Chinese LLM Safety Guardrail with Scalable Data Construction and Model-aware Preference Alignment](/202606/17/2606.15396v1-chillguard-towards-fine-grained-chinese-llm-safety-guardrail-with-scalable-data-construction-and-model-aware-preference-alignment)  
+1. [GAS-Leak-LLM: Genetic Algorithm-Based Suffix Optimization for Black-Box LLM Jailbreaking](/202606/18/2606.15788v1-gas-leak-llm-genetic-algorithm-based-suffix-optimization-for-black-box-llm-jailbreaking)  
    标签：评分：9.0/10、query:llm-security
-   evidence：细粒度中文LLM安全护栏
-2. [Defending against Adaptive Prompt Injection Attacks via Reasoning-enabled Task Alignment](/202606/17/2606.15441v1-defending-against-adaptive-prompt-injection-attacks-via-reasoning-enabled-task-alignment)  
+   evidence：提出了基于遗传算法的后缀优化越狱攻击方法
+2. [PARSE: Provenance-Aware Retrieval Sanitization for Professional Domain LLM Agents](/202606/18/2606.17467v1-parse-provenance-aware-retrieval-sanitization-for-professional-domain-llm-agents)  
    标签：评分：9.0/10、query:llm-security
-   evidence：通过任务对齐防御自适应提示注入
-3. [Dynamic Malicious Skills in Agentic AI](/202606/17/2606.16287v1-dynamic-malicious-skills-in-agentic-ai)  
-   标签：评分：9.0/10、query:llm-security
-   evidence：针对智能体AI中的动态恶意技能提出系统级防御
-4. [The Proxy Knows Too Much: Sealing LLM API Routers with Attested TEEs](/202606/17/2606.16358v1-the-proxy-knows-too-much-sealing-llm-api-routers-with-attested-tees)  
-   标签：评分：9.0/10、query:llm-security
-   evidence：使用可信执行环境的安全LLM API路由器
-5. [Automated jailbreak attack targeting multiple defense strategies](/202606/17/2606.16751v1-automated-jailbreak-attack-targeting-multiple-defense-strategies)  
-   标签：评分：9.0/10、query:llm-security
-   evidence：自动化越狱攻击生成
-6. [Smarter Saboteurs, Better Fixers: Scaling & Security in Linear Multi-Agent Workflows](/202606/17/2606.12709v1-smarter-saboteurs-better-fixers-scaling--security-in-linear-multi-agent-workflows)  
+   evidence：基于来源感知的检索净化防御LLM智能体提示注入
+3. [SPARK: Security Knowledge Priming and Representation-Guided Knowledge Activation for LLM-based Secure Code Generation](/202606/18/2606.16244v1-spark-security-knowledge-priming-and-representation-guided-knowledge-activation-for-llm-based-secure-code-generation)  
    标签：评分：8.0/10、query:llm-security
-   evidence：研究多智能体LLM工作流中的提示注入和越狱攻击
+   evidence：LLM生成代码的推理时安全防护
+4. [Securing Multi-Agent GIS Systems: Risk Evaluation and Prompt Hardening Optimization](/202606/18/2606.17092v1-securing-multi-agent-gis-systems-risk-evaluation-and-prompt-hardening-optimization)  
+   标签：评分：8.0/10、query:llm-security
+   evidence：面向多智能体GIS系统的安全框架，含提示硬化优化
 
 ### 速读区论文标签
-1. [AutoDojo: Adaptive Attacks Expose Superficial Defenses and User-Underspecification Limits in LLM Agents](/202606/17/2606.15057v1-autodojo-adaptive-attacks-expose-superficial-defenses-and-user-underspecification-limits-in-llm-agents)  
-   标签：评分：8.0/10、query:llm-security
-   evidence：针对间接提示注入防御的自适应攻击
-2. [SHARD: Safe and Helpful Alignment via Self-Reframing Distillation](/202606/17/2606.15517v1-shard-safe-and-helpful-alignment-via-self-reframing-distillation)  
-   标签：评分：8.0/10、query:llm-security
-   evidence：通过自我重述蒸馏方法提升对敏感提示的安全有帮助响应
-3. [Adaptive and Explicit safe: Triggering Latent Safety Awareness in Large Reasoning Models](/202606/17/2606.16808v1-adaptive-and-explicit-safe-triggering-latent-safety-awareness-in-large-reasoning-models)  
-   标签：评分：8.0/10、query:llm-security
-   evidence：面向大型推理模型对抗越狱和有害查询的安全对齐
-4. [KVEraser: Learning to Steer KV Cache for Efficient Localized Context Erasing](/202606/17/2606.17034v1-kveraser-learning-to-steer-kv-cache-for-efficient-localized-context-erasing)  
+1. [MatchLM2Lite: A Scalable MLLM-to-Lite Framework for Reproduced Content Identification](/202606/18/2606.14786v1-matchlm2lite-a-scalable-mllm-to-lite-framework-for-reproduced-content-identification)  
    标签：评分：7.0/10、query:llm-security
-   evidence：KV缓存编辑实现局部擦除有害内容（包括提示注入）
-5. [From Refusal Geometry to Safety Geometry: Harmfulness--Refusal Coupling under Dynamic Adversarial Fine-Tuning](/202606/17/2606.16349v1-from-refusal-geometry-to-safety-geometry-harmfulness--refusal-coupling-under-dynamic-adversarial-fine-tuning)  
+   evidence：通过多模态大模型蒸馏进行复制内容识别以实现内容安全过滤
+2. [Dynamic Malicious Skills in Agentic AI](/202606/18/2606.16287v2-dynamic-malicious-skills-in-agentic-ai)  
+   标签：评分：7.0/10、query:llm-security
+   evidence：提出系统级防御防止智能体中动态恶意技能注入
+3. [High-Dimensional Random Projection for Activation Steering in Language Models](/202606/18/2606.15092v1-high-dimensional-random-projection-for-activation-steering-in-language-models)  
    标签：评分：6.0/10、query:llm-security
-   evidence：理解有害性-拒绝耦合以缓解对抗提示
+   evidence：激活引导方法用于LLM行为控制，可应用于对抗性提示缓解
+4. [Gaming-Resistant Insurance Contracts for Autonomous AI Agents: Strategy-Proof Toll Mechanism Design](/202606/18/2606.16326v1-gaming-resistant-insurance-contracts-for-autonomous-ai-agents-strategy-proof-toll-mechanism-design)  
+   标签：评分：6.0/10、query:llm-security
+   evidence：自主AI智能体的安全机制设计，防止博弈和攻击
+5. [From Refusal Geometry to Safety Geometry: Harmfulness--Refusal Coupling under Dynamic Adversarial Fine-Tuning](/202606/18/2606.16349v2-from-refusal-geometry-to-safety-geometry-harmfulness--refusal-coupling-under-dynamic-adversarial-fine-tuning)  
+   标签：评分：6.0/10、query:llm-security
+   evidence：安全几何协议用于拒绝分析
 
 
 <div class="dpr-home-promo-card">
