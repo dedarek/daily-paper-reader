@@ -6,47 +6,50 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-18
-- 运行时间：2026-06-18 07:21:03 UTC
+- 最新运行日期：2026-06-19
+- 运行时间：2026-06-19 06:55:36 UTC
 - 运行状态：成功
-- 本次总论文数：9
-- 精读区：4
+- 本次总论文数：10
+- 精读区：5
 - 速读区：5
 
 ### 今日简报（AI）
-今日精读聚焦两大黑盒安全攻防突破：GAS-Leak-LLM遗传算法越狱与PARSE专业领域代理安全净化。最值得关注的两篇9分论文分别从黑盒大模型越狱（遗传算法后缀优化）和检索增强代理的安全消毒（来源追踪）给出新方法。建议优先理解大模型攻击面与防御的平衡，尤其关注专业场景下代理系统的数据安全性。
-- 详情：[/202606/18/README](/202606/18/README)
+今日聚焦大模型安全防御，精读两篇9.0分论文分别针对域伪装注入与代码上下文间接注入。建议优先关注提示注入防御方向，速读中SpecAlign的对齐方法与并发异常检测也值得延伸。普通读者可重点对比防御方案在实际部署中的有效性差异。
+- 详情：[/202606/19/README](/202606/19/README)
 
 ### 精读区论文标签
-1. [GAS-Leak-LLM: Genetic Algorithm-Based Suffix Optimization for Black-Box LLM Jailbreaking](/202606/18/2606.15788v1-gas-leak-llm-genetic-algorithm-based-suffix-optimization-for-black-box-llm-jailbreaking)  
+1. [Evaluating Prompting-Based Defenses Against Domain-Camouflaged Injection Attacks](/202606/19/2606.18530v1-evaluating-prompting-based-defenses-against-domain-camouflaged-injection-attacks)  
    标签：评分：9.0/10、query:llm-security
-   evidence：提出了基于遗传算法的后缀优化越狱攻击方法
-2. [PARSE: Provenance-Aware Retrieval Sanitization for Professional Domain LLM Agents](/202606/18/2606.17467v1-parse-provenance-aware-retrieval-sanitization-for-professional-domain-llm-agents)  
+   evidence：评估基于提示的防御方法对抗注入攻击
+2. [CodeSentinel: A Three-Layer Defense Against Indirect Prompt Injection in Code Contexts](/202606/19/2606.19235v1-codesentinel-a-three-layer-defense-against-indirect-prompt-injection-in-code-contexts)  
    标签：评分：9.0/10、query:llm-security
-   evidence：基于来源感知的检索净化防御LLM智能体提示注入
-3. [SPARK: Security Knowledge Priming and Representation-Guided Knowledge Activation for LLM-based Secure Code Generation](/202606/18/2606.16244v1-spark-security-knowledge-priming-and-representation-guided-knowledge-activation-for-llm-based-secure-code-generation)  
+   evidence：CodeSentinel是一种针对代码LLM中间接提示注入的三层推理时防御方法
+3. [Risk-Aware LLM Agents for Geospatial Data Retrieval: Design and Preliminary Adversarial Evaluation](/202606/19/2606.15077v1-risk-aware-llm-agents-for-geospatial-data-retrieval-design-and-preliminary-adversarial-evaluation)  
    标签：评分：8.0/10、query:llm-security
-   evidence：LLM生成代码的推理时安全防护
-4. [Securing Multi-Agent GIS Systems: Risk Evaluation and Prompt Hardening Optimization](/202606/18/2606.17092v1-securing-multi-agent-gis-systems-risk-evaluation-and-prompt-hardening-optimization)  
+   evidence：包含Guardrail智能体用于安全和策略执行
+4. [Greedy Coordinate Diffusion: Effective and Semantically Coherent Adversarial Attacks via Diffusion Guidance](/202606/19/2606.15531v2-greedy-coordinate-diffusion-effective-and-semantically-coherent-adversarial-attacks-via-diffusion-guidance)  
    标签：评分：8.0/10、query:llm-security
-   evidence：面向多智能体GIS系统的安全框架，含提示硬化优化
+   evidence：提出了一种语义连贯的提示注入攻击新方法
+5. [Understanding and Mitigating Prompt Leaking Attacks in Real-World LLM-Based Applications](/202606/19/2606.18673v1-understanding-and-mitigating-prompt-leaking-attacks-in-real-world-llm-based-applications)  
+   标签：评分：8.0/10、query:llm-security
+   evidence：防御提示泄露攻击
 
 ### 速读区论文标签
-1. [MatchLM2Lite: A Scalable MLLM-to-Lite Framework for Reproduced Content Identification](/202606/18/2606.14786v1-matchlm2lite-a-scalable-mllm-to-lite-framework-for-reproduced-content-identification)  
+1. [SpecAlign: Efficient Specification-Grounded Alignment of Large Language Models via Synthetic Data](/202606/19/2606.16276v2-specalign-efficient-specification-grounded-alignment-of-large-language-models-via-synthetic-data)  
    标签：评分：7.0/10、query:llm-security
-   evidence：通过多模态大模型蒸馏进行复制内容识别以实现内容安全过滤
-2. [Dynamic Malicious Skills in Agentic AI](/202606/18/2606.16287v2-dynamic-malicious-skills-in-agentic-ai)  
+   evidence：规范对齐强制执行提供商特定的输出安全规范
+2. [Verified Detection and Prevention of Concurrency Anomalies in Multi-Agent Large Language Model Systems](/202606/19/2606.17182v1-verified-detection-and-prevention-of-concurrency-anomalies-in-multi-agent-large-language-model-systems)  
    标签：评分：7.0/10、query:llm-security
-   evidence：提出系统级防御防止智能体中动态恶意技能注入
-3. [High-Dimensional Random Projection for Activation Steering in Language Models](/202606/18/2606.15092v1-high-dimensional-random-projection-for-activation-steering-in-language-models)  
+   evidence：多智能体LLM系统中并发异常的验证与预防
+3. [Output Vector Editing for Memorization Mitigation in Large Language Models](/202606/19/2606.18767v1-output-vector-editing-for-memorization-mitigation-in-large-language-models)  
+   标签：评分：7.0/10、query:llm-security
+   evidence：输出向量编辑缓解记忆化，可作为对抗性提示缓解技术
+4. [Beyond Safe Data: Pretraining-Stage Alignment with Regular Safety Reflection](/202606/19/2606.19168v1-beyond-safe-data-pretraining-stage-alignment-with-regular-safety-reflection)  
+   标签：评分：7.0/10、query:llm-security
+   evidence：通过预训练对齐实现内容安全
+5. [How Much Can We Trust LLM Search Agents? Measuring Endorsement Vulnerability to Web Content Manipulation](/202606/19/2606.16821v1-how-much-can-we-trust-llm-search-agents-measuring-endorsement-vulnerability-to-web-content-manipulation)  
    标签：评分：6.0/10、query:llm-security
-   evidence：激活引导方法用于LLM行为控制，可应用于对抗性提示缓解
-4. [Gaming-Resistant Insurance Contracts for Autonomous AI Agents: Strategy-Proof Toll Mechanism Design](/202606/18/2606.16326v1-gaming-resistant-insurance-contracts-for-autonomous-ai-agents-strategy-proof-toll-mechanism-design)  
-   标签：评分：6.0/10、query:llm-security
-   evidence：自主AI智能体的安全机制设计，防止博弈和攻击
-5. [From Refusal Geometry to Safety Geometry: Harmfulness--Refusal Coupling under Dynamic Adversarial Fine-Tuning](/202606/18/2606.16349v2-from-refusal-geometry-to-safety-geometry-harmfulness--refusal-coupling-under-dynamic-adversarial-fine-tuning)  
-   标签：评分：6.0/10、query:llm-security
-   evidence：安全几何协议用于拒绝分析
+   evidence：针对LLM搜索代理的网页操纵安全评估框架
 
 
 <div class="dpr-home-promo-card">
