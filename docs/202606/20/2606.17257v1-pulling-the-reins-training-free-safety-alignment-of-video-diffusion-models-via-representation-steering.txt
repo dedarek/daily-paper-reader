@@ -1,0 +1,574 @@
+Title: Pulling The REINS: Training-Free Safety Alignment of Video Diffusion Models via Representation Steering
+
+URL Source: https://arxiv.org/pdf/2606.17257v1
+
+Published Time: Wed, 17 Jun 2026 00:15:01 GMT
+
+Number of Pages: 17
+
+Markdown Content:
+# Pulling The REINS : Training-Free Safety Alignment of Video Diffusion Models via Representation Steering 
+
+Rohit Kundu 1, Arindam Dutta 1, Sarosij Bose 1, Athula Balachandran 2, Amit K. Roy-Chowdhury 11University of California, Riverside, 2YouTube (Google) 
+
+o WARNING: The paper contains content that may be offensive and disturbing in nature. 
+
+## Abstract 
+
+Open-weight video diffusion models can generate photorealistic unsafe content, from violence to misinformation, yet existing defenses either require expensive safety fine-tuning that degrades general capability, or apply external filters that are trivially bypassed by adversarial prompts. We present REINS (RE presentation-space IN ference-time Safety steering), a training-free method that aligns video dif-fusion models at inference time by steering their internal representations toward safe generation. Our key finding is that safety-relevant structure is linearly encoded in the hidden-state activations of video diffusion transformers, and a single direction, discovered via Supervised PCA on binary safety labels, suffices to separate safe from unsafe generation trajectories. At inference, adding this direction to hidden states at an intermediate transformer layer redirects generation from harmful content to semantically related safe alternatives, with no weight updates, no concept enumer-ation, and negligible computational overhead. Through mechanistic analysis, we reveal that while safety information accumulates monotonically with transformer depth, steering effectiveness peaks at intermediate layers ( ∼50% depth), exposing a fundamental tradeoff between information availability and downstream propagation capacity. We evaluate REINS across 9 video diffusion models, multiple parameter scales (1.3B-5B), and both text-to-video and image-to-video generation, to our knowledge, the broadest safety evaluation suite in the video generation literature. 
+
+## 1 Introduction 
+
+The rapid proliferation of open-weight text-to-video (T2V) and image-to-video (I2V) diffusion models [ 3– 7] has made high-fidelity video synthesis widely accessible, enabling creative applications from filmmaking to education. However, this accessibility carries a significant risk, as these same models can generate photorealistic videos depicting violence, sexually explicit content, and targeted misinformation with minimal effort [ 1, 8, 2]. Unlike their proprietary counterparts [ 9– 11 ], most open-weight models lack built-in safety mechanisms, and the few that do [ 12 ] require extensive safety-specific fine-tuning, which in turn demands large-scale annotated datasets, significant computational resources, and risks degrading general-purpose generation quality. Existing algorithms for preventing unsafe video generation operate at two fundamentally limited extremes. Prompt-level filtering [13 , 14 ] blocks generation before it begins by classifying input prompts as safe or unsafe. While simple to deploy, these methods are trivially circumvented through prompt jailbreaking [ 15 , 16 ], indirect phrasing, and adversarial rewording. At the other extreme, 
+
+output-level filtering [17 , 18 ] screens generated videos post-hoc and discards unsafe ones, wasting the full computational cost of generation and still leaves the model exploitable. Importantly, an adversary can bypass the filtering processes by manual intervention or adversarial prompting. Crucially, neither approach engages with the generation process itself, the model’s internal representations continue to encode and propagate unsafe content through every transformer block and denoising step, regardless of whether the resulting video is ultimately shown or suppressed. This motivates a fundamentally different approach: rather than gating inputs or outputs, intervene within generation to steer the model’s computations toward safe outputs before they are ever decoded into pixels. 
+
+> Preprint.
+> arXiv:2606.17257v1 [cs.CV] 15 Jun 2026
+
+Figure 1: REINS aligns video diffusion models with safety constraints by steering their internal representations at inference time. (a) Safety-steered outputs: On unsafe baseline generations from CogVideoX and Wan2.1 (left of each pair), REINS redirects the model toward semantically related safe alternatives within its own manifold (right), with no weight updates, no concept enumeration, and no prompt-level filtering. Explicit content has been censored. (b) Activation vector fields: Hidden-state activations at the steered layer, projected onto the top two SPCA components and rendered as a vector field. Without steering (left), safe and unsafe generations are diffusely distributed across the representation; under REINS (right), the field reorganizes coherently toward the safe region, demonstrating that the discovered SPCA direction acts as a genuine attractor in hidden-state space. (c) Geometry of the intervention: (Notations defined in Sec. 2.2) Starting from a baseline activation 
+
+h(t) 
+
+> l∗
+
+in the unsafe region of the hidden-state manifold, REINS perturbs along the SPCA -discovered safety direction δ. The naïve sum in Eq. 13 overshoots and leaves the manifold, inducing visual artifacts. Per-channel norm preservation (Eq. 14) rescales it back to ˆh(t) 
+
+> l∗
+
+, which retains the directional shift toward the safe region while preserving the activation statistics that subsequent transformer blocks rely on. (d) Safety Performance: Comparing unsteered baselines to REINS across SafeSora [1] and SafeWatch [2]. In this paper, we show that such an intervention is remarkably effective: without modifying any model architecture or weights, and without relying on external filters , the video diffusion model (VDM) can be steered to generate safe outputs irrespective of input prompts. Our key observation is that the hidden-state activations at intermediate layers of VDMs encode a linearly separable representation of whether the video being generated is safe or unsafe, even in the early stages of the denoising process, well before the final output is decoded. This structure can be identified through a lightweight offline calibration using only a pretrained safety classifier and Supervised Principal Component Analysis ( SPCA ) [ 19 ], yielding a single direction in the activation space that maximally separates safe from unsafe generation trajectories. At inference time, a simple additive perturbation along this direction steers the model’s internal representations toward the safe subspace, redirecting generation from harmful content to semantically related but safe alternatives. Building on this insight, we propose REINS (RE presentation-space IN ference-time Safety steering), a training-free safety alignment method for VDMs. At inference, REINS adds a single precomputed direction (scaled by a model-adaptive strength) to the hidden states of an intermediate transformer layer during the first half of the denoising process, with per-channel norm preservation to prevent cross-channel coupling artifacts and consistent application across both classifier-free guidance branches. The steering direction is obtained from a lightweight offline procedure that uses only forward passes through the model with no backpropagation, no gradient computation, no weight updates, and no training data beyond a small set of prompts. As summarized in Fig. 1, REINS 
+
+directly manipulates internal hidden states to steer generation from harmful to safe content without requiring any weight updates. We situate REINS among existing analogous algorithms, summarizing key differences in Table 1, with a detailed discussion on related works available in appendix §A. Our contributions are as follows: • We introduce REINS , the first training-free, inference-time safety alignment method for video diffusion models. Unlike latent-space steering approaches [ 20 ], REINS operates on the semantically structured hidden-state representations of diffusion models, where safety-relevant features are linearly accessible, a property we verify does not hold in latent-space for video models. • We provide a mechanistic analysis of safety representations in VDMs, revealing that (a) safety-relevant information, as measured by HSIC, accumulates monotonically with transformer depth, yet (b) steering effectiveness peaks at intermediate layers ( ∼50% depth), exposing a fundamental 2Table 1: Comparison of safety mechanisms for generative models. REINS is the only method that is training-free, concept-agnostic, operates within the generation process, and supports video.                                         
+
+> Method Training-free Concept-agnostic Internal intervention Attack-robust Video
+> Prompt filtering [13] ✓✗✗✗✓
+> Output filtering [21] ✓✓✗✗✓
+> Concept unlearning [22, 23] ✗✗✓✗✗
+> SLD [24] ✓✗✓✗✗
+> Li et al. [25] ✓✗✓✓✗
+> PolyJuice [20] ✓✓✗—✗
+> REINS ✓✓✓✓✓
+
+tradeoff between information availability and downstream propagation capacity. This analysis yields a principled, data-driven layer selection procedure. • We demonstrate the generalizability of REINS across multiple model architectures (CogVideoX [3 ], Wan 2.1 [ 4], Allegro [ 7]), scales (1.3B-5B parameters), generation paradigms (T2V and I2V), and two independent safety classifiers (in-domain and OOD) on two distinct datasets. • We propose a cross-model steering calibration heuristic based on activation norms that allows practitioners to estimate the appropriate steering strength for a new model from its activation statistics, without exhaustive hyperparameter search. 
+
+## 2 Method 
+
+2.1 Preliminaries Latent video diffusion: Video diffusion models (VDMs) generate a video v ∈ RF ×H×W ×3
+
+conditioned on an input c, such as text, images, or other control signals. Modern VDMs operate in the latent space of a variational autoencoder [ 3 , 5]. An encoder E maps the video to a latent 
+
+x0 = E(v) ∈ RC×F ′×H′×W ′
+
+, where F ′ = ⌈F/τ ⌉ denotes the temporally compressed length and 
+
+H′ = H/s , W ′ = W/s denote the spatially compressed resolution. A decoder D maps the final latent back to pixel space. The forward diffusion process corrupts a clean latent x0 into Gaussian noise: 
+
+q(xt | x0) = N  xt;√¯αtx0,(1 − ¯αt)I, (1) where {¯αt}Tt=1 is a predefined noise schedule. A neural network ϵθ (xt,t,c ) is trained to predict the noise component by minimizing 
+
+L(θ) = Ex0,ϵ,t 
+
+h
+
+∥ϵ−ϵθ (xt,t,c )∥22
+
+i
+
+, (2) with ϵ ∼ N (0,I) and xt = √¯αtx0 +√1− ¯αtϵ. At inference, generation starts from Gaussian noise and proceeds by iterative denoising: 
+
+xt−1 = μθ (xt,t,c )+ σtz, z ∼ N (0,I), (3) where μθ is determined by the chosen sampler and depends on the model prediction. After denoising, the latent is decoded as v = D(x0).
+
+Transformer hidden states: Modern VDMs [ 3– 7 ] commonly instantiate ϵθ as a transformer architecture (DiTs) over spatio-temporal latent tokens. The latent xt is patch-embedded into 
+
+S = F ′ ˆH ˆW tokens of dimension D, where ˆH = H′/p and ˆW = W ′/p for spatial patch size p.These tokens are processed by L transformer blocks. We denote the hidden state at the output of block l ∈ { 0,...,L −1} and denoising timestep t as h(t) 
+
+> l
+
+∈ RS×D. The final block output is projected back to latent dimensions to produce the model prediction. In this work, we intervene on these intermediate hidden states h(t) 
+
+> l
+
+, which encode the model’s fused representation of the current noisy latent, timestep, and conditioning input before it is decoded to a corresponding video. 
+
+Classifier-free guidance: VDMs often use classifier-free guidance (CFG) [ 26 ] to improve adherence to the conditioning input. At each denoising step, the model is evaluated once with the condition 
+
+c and once with the null condition ∅, and the two predictions are combined as 
+
+˜ϵθ (xt,t,c ) = ϵθ (xt,t, ∅)+ w[ϵθ (xt,t,c )−ϵθ (xt,t, ∅)] , (4) where w ≥ 1 is the guidance scale. The guided prediction ˜ϵθ is then used in the reverse update. Since CFG requires both conditional and unconditional forward passes, any hidden-state intervention must be applied consistently to both branches. 
+
+Safety Classifier: We assume access to a safety classifier f : RF ×H×W ×3 → [0 ,1] that assigns a safety score to a generated video. Given a threshold γ, we define the binary label y = 1{f (v) > γ },
+
+3where y = 1 denotes a safe generation. The classifier is used only during a one-time calibration phase to label generated videos; it is not required during deployment. 
+
+2.2 Safety Steering in Representation Space 
+
+We align video diffusion models with safety constraints by intervening directly on their internal representations during sampling. Our method is based on the hypothesis that safety-relevant behavior is linearly accessible in the hidden states of a video diffusion transformer. In particular, we seek an intermediate layer whose activations separate safe and unsafe generations along a low-dimensional direction, analogous to representation-space steering observed for high-level concepts in language models [27–29]. We empirically validate this hypothesis for video diffusion models in Sec. 3.2. Let h(t) 
+
+> l
+
+∈ RS×D denote the hidden state at transformer layer l and denoising timestep t. We aim to identify an intervention layer l∗ and a unit-norm steering direction δ ∈ RD such that adding δ to the hidden representation biases generation toward safer outputs. The basic intervention takes the form 
+
+˜h(t) 
+
+> l∗
+
+= h(t) 
+
+> l∗
+
++λ·δ, (5) where λ > 0 controls the steering strength and the direction δ is broadcast across the spatio-temporal token dimension. Geometrically, this assumes that safe and unsafe generations induce separable activation patterns at some intermediate layer and that moving hidden states along the separating direction can influence the denoising trajectory. Although Eq. 5 has a simple additive form, applying it effectively requires determining three quantities: the intervention layer l∗, the steering direction δ and the steering strength λ. The next section describes how we use Supervised-PCA ( SPCA ) [ 19 ] based representation [ 19 ] probing to discover the optimal candidate safety directions and to select the optimal intervention layer. We then describe how the resulting intervention is applied during inference in Sec. 2.4. 
+
+2.3 SPCA -Based Discovery of Safety Directions and Intervention Layers 
+
+We next describe how REINS calibrates the steering direction and the intervention layer using a small held-out set. Calibration is performed once per model and is reused thereafter: for each transformer layer l ∈ { 0,...,L −1}, SPCA yields a candidate direction δl and a layer-wise spectrum whose eigenvalue mass measures linearly accessible safety structures. 
+
+Calibration set: We generate N videos {v(i)}Ni=1 from safety-critical conditioning inputs {c(i)}Ni=1 
+
+using the base VDM. Each generated video is assigned a binary safety label y(i) ∈ { 0,1} using the safety classifier defined in Sec. 2.1, where y(i) = 1 denotes a safe generation. During generation, we record the hidden-state activations h(i,k ) 
+
+> l
+
+∈ RS×D for each candidate layer l and denoising iteration k.We define the set of early denoising iterations used for probing and steering as Ksteer = {1,..., ⌊αT ⌋} ,
+
+with steering fraction α ∈ (0 ,1] .
+
+Temporal-spatial aggregation: For each layer l, video i, and denoising iteration k, we summarize the hidden state by averaging over its S spatio-temporal tokens (Eq. 6), and then average these token-pooled representations over the early denoising iterations (Eq. 7): 
+
+¯h(i,k ) 
+
+> l
+
+= 1
+
+S
+
+> S
+
+X
+
+> j=1
+
+h(i,k ) 
+
+> l,j
+
+∈ RD , (6)  r(i) 
+
+> l
+
+= 1
+
+|K steer |
+
+X
+
+> k∈K steer
+
+¯h(i,k ) 
+
+> l
+
+∈ RD . (7) where h(i,k ) 
+
+> l,j
+
+∈ RD denotes the hidden vector of token j. Each generated video is represented by a single vector r(i) 
+
+> l
+
+at layer l. We stack these vectors to form 
+
+Rl = (r(1)  
+
+> l
+
+)⊤;... ;( r(N ) 
+
+> l
+
+)⊤ ∈ RN ×D . (8) and construct the one-hot label matrix Y ∈ RN ×2 from the binary safety labels {y(i)}Ni=1 .
+
+SPCA objective: For a candidate layer l, we seek a direction u ∈ RD such that the projected representations Rlu are maximally dependent on the safety labels. We measure this dependence using HSIC [ 30 ] and adopt the supervised PCA ( SPCA ) formulation of [ 19 ]. Additional derivation details are provided in appendix §B. Let H = IN − 1 
+
+> N
+
+1N 1⊤ 
+
+> N
+
+denote the centering matrix and KY Y = YY ⊤ the label kernel. SPCA 
+
+reduces to the constrained eigenvalue problem to: 4max  
+
+> u
+
+u⊤Alu, s.t. ∥u∥2 = 1 , (9)  Al = R⊤ 
+
+> l
+
+HK Y Y HR l ∈ RD×D. (10) The top eigenvector of Al gives the direction of maximum label-dependent variance at layer l.
+
+Candidate safety direction: For each layer l, we define the candidate safety direction as the top eigenvector of the SPCA matrix: δl = eigvec 1(Al). We orient the direction so that safe generations have larger projection values than unsafe generations: 
+
+1
+
+|S| 
+
+X
+
+> i∈S
+
+D
+
+δl,r(i)
+
+> l
+
+E
+
+> 1
+
+|U| 
+
+X
+
+> i∈U
+
+D
+
+δl,r(i)
+
+> l
+
+E
+
+, (11) where S = {i : y(i) = 1 } and U = {i : y(i) = 0 }. If this inequality is not satisfied, we replace δl with −δl.
+
+Layer-wise safety structure: The eigenvalue spectrum of Al provides a diagnostic for how strongly safety-relevant information is linearly represented at layer l. We define the SPCA score 
+
+sl = Pkm=1 σ(m) 
+
+> l
+
+, where σ(m) 
+
+> l
+
+is the m-th largest eigenvalue of Al. Intuitively, sl measures the amount of label-dependent variance captured by the top-k supervised components at layer l.
+
+Selecting the intervention layer: The SPCA score identifies where safety information is linearly accessible, but information content alone does not determine whether an intervention will be effective. Very shallow layers may not yet encode safety-relevant semantics, whereas very deep layers may leave insufficient downstream computation for the perturbation to influence the denoising trajectory. We therefore use the SPCA spectrum as a representation-level diagnostic and select the final intervention layer using a small steering sweep over candidate layers. For each candidate layer l, we apply the corresponding direction δl during inference and measure both safety rate and generation quality. We select 
+
+l∗ = argmax  
+
+> l
+
+SafetyRate (l) s.t. |VQ( l)−VQ base | ≤ ϵ;|MQ( l)−MQ base | ≤ ϵ,  (12) where ϵ controls the allowable degradation in generation quality. Empirically, we observe that the 
+
+SPCA score tends to increase with depth, indicating that later layers encode stronger safety-relevant structure, while the best safety-quality tradeoff occurs at intermediate layers. This suggests a tradeoff between representation availability and downstream propagation capacity. After selecting l∗, the final steering direction is δ = δl∗ .
+
+Rank-1 sufficiency: Although the SPCA spectrum may contain multiple supervised components, we use only the top eigenvector for steering. Empirically, the leading component captures the dominant safe/unsafe separation (verified in Fig. 5), while adding higher components can introduce inter-category variation that weakens the intervention. This rank-1 choice also mirrors prior findings that certain high-level behaviors in large language models can be controlled by a single dominant representation direction [29]. 
+
+2.4 Inference-Time Safety Steering 
+
+Given the intervention layer l∗ and direction δ = δl∗ obtained from the calibration in Sec. 2.3, REINS 
+
+steers generation by perturbing the hidden states of the diffusion transformer at inference. Model weights, conditioning input, sampler, and decoder remain unchanged. 
+
+Hidden-state perturbation: At each early denoising iteration k ∈ K steer , we run the VDM normally up to block l∗ and add δ to every spatio-temporal token of the output hidden state: 
+
+˜h(k) 
+
+> l∗,j
+
+= h(k) 
+
+> l∗,j
+
++λ·δ, j = 1 ,...,S,  (13) where λ > 0 is the steering strength and δ ∈ RD is shared across all tokens. Steering is restricted to the early iterations because they shape global semantics and coarse motion, while later iterations primarily refine local appearance. The remaining iterations proceed unmodified. Transformer blocks beyond l∗ are evaluated normally to produce the noise prediction. 
+
+Per-channel norm preservation: A raw additive perturbation can shift the per-channel scale of the hidden state and produce artifacts such as oversaturation or color drift. We therefore rescale the perturbed activations so that each channel retains its original token-wise ℓ2 norm: 
+
+ˆh(k) 
+
+> l∗
+
+= ˜h(k) 
+
+> l∗
+
+⊙ ∥h(k) 
+
+> l∗
+
+∥tok 
+
+∥˜h(k) 
+
+> l∗
+
+∥tok +ϵ , (14) where ∥·∥ tok ∈ RD denotes the per-channel ℓ2 norm computed across the S tokens, ⊙ broadcasts the scaling vector across the token dimension. This preserves per-channel energy while allowing the relative activation pattern induced by δ to propagate to subsequent blocks. 5Table 2: Results across 9 VDMs, evaluated on SafeSora [ 1 ] and SafeWatch-Bench [ 2 ]. For each model, we report the baseline and REINS -steered safety rate (higher is better); absolute gain ( ∆). 
+
+REINS consistently improves safety on both benchmarks while remaining competitive on quality.                                                                                                     
+
+> SafeSora [1] SafeWatch-Bench [2]
+> Model Safety Rate ↑Quality (%) ↑Safety Rate ↑Quality (%) ↑
+> Base REINS (∆)VQ MQ Base REINS (∆)VQ MQ
+> Text-to-Video (T2V)
+> CogVideoX-2B [3] 0.56 0.92 (+0.36) 62.0 56.5 0.29 0.54 (+0.25) 76.0 75.5 CogVideoX-5B [3] 0.45 0.60 (+0.15) 54.0 52.0 0.30 0.39 (+0.09) 56.0 42.0 Wan2.1-1.3B [4] 0.52 0.72 (+0.20) 51.5 80.0 0.24 0.44 (+0.20) 46.5 79.0 Mochi-1 [5] 0.41 0.62 (+0.21) 49.0 52.5 0.44 0.50 (+0.06) 55.5 48.0 Allegro [7] 0.51 0.65 (+0.14) 25.5 38.5 0.32 0.43 (+0.11) 45.5 77.0 LTX-Video [6] 0.75 0.99 (+0.24) 62.5 67.0 0.46 0.74 (+0.28) 36.0 64.5
+> Image-to-Video (I2V)
+> CogVideoX-5B-I2V [3] 0.47 0.70 (+0.23) 20.0 25.0 0.08 0.30 (+0.22) 59.0 53.0 LTX-Video-I2V [6] 0.50 0.77 (+0.27) 12.0 50.0 0.06 0.58 (+0.52) 38.0 64.0 Wan2.2-TI2V-5B [4] 0.44 0.65 (+0.21) 13.0 21.0 0.03 0.18 (+0.15) 14.0 54.5
+> Mean across all models 0.51 0.74 (+0.22) 38.9 49.2 0.25 0.46 (+0.21) 47.4 61.9
+
+Application under CFG: When classifier-free guidance is enabled, the same perturbation is applied to both the conditional and unconditional branches before the CFG combination in Eq. 4. Steering only one branch introduces a mismatch between the two predictions and degrades visual quality. 
+
+Steering Strength Calibration: Different models require different steering magnitudes λ due to varying activation scales. We propose a simple calibration heuristic based on activation norm and the alignment between hidden states and the steering direction. For a model M, we compute the characteristic scale: 
+
+ρM = Et∈T steer 
+
+ ∥¯h(t)∥2
+
+cos( ¯h(t),δ)
+
+
+
+, (15) where the expectation is over denoising steps and calibration videos. Empirically, the optimal λ
+
+follows an approximate power law λ ∝ ρβ 
+
+> M
+
+with β ≈ 1.3, enabling practitioners to estimate a suitable 
+
+λ from activation statistics alone without exhaustive search (Fig. 4). 
+
+## 3 Experiments 
+
+We evaluate REINS across a diverse suite of nine video diffusion models, spanning three architectural families (CogVideoX, Wan, LTX/Mochi/Allegro), parameter scales from 1.3B to 5B, and two generation paradigms, i.e. , T2V (text-to-video) and I2V (image-to-video). To our knowledge, this constitutes the broadest safety evaluation suite in the video generation literature. Additional details are provided in the appendix §C. 
+
+Models: We evaluate six text-to-video (T2V) models: CogVideoX-2B, CogVideoX-5B [ 3], Wan2.1-1.3B [ 4], Mochi-1 [ 5], Allegro [ 7], and LTX-Video [ 6] and three image-to-video (I2V) models: CogVideoX-5B-I2V [ 3], LTX-Video-I2V [ 6 ], and Wan2.2-TI2V-5B [ 4]. This selection covers widely used open-source video generation models and spans the architectural diversity of the field. Data: We use the SafeSora [ 1 ] and SafeWatch-Bench [ 2] datasets, with evaluation prompts covering all safety categories defined by the respective benchmarks. For each model, identical prompts and random seeds are used for baseline and REINS -steered generation to enable paired comparison. Metrics: We report three metrics: (i) Safety Rate (↑), the fraction of generated videos classified as safe by the safety classifier; (ii) Visual Quality (VQ) [ 31 ] ( ↑); and (iii) Motion Quality (MQ) [ 31 ] ( ↑), where VQ and MQ are measured as win rates of REINS -steered generations against baseline generations under the VideoAlign reward model, with 50% indicating parity. We additionally report safety results using an OOD classifier (model trained on SafeWatch-Bench [2], used on SafeSora [1] and vice versa). 
+
+3.1 Results Safety Boost: Table 2 presents our main quantitative results. REINS improves safety on every one of the nine models across both benchmarks, with mean gains of +0.22 on SafeSora and +0.21 on SafeWatch-Bench. The improvement holds across three architectural families, scales from 1.3B to 5B parameters, and both T2V and I2V generation paradigms, without any per-model retraining. This breadth of generalization confirms that the safety direction discovered by SPCA captures a represen-6Figure 2: Qualitative results: For each prompt, we show baseline generation and REINS -steered generation using identical random seeds for paired comparison. REINS redirects harmful content toward safe content. Some explicit content has been censored. Table 3: Comparison against representative baselines. REINS substantially outperforms both noise-space steering (adapted from [ 20 ]) and prompt-level filtering [ 32 ]. Noise-space steering fails to alter generation (low λ) or collapses generation to single-color frames (high λ), illustrating that safety is not linearly accessible in the noise-space latent. Prompt filtering performs reasonably on standard prompts but collapses under adversarial prompts (MMA-Diffusion [ 33 ] attack), while REINS ,operating on internal representations, remains robust.                                                 
+
+> Setting Method Safety Rate ↑VQ ↑MQ ↑Attack-Robust
+> Direct evaluation (SafeSora prompts)
+> Standard prompts Baseline (no defense) 0.52 50.0 50.0 —Standard prompts Noise-space steering [20] 0.49 12.5 9.0 —Standard prompts LlamaPromptGuard-2 [32] 0.67 38.5 41.0 —Standard prompts REINS 0.72 (+0.20) 51.5 80.0 —
+> Adversarial evaluation (MMA-Diffusion [33] attack)
+> Adversarial prompts Baseline (no defense) 0.42 50.0 50.0 ✗
+> Adversarial prompts Noise-space steering [20] 0.50 15.6 11.5 —Adversarial prompts LlamaPromptGuard-2 [32] 0.61 35.0 37.5 ✗
+> Adversarial prompts REINS 0.79 (+0.37) 56.5 83.0 ✓
+
+tational structure shared across the video diffusion transformer family rather than a model-specific artifact. The improvement is most pronounced under conditions where unsafe generation is most preva-lent. On SafeWatch-Bench, where baselines produce safe content as little as 3% of the time (Wan2.2-TI2V-5B), REINS delivers gains of up to +0.52 (LTX-Video-I2V), demonstrating that representation-space steering remains effective precisely where prompt distributions are most adversarial. 
+
+Quality Preservation: Quality is preserved alongside these safety gains. Across both benchmarks, 
+
+REINS achieves win rates against the baseline that are at-or-above parity on motion quality for the majority of models (mean MQ of 49.2% on SafeSora, 61.9% on SafeWatch), with visual quality in a competitive band (mean VQ of 38.9% and 47.4% respectively). On SafeWatch-Bench in particular, where baselines frequently exhibit incoherent motion as a byproduct of executing adversarial prompts, steering toward the safe manifold incidentally improves motion quality. Fig. 2 illustrates this redirection across the major SafeSora [ 1 ] safety categories. Two properties are consistently visible: scene composition is preserved, and plausible safe narratives emerge from the model’s own priors rather than from the noise or solid-color collapse characteristic of naïve activation addition. This is the behavior the SPCA objective targets by construction, the discovered direction separates safe from unsafe trajectories within the representation space the model already uses. 
+
+Comparison with Baselines: We compare REINS against two representative baselines on Wan2.1-1.3B [ 4]: (i) noise-space steering, where the same SPCA formulation we use for δ is applied to the noise-space latent xt rather than to hidden states (PolyJuice [ 20 ]-style [details in appendix §D] and 7Figure 3: Effective steering range across transformer layers. We apply REINS at a fixed steering strength across candidate layers and measure safety rate and VQ/MQ win rates. The shaded effective steering range highlights the band of intermediate layers ( ∼50% depth) where safety improves substantially while VQ and MQ remain near baseline. The operating region predicted by the information-steerability tradeoff. Outside this band, two diagnostic failure modes emerge: early layers lack composed safety features, leaving steering ineffective; late layers produce a degenerate safety rate of 1.0 via generation collapse (in (a), MQ falls past layer 25). The same band is recovered under both classifiers, confirming the profile is a property of the model’s representation rather than the calibration classifier. (ii) LlamaPromptGuard-2 [ 32 ] [details in appendix §C.5] representing the dominant deployed defense. To probe robustness, we additionally evaluate the filtering baseline and REINS under adversarial prompts from MMA-Diffusion [ 33 ]. REINS is applied zero-shot : δ remains the direction calibrated on SafeSora [ 1] and is not refit to the attack distribution, testing whether safety is captured as a property of the representation space invariant to prompt surface form. Table 3 summarizes the results. Three ob-servations follow. First, the noise-space variant of our SPCA direction yields no measurable safety gain and collapses generation quality to single digits on VQ and MQ, confirming that safety is a semantic property of the transformer’s hidden states, not a statistical property of the noise-space latent. Second, prompt filtering improves safety on standard prompts (0.52 → 0.67) but its safety rate collapses under MMA-Diffusion [ 15 ], while REINS performance increases (0.72 → 0.79). The asymmetry is structural: filters reason about prompt surface form, which adversaries can perturb; REINS reasons about the hidden-state representation downstream of prompt encoding, which the attack does not control. Third, REINS is the only method that preserves quality (VQ ≥ 50 , MQ ≥ 80 ) in both regimes, whereas filtering depresses quality through blocked outputs, and noise-space steering destroys it. 
+
+3.2 Discussion 
+
+The results in Sec. 3.1 establish that REINS works. The analyses below establish why , by testing the structural assumptions the method depends on. Representation-space steering is only coherent if (a) safety is linearly accessible at a specific layer rather than diffusely distributed, (b) the steering strength required to act on this structure is predictable from the model rather than hyperparameter-tuned per setting, (c) the safety subspace is low-dimensional rather than requiring high-rank intervention, and (d) the resulting safety improvements arise from a genuine representational shift rather than generation collapse or classifier-specific artifacts. Each of the four analyses that follow targets one of these assumptions; together they ground REINS in a falsifiable account of how representation-space safety steering operates in VDMs. 
+
+Effective steering range across layers: Fig. 3 shows that effective steering occurs at intermediate layers: safety improves while quality is preserved, whereas early layers lack semantic safety features and late-layer steering collapses generation, a pattern consistent across in-domain and OOD classifiers. This highlights that the intervention site is as important as the direction itself. Noise-space steering acts before semantic fusion and fails in Sec. 3.1; prompt interventions are similarly indirect, output filtering is post-hoc, and weight-level erasure [ 22 , 23 ] requires parameter changes tied to predefined concepts. Hidden states provide the natural intervention point: conditioning has been integrated into a semantic representation, but the denoising prediction has not yet been fixed. 
+
+Steering strength calibration: Fig. 4 shows that the optimal steering strength varies by orders of magnitude across models ( λ=3 for Allegro, λ=410 for CogVideoX-5B-I2V). However, λ follows a predictable power-law relationship with the ratio ρ = ∥h∥/cos( h,δ ), where h is the hidden-state norm and δ is the safety direction. This allows fast calibration on new models using a single sample rather than a full hyperparameter sweep. 
+
+Safety direction rank: Fig. 5 ablates the rank of the steering subspace. A rank-1 direction, a single vector, captures approximately 68% of the safety-relevant variance and saturates safety rate at ∼0.98 with sufficient λ. Higher ranks marginally improve safety but at a steeper VQ/MQ cost. This is the 8Figure 4: Lambda calibration across models. 
+
+The optimal steering strength λ correlates with the ratio of hidden-state norm to the cosine alignment between hidden states and the safety direction, following an ∼ power law λ ∝ ρ1.3,enabling fast calibration on new models. 
+
+Figure 5: Rank ablation: A single direction (rank-1) captures ∼68% of the safety-relevant variance and achieves saturation-level safety rates at suffi-cient λ. Higher ranks do not improve metrics like safety rate, VQ or MQ significantly, confirming that safety is low-dimensional in hidden-state space. 
+
+Figure 6: Representation shift under steering, validated by an OOD classifier. We project hidden states onto the top two SPCA components and connect each unsafe baseline generation (open red) to its steered counterpart (filled green/red) under the same prompt and seed. Labels come from an in-domain classifier (left) and an OOD classifier (right) unused during direction discovery. Steering consistently moves unsafe generations across the safe/unsafe boundary, and the same pattern under the OOD classifier ruling out the possibility that our results reflect an artifact of the calibration classifier rather than a genuine representational shift. video-domain analogue of the one-dimensional refusal finding in LLMs [ 29 ] and confirms that safety, at the representation level, is a low-dimensional property of video diffusion transformers. 
+
+Steering shift analysis: Fig. 6 visualizes the effect of steering directly on the hidden-state repre-sentations. The projection of hidden states onto the safety direction shifts cleanly from a bimodal unsafe/safe distribution at baseline to a unimodal safe distribution under steering. This demonstrates that our intervention acts on the representation in the predicted direction, and critically, that this repre-sentational shift faithfully translates into the classifier-visible safety property of the generated video. 
+
+## 4 Conclusion 
+
+We introduced REINS , a training-free method for aligning video diffusion models with safety con-straints by steering internal representations at inference time. We find that safety is linearly encoded in VDM hidden states: a single SPCA direction from binary safety labels redirects harmful gener-ations toward semantically related safe alternatives, without weight updates, concept enumeration, or meaningful overhead. Across 9 open-weight VDMs spanning three architectural families, two scales, and both T2V and I2V settings, REINS consistently improves safety on two benchmarks while preserving quality and remaining robust to adversarial prompts where prompt-level filtering fails. 
+
+Limitations and future directions: REINS relies on a linear dependence between hidden-state activa-tions and safety labels via SPCA ; cases where safety is nonlinearly encoded would require a nonlinear kernel formulation, along with the added complexity of solving a pre-video problem to map the nonlin-ear embedding back to the activation space. Extending REINS to other forms of behavioral alignment beyond binary safety, such as fairness, factuality, or stylistic constraints, is a promising direction. 
+
+Ethical considerations: While REINS is designed to make VDMs safer, the same representation-space framework could, in principle, be inverted to suppress safe content or amplify unsafe content given an adversarial calibration set. REINS is intended solely for responsible safety alignment of open-weight video diffusion models, and we strongly oppose its use for malicious purposes. We do not release calibration sets containing unsafe generations, and we discuss defense mechanisms against potential misuse in the appendix §E. 9References 
+
+[1] Juntao Dai, Tianle Chen, Xuyao Wang, Ziran Yang, Taiye Chen, Jiaming Ji, and Yaodong Yang. Safesora: Towards safety alignment of text2video generation via a human preference dataset. Advances in Neural Information Processing Systems , 37:17161–17214, 2024. [2] Zhaorun Chen, Francesco Pinto, Minzhou Pan, and Bo Li. Safewatch: An efficient safety-policy following video guardrail model with transparent explanations. In 13th International Conference on Learning Represen-tations, ICLR 2025 , pages 95666–95708. International Conference on Learning Representations, ICLR, 2025. [3] Zhuoyi Yang, Jiayan Teng, Wendi Zheng, Ming Ding, Shiyu Huang, Jiazheng Xu, Yuanming Yang, Wenyi Hong, Xiaohan Zhang, Guanyu Feng, et al. Cogvideox: Text-to-video diffusion models with an expert transformer. arXiv preprint arXiv:2408.06072 , 2024. [4] Team Wan, Ang Wang, Baole Ai, Bin Wen, Chaojie Mao, Chen-Wei Xie, Di Chen, Feiwu Yu, Haiming Zhao, Jianxiao Yang, et al. Wan: Open and advanced large-scale video generative models. arXiv preprint arXiv:2503.20314 , 2025. [5] Genmo Team. Mochi 1. https://github.com/genmoai/models , 2024. [6] Yoav HaCohen, Nisan Chiprut, Benny Brazowski, Daniel Shalem, Dudu Moshe, Eitan Richardson, Eran Levin, Guy Shiran, Nir Zabari, Ori Gordon, et al. Ltx-video: Realtime video latent diffusion. arXiv preprint arXiv:2501.00103 , 2024. [7] Yuan Zhou, Qiuyue Wang, Yuxuan Cai, and Huan Yang. Allegro: Open the black box of commercial-level video generation model. arXiv preprint arXiv:2410.15458 , 2024. [8] Junjie Cao, Kaizhou Li, Xinchun Yu, Hongxiang Li, and Xiaoping Zhang. Videoguard: Protecting video content from unauthorized editing. arXiv preprint arXiv:2508.03480 , 2025. [9] OpenAI. Sora by openai. https://openai.com/sora/ , 2024. [10] Runway Research. Text driven video generation. https://research.runwayml.com/gen2 , 2023. [11] Kling Team, Jialu Chen, Yuanzheng Ci, Xiangyu Du, Zipeng Feng, Kun Gai, Sainan Guo, Feng Han, Jingbin He, Kang He, et al. Kling-omni technical report. arXiv preprint arXiv:2512.16776 , 2025. [12] Bing Wu, Chang Zou, Changlin Li, Duojun Huang, Fang Yang, Hao Tan, Jack Peng, Jianbing Wu, Jiangfeng Xiong, Jie Jiang, et al. Hunyuanvideo 1.5 technical report. arXiv preprint arXiv:2511.18870 , 2025. [13] Hakan Inan, Kartikeya Upasani, Jianfeng Chi, Rashi Rungta, Krithika Iyer, Yuning Mao, Michael Tontchev, Qing Hu, Brian Fuller, Davide Testuggine, et al. Llama guard: Llm-based input-output safeguard for human-ai conversations. arXiv preprint arXiv:2312.06674 , 2023. [14] Hongxiang Zhang, Yifeng He, and Hao Chen. Steerdiff: Steering towards safe text-to-image diffusion models. arXiv preprint arXiv:2410.02710 , 2024. [15] Yijun Yang, Ruiyuan Gao, Xiaosen Wang, Tsung-Yi Ho, Nan Xu, and Qiang Xu. Mma-diffusion: Multimodal attack on diffusion models. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 7737–7746, 2024. [16] Fabio Pasqualetti, Florian Dörfler, and Francesco Bullo. A divide-and-conquer approach to distributed attack identification. In 2015 54th IEEE Conference on Decision and Control (CDC) , pages 5801–5807. IEEE, 2015. [17] Javier Rando, Daniel Paleka, David Lindner, Lennart Heim, and Florian Tramèr. Red-teaming the stable diffusion safety filter. arXiv preprint arXiv:2210.04610 , 2022. [18] Xinfeng Li, Yuchen Yang, Jiangyi Deng, Chen Yan, Yanjiao Chen, Xiaoyu Ji, and Wenyuan Xu. Safegen: Mitigating sexually explicit content generation in text-to-image models. In Proceedings of the 2024 on ACM SIGSAC Conference on Computer and Communications Security , pages 4807–4821, 2024. [19] Elnaz Barshan, Ali Ghodsi, Zohreh Azimifar, and Mansoor Zolghadri Jahromi. Supervised principal component analysis: Visualization, classification and regression on subspaces and submanifolds. Pattern Recognition , 44(7):1357–1371, 2011. [20] Sepehr Dehdashtian, Mashrur M Morshed, Jacob H Seidman, Gaurav Bharaj, and Vishnu Boddeti. Polyjuice makes it real: Black-box, universal red teaming for synthetic image detectors. Advances in Neural Information Processing Systems , 2025. [21] CompVis/HuggingFace. Stable diffusion safety checker. https://huggingface.co/CompVis/ stable-diffusion-safety-checker , 2022. 
+
+10 [22] Rohit Gandikota, Joanna Materzynska, Jaden Fiotto-Kaufman, and David Bau. Erasing concepts from diffusion models. In Proceedings of the IEEE/CVF international conference on computer vision , pages 2426–2436, 2023. [23] Rohit Gandikota, Hadas Orgad, Yonatan Belinkov, Joanna Materzy´ nska, and David Bau. Unified concept editing in diffusion models. In Proceedings of the IEEE/CVF winter conference on applications of computer vision , pages 5111–5120, 2024. [24] Patrick Schramowski, Manuel Brack, Björn Deiseroth, and Kristian Kersting. Safe latent diffusion: Mitigating inappropriate degeneration in diffusion models. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 22522–22531, 2023. [25] Hang Li, Chengzhi Shen, Philip Torr, Volker Tresp, and Jindong Gu. Self-discovering interpretable diffusion latent directions for responsible text-to-image generation. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 12006–12016, 2024. [26] Jonathan Ho and Tim Salimans. Classifier-free diffusion guidance. arXiv preprint arXiv:2207.12598 , 2022. [27] Andy Zou, Long Phan, Sarah Chen, James Campbell, Phillip Guo, Richard Ren, Alexander Pan, Xuwang Yin, Mantas Mazeika, Ann-Kathrin Dombrowski, et al. Representation engineering: A top-down approach to ai transparency. arXiv preprint arXiv:2310.01405 , 2023. [28] Alexander Matt Turner, Lisa Thiergart, Gavin Leech, David Udell, Juan J Vazquez, Ulisse Mini, and Monte MacDiarmid. Steering language models with activation engineering. arXiv preprint arXiv:2308.10248 , 2023. [29] Andy Arditi, Oscar Obeso, Aaquib Syed, Daniel Paleka, Nina Panickssery, Wes Gurnee, and Neel Nanda. Refusal in language models is mediated by a single direction. Advances in Neural Information Processing Systems , 37:136037–136083, 2024. [30] Arthur Gretton, Olivier Bousquet, Alex Smola, and Bernhard Schölkopf. Measuring statistical dependence with hilbert-schmidt norms. In International conference on algorithmic learning theory , pages 63–77. Springer, 2005. [31] Jie Liu, Gongye Liu, Jiajun Liang, Ziyang Yuan, Xiaokun Liu, Mingwu Zheng, Xiele Wu, Qiulin Wang, Menghan Xia, Xintao Wang, et al. Improving video generation with human feedback. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025. [32] Sahana Chennabasappa, Cyrus Nikolaidis, Daniel Song, David Molnar, Stephanie Ding, Shengye Wan, Spencer Whitman, Lauren Deason, Nicholas Doucette, Abraham Montilla, et al. Llamafirewall: An open source guardrail system for building secure ai agents. arXiv preprint arXiv:2505.03574 , 2025. [33] Yijun Yang, Ruiyuan Gao, Xiaosen Wang, Tsung-Yi Ho, Nan Xu, and Qiang Xu. MMA-Diffusion: MultiModal Attack on Diffusion Models. In Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition (CVPR) , 2024. [34] Runtao Liu, Ashkan Khakzar, Jindong Gu, Qifeng Chen, Philip Torr, and Fabio Pizzati. Latent guard: a safety framework for text-to-image generation. In European Conference on Computer Vision , pages 93–109. Springer, 2024. [35] Yuchen Yang, Bo Hui, Haolin Yuan, Neil Gong, and Yinzhi Cao. Sneakyprompt: Jailbreaking text-to-image generative models. In 2024 IEEE symposium on security and privacy (SP) , pages 897–912. IEEE, 2024. [36] Yibo Miao, Yifan Zhu, Lijia Yu, Jun Zhu, Xiao-Shan Gao, and Yinpeng Dong. T2vsafetybench: Evaluating the safety of text-to-video generative models. Advances in Neural Information Processing Systems , 37: 63858–63872, 2024. [37] Gong Zhang, Kai Wang, Xingqian Xu, Zhangyang Wang, and Humphrey Shi. Forget-me-not: Learning to forget in text-to-image diffusion models. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 1755–1764, 2024. [38] Chao Gong, Kai Chen, Zhipeng Wei, Jingjing Chen, and Yu-Gang Jiang. Reliable and efficient concept erasure of text-to-image diffusion models. In European Conference on Computer Vision , pages 73–88. Springer, 2024. [39] Chongyu Fan, Jiancheng Liu, Yihua Zhang, Eric Wong, Dennis Wei, and Sijia Liu. Salun: Empowering machine unlearning via gradient-based weight saliency in both image classification and generation. arXiv preprint arXiv:2310.12508 , 2023. [40] Naveen George, Karthik Nandan Dasaraju, Rutheesh Reddy Chittepu, and Konda Reddy Mopuri. The illusion of unlearning: The unstable nature of machine unlearning in text-to-image diffusion models. In 
+
+Proceedings of the Computer Vision and Pattern Recognition Conference , pages 13393–13402, 2025. 
+
+11 [41] Yimeng Zhang, Jinghan Jia, Xin Chen, Aochuan Chen, Yihua Zhang, Jiancheng Liu, Ke Ding, and Sijia Liu. To generate or not? safety-driven unlearned diffusion models are still easy to generate unsafe images... for now. In European Conference on Computer Vision , pages 385–403. Springer, 2024. [42] Roger A Horn and Charles R Johnson. Matrix analysis . Cambridge university press, 2012. [43] Xiaohua Zhai, Basil Mustafa, Alexander Kolesnikov, and Lucas Beyer. Sigmoid loss for language image pre-training. In Proceedings of the IEEE/CVF international conference on computer vision , pages 11975–11986, 2023. 
+
+12 Appendix A Related Work 
+
+Prompt and output filtering: The most common defenses operate outside the generative model. Prompt-level classifiers [ 13 , 34 ] block unsafe inputs before generation, while output-level check-ers [ 21 ] suppress unsafe samples after they are produced. These methods are simple and modular, but they do not alter the model’s internal generation trajectory. As a result, they are vulnerable to adversarial prompting: SneakyPrompt [ 35 ] bypasses text and image safety filters through RL-guided token perturbations, and MMA-Diffusion [ 15 ] extends such attacks to multimodal systems. For video, T2VSafetyBench [ 36 ] shows that temporally composing individually benign prompts can still yield unsafe videos, highlighting a modality-specific weakness of prompt-only defenses. 
+
+Concept unlearning: Another line of work modifies model weights to remove targeted unsafe concepts [ 22 , 23 , 37 –39 ]. ESD [ 22 ] fine-tunes cross-attention layers to suppress specified concepts, while UCE [ 23 ] supports simultaneous editing of multiple concepts. Although these methods intervene more directly than filtering, they remain limited in three ways: they require enumerating the concepts to erase, unlearned concepts can be recovered through lightweight fine-tuning [ 40 , 41 ], and existing methods are designed primarily for image diffusion UNets. Extending concept erasure to video diffusion transformers while preserving temporal coherence remains largely unexplored. 
+
+Inference-time safety alignment: Training-free inference-time methods improve safety during generation without modifying weights. Safe Latent Diffusion (SLD) [ 24 ] applies negative classifier-free guidance toward textual safety concepts such as “nudity” or “violence,” but remains limited by text specifications and the conditioning pathway that adversarial prompts can exploit. Li et al. [ 25 ] discover interpretable UNet bottleneck directions via self-supervised reconstruction but require per-concept gradient optimization. PolyJuice [ 20 ] uses Supervised PCA, the core formulation we adopt, to find directions in the noise-space latent of text-to-image diffusion models for detector evasion. In contrast, we show that noise-space steering is insufficient for high-level video safety alignment and instead intervene in transformer hidden states. Video diffusion adds temporal challenges as representations evolve across denoising steps, steering must remain frame-coherent, and naive perturbations can introduce artifacts. To our knowledge, REINS is the first training-free safety alignment method for video diffusion models. 
+
+## B Derivation of the SPCA Objective 
+
+In Sec. 2.3 of the main paper, we stated the SPCA objective as a constrained eigenvalue problem (Eqs. 9-10). For completeness, we provide the derivation from the underlying HSIC criterion and document the practical computational shortcut used to compute the steering direction efficiently for high-dimensional hidden states. 
+
+HSIC criterion and the linear projection. We seek a direction u ∈ RD such that the projected representations Rlu ∈ RN are maximally dependent on the safety labels Y ∈ RN ×2. We measure dependence via the empirical Hilbert-Schmidt Independence Criterion (HSIC) [30]: 
+
+HSIC( Rlu,Y) = 1(N −1) 2 tr( KRluHK Y Y H), (A1) where KRlu ∈ RN ×N is the linear-kernel matrix of the projected representations and KY Y = YY ⊤ is the label kernel. Because the projection is one-dimensional, the linear kernel takes the rank-one form 
+
+KRlu = ( Rlu)( Rlu)⊤. (A2) 
+
+Reduction to a quadratic form. Substituting and applying the cyclic property of the trace yields 
+
+HSIC( Rlu,Y) ∝ tr  (Rlu)( Rlu)⊤HK Y Y H = u⊤R⊤ 
+
+> l
+
+HK Y Y HR lu = u⊤Alu, (A3) recovering Eqs. 9-10 of the main paper, with Al = R⊤ 
+
+> l
+
+HK Y Y HR l ∈ RD×D.
+
+Maximization as a Rayleigh quotient. Maximizing u⊤Alu under the unit-norm constraint 
+
+∥u∥2 = 1 is a standard Rayleigh quotient problem. The optimum is attained at the top eigenvector of Al, with optimal value equal to the largest eigenvalue [42]: 
+
+δl = arg max 
+
+> ∥u∥2=1
+
+u⊤Alu = eigvec 1(Al). (A4) 13 Efficient computation via cross-covariance SVD. For high-dimensional hidden states ( D ≫ N ,with D ranging from ∼1920 to ∼4096 and N = 500 in our setting), direct eigendecomposition of the D × D matrix Al is computationally wasteful. Because KY Y has rank at most 2 for binary safety labels, Al has rank at most 2, and only its top two eigenvalues are non-zero. Defining the cross-covariance 
+
+Cl = R⊤ 
+
+> l
+
+HY ∈ RD×2, (A5) and using the symmetry ( H⊤ = H) and idempotence ( HH = H) of the centering matrix, we have 
+
+ClC⊤ 
+
+> l
+
+= R⊤ 
+
+> l
+
+HYY ⊤HR l = R⊤ 
+
+> l
+
+HK Y Y HR l = Al. (A6) Hence the top eigenvectors of Al coincide with the left singular vectors of Cl, and the corresponding eigenvalues are the squared singular values. In practice, we compute δl via SVD of the D×2 matrix 
+
+Cl, reducing computational cost from O(D3) to O(N D ).
+
+## C Implementation Details 
+
+C.1 Resource Details 
+
+All video-generation experiments are run on a single NVIDIA RTX 6000 Ada (48 GB) GPU, but multi-GPU support has been utilized purely to reduce wall-clock time, and is not required for any results in the paper. The end-to-end REINS pipeline (calibration latent collection, classifier scoring, SPCA 
+
+direction computation, and steered evaluation) for a 1.3B parameter T2V model completes in under 24 GPU-hours on this hardware. All non-generation components, SPCA computation, VideoAlign [ 31 ]scoring, and safety-classifier training, fit within the memory budget of an NVIDIA GeForce RTX 3090 (24 GB) and were in fact developed and run on a single 3090. Software: PyTorch 2.4 with the Diffusers, Transformers, and PEFT libraries; mixed-precision is used for training the safety classifier. 
+
+C.2 Safety Classifier Training Architecture: The safety classifier is a temporal Transformer encoder applied on top of a frozen vision backbone. For each video, T =8 uniformly sampled frames are encoded into a sequence of patch-level features with a frozen pretrained backbone (SigLIP [ 43 ]), d=768 ). Sinusoidal positional embeddings are added along the temporal axis, and the resulting (T,d ) sequence is passed through a 4-layer multi-head self-attention encoder ( 8 heads, GELU, dropout 0.1). Tokens are mean-pooled across time and projected by a linear head to per-category logits passed through a sigmoid for multi-label prediction. Heads are sized to the dataset: 13 classes for SafeSora [ 1] (safe + 12 unsafe categories) and 7 for SafeWatch-Bench [2] (safe + 6 unsafe categories). 
+
+Optimization: The encoder and classification head are trained with AdamW ( β1=0 .9,β 2=0 .999 ), per-GPU learning rate 1×10 −5 (linearly scaled by world size under DDP), weight decay 1×10 −2,and gradient clipping at ∥g∥2 ≤ 1. The schedule is a 1-epoch linear warmup followed by cosine decay over 10 total epochs. Per-device batch size is 16 videos ( ⇒ 128 frames per step at T =8 ). The loss is binary cross-entropy with logits over the multi-label target. Training is conducted in autocast mixed precision; the backbone is held in eval mode and never updated. The seed is 42 . Checkpoints are selected by best accuracy on the held-out test split. 
+
+Data: For SafeSora [ 1 ], we use the official 13-label annotations and the train/test split released with the dataset. For SafeWatch-Bench [ 2 ], we collapse the per-clip C1-C6 multi-hot annotations into the same multi-label format (plus a derived “safe” indicator). 
+
+C.3 REINS Calibration and Steering Calibration: For each backbone we record the post-block residual hidden states {Zt ∈
+
+RN ×τ ×dh }T −1 
+
+> t=0
+
+at the chosen steering layer over N =500 calibration prompts (drawn from SafeSora “safety-critical” or SafeWatch-Bench “unsafe” depending on the experiment). We additionally record the safety classifier’s per-video prediction y ∈ [0 ,1] C , where C=13 (SafeSora) or 7 (SafeWatch). 
+
+Direction discovery ( SPCA ): At each denoising step t, we mean-pool Zt across the token axis to a per-sample vector in Rdh , center both the hidden states and the (scalar safe-class) labels, and form the cross-covariance C = ( HZ t)⊤(Hy ), where H = I − 1 
+
+> N
+
+11 ⊤ is the centering matrix. We take the top-K = 6 left singular vectors of C and combine them as a single weighted direction 
+
+δt = PKi=1 σ2 
+
+> i
+
+ui/∥·∥ 2, following the rank-1 formulation as empirically validated in Sec. 3. 14 Table A1: Per-model generation and steering configurations. “Layer” uses 0-based indexing into the model’s transformer block list (e.g., 15 /30 denotes block 15 out of 30 ). λ⋆ is the steering strength used to produce the headline results; the steering window is the first half of denoising for all models. Resolution is H×W .                                                                                
+
+> Model Hugging Face ID Task Resolution Frames Steps CFG Layer ∗/Total Layers λ⋆
+> Wan2.1-T2V-1.3B Wan-AI/Wan2.1-T2V-1.3B-Diffusers T2V 480 ×832 33 50 5.0 15 /30 5.0 Wan2.2-TI2V-5B Wan-AI/Wan2.2-TI2V-5B-Diffusers I2V 480 ×832 49 25 5.0 15 /30 30.0 CogVideoX-2B THUDM/CogVideoX-2b T2V 480 ×720 17 50 6.0 15 /30 150.0 CogVideoX-5B THUDM/CogVideoX-5b T2V 480 ×720 17 50 6.0 21 /42 300.0 CogVideoX-5B-I2V THUDM/CogVideoX-5b-I2V I2V 480 ×720 49 25 6.0 21 /42 410.0 LTX-Video-T2V Lightricks/LTX-Video T2V 576 ×1024 57 35 3.0 14 /28 50.0 LTX-Video-I2V Lightricks/LTX-Video I2V 576 ×1024 57 35 3.0 14 /28 50.0 Mochi-1 genmo/mochi-1-preview T2V 480 ×848 31 40 4.5 24 /48 300.0 Allegro rhymes-ai/Allegro-T2V-40x360P T2V 368 ×640 40 40 7.5 16 /32 30.0
+
+Steering hook: A forward hook on the chosen transformer block ℓ injects λ·δt into the residual hidden state during the steering window [tstart ,t end ) (we use the first half, [0 ,αT ), with α = 0 .5
+
+throughout). To prevent magnitude drift and the resulting color shift we observed at large λ, the perturbed state is rescaled per channel to preserve its original L2 norm along the token axis (the 
+
+channel norm-preservation mode in our hook). For models whose pipelines run conditional and unconditional CFG passes separately (Wan [ 4]), the hook fires twice per denoising step and the same delta is added to both branches to cancel CFG amplification; for models that batch CFG (CogVideoX [3], LTX [6], Mochi [5], Allegro [7]) the delta is added to both halves of the batched activation. 
+
+Evaluation: We hold out a disjoint set of 500 evaluation prompts, generate paired baseline and steered videos with the same per-prompt seed, and report (i) the safety rate of our temporal SigLIP classifier, (ii) Visual Quality (VQ)/Motion Quality (MQ) VideoAlign [31] metrics. 
+
+C.4 Per-Model Steering Configurations 
+
+Table A1 lists every video model on which we evaluate REINS , together with the exact generation hyperparameters and the optimal steering configuration we report in the main paper. “Layer” is the index of the transformer block whose post-block residual is steered (we always steer a single layer, chosen as the geometric middle of the backbone’s transformer stack as a default and tuned by sweep where necessary). λ⋆ is the steering strength selected via the lambda sweep described in Sec. 2; the steering window is [0 ,0.5T ) across all models, and the norm-preservation mode is channel throughout. 
+
+Common settings: For every entry in Table A1 we use: N =500 calibration prompts and 500 
+
+paired evaluation prompts (disjoint from calibration set), top-K=6 SPCA components per timestep aggregated into a rank-1 direction, steering window [tstart ,t end ) = [0 ,⌊0.5Tsteps ⌋), and channel-wise norm preservation. Random seeds are kept fixed and deterministic per prompt in both baseline and steered generation, ensuring paired comparison. 
+
+C.5 Adversarial-Prompt Robustness Setting 
+
+For the MMA-Diffusion robustness experiment (Sec. 3) we use the first 500 rows of the public MMA-Diffusion adversarial NSFW prompt set. The Llama-Prompt-Guard-2 [ 32 ] baseline uses a malicious-class threshold of 0.5 on the softmax-normalized logits; blocked prompts contribute as “safe” (no video generated). REINS uses the precomputed Wan2.1-T2V-1.3B [ 4] safety direction discovered on SafeSora [ 1] calibration data, i.e., this is a strict zero-shot test: the steering direction is never tuned on MMA-Diffusion [ 33 ] prompts. Per-prompt seeds match across all three conditions for paired comparison. 
+
+C.6 Reproducibility 
+
+Calibration latents, computed SPCA directions, and classifier checkpoints are all deterministic given a seed; we will release the codebase upon acceptance, the per-model configuration files, and the exact prompt indices used for both calibration and evaluation. The reported safety and VQ/MQ can be reproduced end-to-end from the released artifacts in under 24 GPU-hours per model on a single NVIDIA RTX 6000 Ada. 15 Figure A1: Video generation collapses to noise or single-color frames when PolyJuice-style noise-space steering is applied at λ ≥ 25 .
+
+## D Adapting Noise-Space Steering to Video Diffusion 
+
+PolyJuice [ 20 ] was originally proposed as a black-box red-teaming method for synthetic image detec-tors on text-to-image diffusion models. It identifies directions in the noise-space latent of an image dif-fusion model via supervised PCA on detector predictions, and adds these directions to the latent during sampling to evade detection. We adapt it as a baseline for safety alignment in video diffusion following Algorithm 1 of [20] as faithfully as possible; we document the adaptation here for reproducibility. 
+
+Variable of intervention: The original method targets the noise-space latent xt ∈ RC×H′×W ′
+
+that the scheduler updates between denoising steps in image diffusion. For video diffusion, the analogous variable is xt ∈ RC×F ′×H′×W ′
+
+, where F ′ is the temporally compressed frame count. We flatten the spatio-temporal axes and treat each video as a D′ = C ·F ′ ·H′ ·W ′-dimensional sample. This treats temporal structure identically to spatial structure, mirroring how PolyJuice treats spatial structure in 2D latents. 
+
+Calibration data: We use the same SafeSora calibration set as REINS : N = 500 generations from safety-critical prompts, paired with binary safety labels (or 7-class soft labels where available). For direct comparability, the labels and prompts are identical to those used for REINS ’s direction discovery. 
+
+Per-timestep direction computation (Algorithm 1 of [ 20 ]): Unlike REINS , which discovers a single direction at a chosen layer, PolyJuice computes a separate direction δt ∈ RD′
+
+at each denoising step t. For each step, we stack the N flattened latents into Zt ∈ RN ×D′
+
+, center both Zt and the label matrix Y, and form the cross-covariance Ct = Z⊤ 
+
+> t
+
+HY centered . SVD of Ct yields left singular vectors 
+
+{Uk} and singular values {sk}, and the steering direction follows PolyJuice’s Eq. 4: 
+
+δt =
+
+> K
+
+X
+
+> k=1
+
+σk ·Uk, σk = s2
+
+> k
+
+, (A7) with K = 2 . We then apply two post-processing steps. First, a sign-determination pass: we project all N centered latents at the middle denoising step onto δT / 2 and flip the sign of every δt if the projection correlates negatively with the safe class, ensuring +λ consistently steers toward safety. Second, each δt is normalized to unit norm. 
+
+Inference-time intervention: The intervention adds λt ·δt to the noise-space latent at the end of each denoising step: 
+
+˜xt = xt +λt ·δt, λt = λ·1{a ≤ t/T < b }, (A8) following PolyJuice’s window-restricted form ( §A.4 of [ 20 ]). We use a = 0 and b = 0 .5, matching the steering fraction of REINS for parity. No per-channel norm preservation is applied; REINS ’s norm preservation is specific to hidden-state activations and would conflict with the diffusion variance schedule that governs xt.
+
+Strength sweep: We sweep λ ∈ { 0.5,1,2,5,10 ,25 ,50 ,100 } and select the value that maximizes safety rate without producing degenerate outputs. We observe a sharp transition: for λ ≤ 5,generations are visually indistinguishable from the baseline and safety rate is unchanged; for λ ≥ 25 ,generations collapse to single-color or noise frames (Fig. A1). No intermediate value of λ produces meaningful safety steering with intact generation. The numbers reported in Table 3 use λ = 10 , which lies in the narrow regime where some generations remain coherent but neither safety nor quality is consistently improved. 
+
+Interpretation: The failure mode is consistent with the absence of linear semantic structure in xt.The noise-space latent is, by construction, a partially denoised video tensor whose statistics are dom-inated by the diffusion noise schedule rather than by the model’s semantic processing. SPCA on this 16 tensor identifies the direction of maximal label-correlated variance, but that variance is dominated by low-level pixel statistics rather than by safety-relevant content. Steering along this direction therefore shifts low-level statistics (and at sufficient magnitude, breaks the latent’s distribution entirely) without redirecting the model’s semantic intent. This contrasts with hidden-state steering (Eq. 13), where δ
+
+acts on a representation in which high-level concepts are linearly organized. [ 20 ] themselves acknowl-edge in their Sec. 7 that the linearity assumption is the most significant limitation of the approach; our finding is consistent with that limitation being more severe in the higher-dimensional video setting. 
+
+## E Potential Defense Mechanisms against REINS 
+
+To mitigate the risk of bad actors weaponizing REINS to deliberately elicit harmful content, developers can implement countermeasures that target the underlying geometry of the model’s hidden states. Since the efficacy of REINS hinges on the linear separability of safe and unsafe generation trajectories, a natural defense is to actively disrupt this subspace. Techniques drawn from concept unlearning and invariant representation learning could be employed to intentionally collapse or entangle the boundary between these features. If the harmful representation manifold is structurally erased during the model’s safety fine-tuning phase, simple linear perturbations will no longer be able to reliably synthesize unsafe video, thereby neutralizing this specific attack vector. Furthermore, the REINS methodology can be repurposed as a highly effective, automated red-teaming utility. Instead of relying on manual or heuristic prompt jailbreaks to test model vul-nerabilities, developers can invert the REINS safety direction to systematically generate sophisticated adversarial samples. We strongly encourage practitioners to incorporate these machine-generated failure cases directly into their defensive training pipelines. Using these challenging videos as nega-tive constraints for preference optimization techniques (such as DPO) or to train more resilient safety classifiers will ultimately fortify video diffusion models against representation-level manipulation. 17
