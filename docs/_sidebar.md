@@ -1,6 +1,9 @@
 * <a class="dpr-sidebar-root-link" href="#/">首页</a>
 * <a class="dpr-sidebar-root-link dpr-sidebar-noactive-link" href="javascript:void(0)" data-dpr-hash="#/tutorial/README">使用教程</a>
 * Daily Papers
+  * 2026-06-21 <!--dpr-date:20260621-->
+    * 精读区
+      * <a class="dpr-sidebar-item-link dpr-sidebar-item-structured" href="#/202606/21/2606.18424v1-a-variational-framework-for-llm-generator-regulator-games" data-sidebar-item="{&quot;title&quot;: &quot;A Variational Framework for LLM Generator-Regulator Games&quot;, &quot;link&quot;: &quot;https://arxiv.org/abs/2606.18424v1-a-variational-framework-for-llm-generator-regulator-games&quot;, &quot;score&quot;: &quot;8.0&quot;, &quot;tags&quot;: [{&quot;kind&quot;: &quot;query&quot;, &quot;label&quot;: &quot;llm-security&quot;}], &quot;evidence&quot;: &quot;调控语言生成的变分框架，适用于内容安全过滤&quot;}">A Variational Framework for LLM Generator-Regulator Games</a>
   * 2026-06-20 <!--dpr-date:20260620-->
     * 精读区
       * <a class="dpr-sidebar-item-link dpr-sidebar-item-structured" href="#/202606/20/2606.19660v1-a-layered-security-framework-against-prompt-injection-in-rag-based-chatbots" data-sidebar-item="{&quot;title&quot;: &quot;A Layered Security Framework Against Prompt Injection in RAG-Based Chatbots&quot;, &quot;link&quot;: &quot;https://arxiv.org/abs/2606.19660v1-a-layered-security-framework-against-prompt-injection-in-rag-based-chatbots&quot;, &quot;score&quot;: &quot;9.0&quot;, &quot;tags&quot;: [{&quot;kind&quot;: &quot;query&quot;, &quot;label&quot;: &quot;llm-security&quot;}], &quot;evidence&quot;: &quot;针对RAG聊天机器人中直接和间接提示注入的三层防御框架&quot;}">A Layered Security Framework Against Prompt Injection in RAG-Based Chatbots</a>
