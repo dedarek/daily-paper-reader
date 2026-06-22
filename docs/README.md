@@ -6,24 +6,28 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-21
-- 运行时间：2026-06-21 06:28:08 UTC
+- 最新运行日期：2026-06-22
+- 运行时间：2026-06-22 07:05:19 UTC
 - 运行状态：成功
-- 本次总论文数：1
+- 本次总论文数：2
 - 精读区：1
-- 速读区：0
+- 速读区：1
 
 ### 今日简报（AI）
-今日精读1篇高分论文，聚焦大语言模型生成器与调节器的博弈变分框架。该框架通过变分方法平衡生成质量与安全约束，值得关注。建议跟进博弈论与LLM安全结合的变分方法进展。
-- 详情：[/202606/21/README](/202606/21/README)
+今日精读一篇高性能AI Agent概率验证论文，速读发现LLM Agent存在过度授权问题。  
+重点关注AI Agent的可靠验证方法，以及工具权限合理化方向。  
+建议研究者验证概率验证在安全场景的落地效果，并检查Agent工具权限设置。
+- 详情：[/202606/22/README](/202606/22/README)
 
 ### 精读区论文标签
-1. [A Variational Framework for LLM Generator-Regulator Games](/202606/21/2606.18424v1-a-variational-framework-for-llm-generator-regulator-games)  
+1. [Efficient and Sound Probabilistic Verification for AI Agents](/202606/22/2606.20510v1-efficient-and-sound-probabilistic-verification-for-ai-agents)  
    标签：评分：8.0/10、query:llm-security
-   evidence：调控语言生成的变分框架，适用于内容安全过滤
+   evidence：AI智能体安全策略的概率验证方法
 
 ### 速读区论文标签
-- 本次无速读推荐。
+1. [When Lower Privileges Suffice: Investigating Over-Privileged Tool Selection in LLM Agents](/202606/22/2606.20023v1-when-lower-privileges-suffice-investigating-over-privileged-tool-selection-in-llm-agents)  
+   标签：评分：6.0/10、query:llm-security
+   evidence：识别并度量LLM智能体中的过度权限工具选择，为安全机制提供指导
 
 
 <div class="dpr-home-promo-card">
