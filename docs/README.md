@@ -6,28 +6,35 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-22
-- 运行时间：2026-06-22 07:05:19 UTC
+- 最新运行日期：2026-06-23
+- 运行时间：2026-06-23 05:56:33 UTC
 - 运行状态：成功
-- 本次总论文数：2
-- 精读区：1
-- 速读区：1
+- 本次总论文数：5
+- 精读区：3
+- 速读区：2
 
 ### 今日简报（AI）
-今日精读一篇高性能AI Agent概率验证论文，速读发现LLM Agent存在过度授权问题。  
-重点关注AI Agent的可靠验证方法，以及工具权限合理化方向。  
-建议研究者验证概率验证在安全场景的落地效果，并检查Agent工具权限设置。
-- 详情：[/202606/22/README](/202606/22/README)
+今日精读2篇论文，聚焦黑盒越狱防御与安全感知KV缓存压缩。最值得关注的是《DoubtProbe》（9.0分）的结构验证与语义审计方法，以及《AnchorKV》（8.0分）的软惩罚锚点压缩策略。建议优先阅读这两篇，关注AI安全中的防御机制与缓存优化创新。
+- 详情：[/202606/23/README](/202606/23/README)
 
 ### 精读区论文标签
-1. [Efficient and Sound Probabilistic Verification for AI Agents](/202606/22/2606.20510v1-efficient-and-sound-probabilistic-verification-for-ai-agents)  
+1. [DoubtProbe: Black-Box Jailbreak Defense via Structural Verification and Semantic Auditing](/202606/23/2606.16527v1-doubtprobe-black-box-jailbreak-defense-via-structural-verification-and-semantic-auditing)  
+   标签：评分：9.0/10、query:llm-security
+   evidence：黑盒越狱防御，结合结构验证和语义审计
+2. [AnchorKV: Safety-Aware KV Cache Compression via Soft Penalty with a Refusal Anchor](/202606/23/2606.17872v1-anchorkv-safety-aware-kv-cache-compression-via-soft-penalty-with-a-refusal-anchor)  
    标签：评分：8.0/10、query:llm-security
-   evidence：AI智能体安全策略的概率验证方法
+   evidence：安全感知的KV压缩防御越狱攻击
+3. [Structural Role Injection in Handlebars-Templated LLM Prompts: Triple-Brace Interpolation, Delimiter Family, and the Limits of HTML Auto-Escaping](/202606/23/2606.18120v1-structural-role-injection-in-handlebars-templated-llm-prompts-triple-brace-interpolation-delimiter-family-and-the-limits-of-html-auto-escaping)  
+   标签：评分：8.0/10、query:llm-security
+   evidence：LLM提示中结构角色注入的分析
 
 ### 速读区论文标签
-1. [When Lower Privileges Suffice: Investigating Over-Privileged Tool Selection in LLM Agents](/202606/22/2606.20023v1-when-lower-privileges-suffice-investigating-over-privileged-tool-selection-in-llm-agents)  
+1. [GRACE-DS: a Guarded Reward-guided Agent Correction Environment in Data Science](/202606/23/2606.16000v1-grace-ds-a-guarded-reward-guided-agent-correction-environment-in-data-science)  
    标签：评分：6.0/10、query:llm-security
-   evidence：识别并度量LLM智能体中的过度权限工具选择，为安全机制提供指导
+   evidence：LLM智能体安全评估
+2. [GRACE-DS: a Guarded Reward-guided Agent Correction Environment in Data Science](/202606/23/2606.16000v2-grace-ds-a-guarded-reward-guided-agent-correction-environment-in-data-science)  
+   标签：评分：6.0/10、query:llm-security
+   evidence：LLM智能体安全评估环境
 
 
 <div class="dpr-home-promo-card">

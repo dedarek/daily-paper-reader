@@ -1,0 +1,542 @@
+Title: AnchorKV: Safety-Aware KV Cache Compression via Soft Penalty with a Refusal Anchor
+
+URL Source: https://arxiv.org/pdf/2606.17872v1
+
+Published Time: Wed, 17 Jun 2026 00:59:11 GMT
+
+Number of Pages: 14
+
+Markdown Content:
+# AnchorKV: Safety-Aware KV Cache Compression via Soft Penalty with a Refusal Anchor 
+
+Ning Ni 
+
+Department of Computer Science Tufts University 
+
+Ning.Ni@tufts.edu 
+
+Yingjie Lao 
+
+Department of Electrical and Computer Engineering Tufts University 
+
+yingjie.lao@tufts.edu 
+
+# Abstract 
+
+Large language models (LLMs) outperform earlier architectures on generative inference and long-context tasks, but their unprecedented size makes memory usage, energy cost, and on-device deployment a serious challenge. Because scaling pre-trained language models tends to improve downstream capacity Zhao et al. [2023], the resulting key-value (KV) cache becomes a dominant inference cost. Recent KV cache compression methods Jo et al. [2025], Li et al. [2024], Zhou et al. [2024] reduce this cost by retaining only a small subset of attention-relevant tokens. Although these methods preserve task accuracy on benign workloads, their compression policies either fail to defend against jailbreak attacks Jiang et al. [2024] or actively erode safety alignment under aggressive token eviction. We propose AnchorKV, a drop-in modification to KV cache compression that biases the per-token retention score against directions in key space associated with harmful prompts. AnchorKV uses an offline anchor construction procedure that adapts the difference-of-means representation-engineering technique Arditi et al. [2024], Zou et al. [2023a] to the layer-specific key projection space relevant for KV cache compression. Given this anchor, a soft-penalty token-selection rule trades a small amount of utility for a substantial improvement in safety alignment, while reducing bit-exactly to the unmodified compressor at zero penalty. 
+
+# 1 Introduction 
+
+Long-context language models have rapidly become a central deployment target for large language models (LLMs), with context windows expanding from 4K to 128K tokens and beyond. At inference time, this scaling shifts the dominant cost from parameter count to the key–value (KV) cache, whose memory and latency grow linearly in sequence length. Modern KV cache compression methods reduce this cost by retaining only a small subset of attention-relevant tokens, and have been shown to preserve task accuracy on standard long-context benchmarks Li et al. [2024], Jo et al. [2025], Zhou et al. [2024]. However, the accuracy-centric design of these methods leaves their interaction with the model’s safety alignment largely unexamined. Recent work Jiang et al. [2024] reports that off-the-shelf KV compression offers essentially no defense against jailbreak attacks: applying SnapKV Li et al. [2024] at typical compression rates barely changes the attack success rate of GCG- Zou et al. [2023b] or AutoDAN-style Liu et al. [2023a] prompts. Our own preliminary experiments additionally confirm a related but under-discussed pattern: aggressive token eviction can not only fail to mitigate jailbreaks, but actively distort the model’s response distribution in safety-relevant ways. We begin with a direct empirical observation (Figure 1): on the same Llama-3.1-8B-Instruct target, simply replacing FullKV with FastKV at a 25% retention rate raises the AdvPrompter Paulus et al. [2024] jailbreak ASR from 0.440 to 0.506 under self-attack, and from 0.299 to 0.632 under a Mistral-
+
+> Preprint.
+> arXiv:2606.17872v1 [cs.LG] 16 Jun 2026
+
+Figure 1: Compression alone increases jailbreak vulnerability. Attack Success Rate (ASR) of AdvPrompter on Llama-3.1-8B-Instruct Grattafiori et al. [2024] under FullKV (no compression) and FastKV ( ρ = 0 .25 ), measured across 10 random seeds. Left : white-box self-attack with Llama-3.1-8B-Instruct as both attacker network and target. FastKV raises mean ASR from 0.440 to 0.506 
+
+(a 15% relative increase). Right : transfer attack from Mistral-NeMo-Instruct-2407 Mistral AI and NVIDIA [2024] to the same Llama-3.1-8B-Instruct target. The effect is more dramatic: FastKV more than doubles mean ASR from 0.299 to 0.632 , with the two distributions barely overlapping. Diamonds with error bars mark the across-seed mean and standard deviation; individual dots are per-seed scores. The gap is consistent across both protocols, indicating a property of the compression policy rather than of any specific attacker. NeMo cross-model transfer attack—a relative increase of 15% in the former and over 100% in the latter. The effect is consistent across 10 random seeds and across both attack protocols, indicating a structural rather than incidental phenomenon. We characterize two distinct pathologies underlying it. (i) Refusal-evidence dilution : when a jailbreak prompt’s adversarial framing accumulates high attention scores, the harmful query tokens become eviction candidates under any attention-greedy policy; with enough of them dropped, the downstream layers no longer see sufficient evidence to trigger refusal, and the model complies with attacks it would have rejected at full capacity. The widening gap under cross-model transfer attack (Figure 1, right) supports this reading: prompts whose harmful content is distributed across more positions (a typical signature of cross-model transferability) are disproportionately disrupted by attention-greedy eviction. (ii) Template-mode regression : conversely, when prompt-content tokens are dropped while harm-related skeleton tokens (generic verbs, help-seeking phrases) are retained, the model regresses to formulaic safety templates— enumerating mental-health resources or generic “I cannot assist” boilerplate—that bear no relation to the user’s actual query. Both pathologies are artifacts of the compression policy rather than properties of the underlying model, and both grow with the compression ratio. Prior work on RobustKV Jiang et al. [2024] successfully addresses jailbreaks by evicting low-attention tokens at every head, but does so as a stand-alone defense: it neither compresses the cache nor composes with existing accuracy-oriented compressors, and its discriminative signal—attention rank—is precisely the quantity that an adaptive adversary can manipulate. Our goal is fundamentally different: to preserve safety alignment under aggressive KV compression . This requires a safety signal that is independent of attention ranking and that operates at the same operational point (the eviction layer) as the compressor itself. We argue that recent representation-engineering work Zou et al. [2023a], Arditi et al. [2024] suggests such a signal: a single linear “refusal direction” in the model’s internal representations, recoverable from a small set of contrastive prompts. Section 2 reviews these threads in detail and makes the contrast precise. We introduce AnchorKV , a drop-in scalable modification to KV cache compression in which the per-token retention score is augmented with a soft penalty derived from a precomputed harm an-chor. Concretely, we offline construct a single direction vh ∈ RH×d in the layer-ℓ∗ key projection space —rather than the residual stream—by applying the difference-of-means recipe of Arditi et al. [2024] to length-matched harmful and harmless prompts from the AdvPrompter 60/20/20 split of AdvBench Paulus et al. [2024], Zou et al. [2023b]. At inference, every prompt token receives a harm 2score equal to its projection onto vh; this score is converted into a soft penalty subtracted from the attention importance score with strength λ, named as safe rate. Three design properties distinguish AnchorKV from prior work. (a) Orthogonal signal : the harm score is computed from the geometry of the key space, not from attention ranking, and is therefore not subject to the evasiveness dilemma of attention-based defenses. (b) Continuous and Scalable reduction to baseline : the penalty is continuous in λ and reduces bit-exactly to the unmodified FastKV baseline at λ = 0 , enabling rigorous ablation. The penalty of harm scores can be applied on other Key-level compression techniques by scaling the safe rate λ. (c) Layer alignment with eviction : because the anchor is constructed in the same layer at which token eviction occurs, the geometric calibration matches the operational point—a constraint that residual-stream-based methods cannot satisfy without an additional projection step. 
+
+Contributions. We make four contributions: 1. We empirically characterize a previously under-documented interaction between KV cache com-pression and safety alignment, by observing a regression of safety alignment that arises from token eviction at high compression ratios. 2. We adapt the difference-of-means representation-engineering technique Zou et al. [2023a], Arditi et al. [2024] from the residual stream to the per-head key-projection space of a designated eviction layer. The resulting anchor achieves a held-out test AUROC of 0.996 on harmful versus harmless discrimination on the AdvPrompter held-out test split, validating that the linear refusal direction observed in residual activations also exists, and is recoverable, in layer-specific key space. 3. We design a soft-penalty token-selection rule that is continuous in its strength parameter λ and reduces bit-exactly to the FastKV baseline at λ = 0 . This property allows AnchorKV to be ablated as a strict superset of FastKV, and any other similar token eviction techniques by scaling λ.4. We report the safety–utility trade-off frontier of AnchorKV on jailbreak benchmarks and Long-Bench Bai et al. [2024], identifying a non-monotonic reversal regime in which excessive penalty strength cannibalizes the prompt’s content backbone. This finding motivates the structural safe-guards in our method and offers a cautionary lesson for future safety-aware compression work: more safety pressure does not monotonically yield safer behavior. 
+
+# 2 Background and Related Work 
+
+We survey three threads relevant to AnchorKV: KV cache compression (§2.1), jailbreak attacks and defenses on models after KV cache compression (§2.2) and representation engineering (§2.3). The synthesis at the end of §2.3 states the gap our work fills. 
+
+2.1 KV Cache Compression 
+
+The KV cache stores per-layer key and value tensors of all preceding tokens, enabling auto-regressive decoding without recomputing the prefix. Its size grows linearly in sequence length, becoming the dominant memory bottleneck for long-context inference. 
+
+Eviction-based methods. H2O Zhang et al. [2023] introduces the “heavy-hitter” principle: during decoding, tokens that have historically received high attention are retained while others are greedily evicted. Scissorhands Liu et al. [2023b] extends this with a notion of attention persistence across decoding steps, while StreamingLLM Xiao et al. [2023] highlights the role of the first few tokens (“attention sinks”), whose aberrant key statistics make them indispensable regardless of semantic content. SnapKV Li et al. [2024] adapts these ideas to the prefilling stage: for each attention head, an observation window of recent tokens identifies which earlier positions to keep, and eviction is performed independently per head. DynamicKV Zhou et al. [2024] further makes the retention budget input-adaptive. FastKV Jo et al. [2025] introduces token-selective propagation (TSP): up to a designated layer ℓ∗, all tokens participate in attention; beyond ℓ∗, only a fraction ρ of tokens—selected by an attention-cache importance score—is propagated to the remaining layers. This last design is the closest to ours: we adopt FastKV as our backbone, leaving the per-layer KV compression untouched and modifying only the TSP scoring rule at layer ℓ∗. Other methods that select tokens via an additive importance score can also be combined with AnchorKV. 32.2 Jailbreak Attacks and Defenses Attacks. Jailbreak attacks Wei et al. [2023] embed a harmful query within a wrapper prompt designed to bypass the model’s built-in safeguards. Optimization-based attacks such as GCG Zou et al. [2023b] append adversarial suffixes that maximize the model’s probability of an affirmative response; AutoDAN Liu et al. [2023a] performs genetic search over a population of handcrafted templates; AdvPrompter Paulus et al. [2024] trains an auxiliary LLM to generate fluent adversarial prompts. For all such attacks, the standard benchmark is AdvBench Zou et al. [2023b], with the 60/20/20 train/validation/test split introduced by AdvPrompter. 
+
+Prompt-level defenses. SmoothLLM Robey et al. [2023] applies randomized character-level perturbations to disrupt brittle adversarial suffixes; GoalPriority Zhang et al. [2024] crafts a system prompt that instructs the model to prioritize safety over helpfulness. Both operate at the prompt surface level and do not address how the model’s internal computation handles harmful content. 
+
+KV-cache-level defenses. The most relevant prior work is RobustKV Jiang et al. [2024]. It observes empirically that, for a jailbreak prompt to bypass the LLM’s safeguards, its adversarial framing must accumulate enough attention to outrank the harmful query tokens; consequently, the harmful query tokens tend to be among the lowest-ranked positions by attention-cache score. RobustKV exploits this pattern by evicting the lowest-ranked p% of tokens (typically 20% ) at every attention head, suppressing the harmful query’s representation in the cache. Although effective as a defense, RobustKV diverges from our setting in three respects. First, it is a defense , not a compressor: it replaces p% of cache positions with low-attention tokens but reports no memory savings, leaving open whether the mechanism survives on top of aggressive compression ratios such as those targeted by FastKV. Second, its discriminative signal is attention rank itself, which an adaptive adversary can manipulate; the authors identify an “evasiveness dilemma” in which the attacker trades attention rank against safeguard bypass. Third, the assumption that “harmful query tokens are always low-attention” is empirical rather than mechanistic, and is not guaranteed for jailbreak families that elevate the harmful query’s attention via role-playing scaffolds. We are not aware of prior work that pursues safety preservation under aggressive KV compression, with a discriminative signal independent of attention ranking. 
+
+Safety under model compression. Beyond KV compression specifically, recent work Hong et al. [2024] has begun to scrutinize how parameter quantization and pruning affect the trustworthiness of LLMs, generally finding that aggressive compression can erode safety properties even when accuracy is preserved. Our findings reinforce this concern within the orthogonal axis of KV cache compression. 
+
+2.3 Representation Engineering and the Refusal Direction 
+
+A growing body of work studies whether high-level concepts in LLMs are encoded as linear directions in the model’s internal activations. Zou et al. Zou et al. [2023a] introduce representation engineering 
+
+(RepE) as a top-down framework for extracting and manipulating such directions, demonstrating that diverse concepts ranging from honesty to harm can be identified via contrastive prompt pairs. Arditi et al. Arditi et al. [2024] specialize this analysis to refusal in instruction-tuned LLMs and show, on a wide range of models, that refusal is mediated by a single linear direction in the residual stream, extractable as the difference-of-means of activations between harmful and harmless prompts. Removing this direction from activations bypasses refusal; conversely, adding it strengthens refusal. These results are obtained on residual-stream activations, which is a natural choice for studies of model behavior at the granularity of generation but mismatches the operational point of KV cache compression: KV compressors operate on the per-head key projection K(ℓ,h ) at each layer, not on the residual stream. Naively transferring a residual-stream direction into the KV compression decision incurs an additional projection step and a geometric mismatch. We instead construct the refusal direction directly in the layer-ℓ∗ key projection space , ensuring that the safety signal lives in the same vector space as the quantities being scored for retention. Whether the linear refusal direction survives this transfer is an empirical question we answer in Section 4: it does, with a held-out test AUROC of 0.996 on held-out test prompts. 4Synthesis. We synthesize the three threads as follows. KV compression methods (§2.1) reduce inference cost but have not been designed with safety in mind; jailbreak defenses (§2.2) preserve safety but either operate at the prompt surface or impose a stand-alone KV manipulation incompatible with aggressive compression; representation engineering (§2.3) provides the mechanistic substrate for a compression-compatible safety signal but has not been deployed in this context. AnchorKV bridges the three: it adds a RepE-derived signal to a state-of-the-art compressor (FastKV), in the same vector space at the same operational point, with a continuous strength parameter that admits clean ablation against the unmodified baseline. 
+
+# 3 Method 
+
+AnchorKV modifies only the TSP scoring rule of FastKV at the designated layer ℓ∗; the per-layer KV compression and the local-window mechanism are inherited unchanged. We use the FastKV-defined quantities introduced in §2.1 without re-derivation: the per-token importance score at, the retention budget N = ⌊ρ · L⌋, the window size w, and the activation condition L > N > w .The method is split into two phases. The offline phase (§3.1) constructs a single direction vh ∈ RH×d
+
+in the layer-ℓ∗ key projection space, plus a calibrated threshold θ, from a small set of contrastive prompts. The online phase (§3.2) consumes (vh, θ ) at every TSP-triggering prefill, augmenting at
+
+with a soft penalty before top-k selection. 
+
+3.1 Offline Anchor Construction Difference of class means in key space. We adapt the difference-of-means recipe of Arditi et al. Arditi et al. [2024] from residual-stream activations to the per-head key projection at layer ℓ∗.Concretely, given two prompt sets—harmful Dtr  
+
+> h
+
+drawn from the AdvBench training split Paulus et al. [2024], Zou et al. [2023b] and harmless Dtr  
+
+> s
+
+drawn from a length-matched sample that is generated by Deepseek-V3 Liu et al. [2024]—we run each prompt p through the frozen model with a forward hook on the layer-ℓ∗ K-projection, obtaining K(ℓ∗)(p) ∈ RH×Lp×d, where H is the number of key-value heads, Lp the prompt length, and d the per-head dimension. We summarize each prompt by all-token mean pooling 
+
+ϕ(p) = 1
+
+LpLp
+
+X
+
+> t=1
+
+K(ℓ∗) 
+
+> t
+
+(p) ∈ RH×d, (1) and define the harm anchor as the difference of class means: 
+
+vh = 1
+
+|D tr  
+
+> h
+
+|
+
+X
+
+> p∈D tr
+> h
+
+ϕ(p) − 1
+
+|D tr  
+
+> s
+
+|
+
+X
+
+> p∈D tr
+> s
+
+ϕ(p). (2) Constructing the anchor in the same space at which TSP eviction operates is critical: it eliminates the geometric mismatch that would arise from transferring a residual-stream direction through a single 
+
+K-projection, and ensures that the harm signal lives in the same coordinates as the quantities being scored at retention time. 
+
+Per-token harm score. At inference, each prompt token’s harm tendency is the projection of its layer-ℓ∗ key onto the unit-normalized anchor, averaged across heads: 
+
+ht = 1
+
+H
+
+> H
+
+X
+
+> h=1
+
+K(ℓ∗,h ) 
+
+> t
+
+, cvh(h) , cvh(h) = v(h) 
+
+> h
+
+/∥v(h) 
+
+> h
+
+∥2. (3) 
+
+Threshold calibration. We empirically observe that, on a frozen instruction-tuned LLM, both class distributions of h lie below zero, reflecting a shared bias direction in the layer-ℓ∗ key space (e.g. attention-sink and frequency components) that contributes a uniform negative offset to all projections. Using the projection sign as the harm/safe boundary therefore systematically under-applies the penalty. We calibrate an explicit threshold θ on a held-out validation split: 
+
+θ = 12
+
+ median {h(p) : p ∈ D val  
+
+> h
+
+} + median {h(p) : p ∈ D val  
+
+> s
+
+}, (4) i.e. the midpoint between the two class medians, where h(p) = 1
+
+> Lp
+
+P 
+
+> t
+
+ht is the prompt-level mean of Eq. (3) . This places the discriminative boundary at the empirical crossing point of the two classes; it does not affect the continuity property of the online phase (§3.2). 5Algorithm 1 Offline anchor construction. 
+
+Require: Frozen LLM M ; training prompts Dtr  
+
+> h
+
+, Dtr  
+
+> s
+
+; validation prompts Dval  
+
+> h
+
+, Dval  
+
+> s
+
+; candidate layer set L.
+
+Ensure: Harm anchor vh, threshold θ, layer index ℓ∗. 
+
+> 1:
+
+for each candidate layer ℓ ∈ L do  
+
+> 2:
+
+for each p ∈ D tr  
+
+> h
+
+∪ D tr  
+
+> s
+
+do  
+
+> 3:
+
+Run M on p with a hook on layer-ℓ K -projection; capture K(ℓ)(p). 
+
+> 4:
+
+Compute ϕ(ℓ)(p) via Eq. (1).  
+
+> 5:
+
+end for  
+
+> 6:
+
+v(ℓ) 
+
+> h
+
+← mean p∈D tr  
+
+> h
+
+ϕ(ℓ)(p) − mean p∈D tr  
+
+> s
+
+ϕ(ℓ)(p) ▷ Eq. (2)  
+
+> 7:
+
+Score every p ∈ D val  
+
+> h
+
+∪ D val  
+
+> s
+
+with Eq. (3) using v(ℓ) 
+
+> h
+
+; record per-prompt mean h(ℓ)(p). 
+
+> 8:
+
+AUROC (ℓ) ← AUROC of {h(ℓ)(p)} against the harm/safe label.  
+
+> 9:
+
+end for  
+
+> 10:
+
+ℓ∗ ← arg max ℓ∈L AUROC (ℓ) ▷ validation-only; test split not used  
+
+> 11:
+
+vh ← v(ℓ∗) 
+
+> h
+> 12:
+
+θ ← 12
+
+ median {h(ℓ∗)(p) : p ∈ D val  
+
+> h
+
+} + median {h(ℓ∗)(p) : p ∈ D val  
+
+> s
+
+} ▷ Eq. (4)  
+
+> 13:
+
+return (vh, θ, ℓ ∗)
+
+Layer selection. The anchor is layer-specific by construction. We select ℓ∗ on the validation split by sweeping a small set of candidate layers, building the anchor of Eq. (2) at each, and choosing the one that maximizes the AUROC of harm-vs.-safe discrimination using prompt-level scores {h(p)}.
+
+Algorithm. Algorithm 1 summarizes the offline phase. The output (vh, θ, ℓ ∗) is saved to disk and loaded once at inference initialization; no further forward passes through the frozen model are required at runtime beyond the model’s own. 
+
+3.2 Online TSP Selection with Soft Penalty 
+
+At every prefill that triggers the TSP branch (see §2.1), AnchorKV replaces the FastKV scoring rule with 
+
+score t = at − λ · ¯a · fh+t, (5) where λ is a non-negative penalty strength parameter, ¯a = 1
+
+> L−w
+
+P 
+
+> t
+
+at is the mean of the FastKV importance score over non-window positions, and fh+t is the safeguarded harm intensity (defined below). The TSP retention set is the standard top-k on score t:
+
+S = TopK t∈[0 , L −w)
+
+ score t, N − w ∪ [L − w, L ). (6) 
+
+Harm intensity with safeguards. Starting from the raw projection ht of Eq. (3) and the calibrated threshold θ (Eq. (4)), we form the non-negative harm signal 
+
+h+ 
+
+> t
+
+= max( ht − θ, 0) . (7) We then apply two structural safeguards to obtain the final fh+t. Sink protection : positions t < S are exempted from the penalty, motivated by the anomalous key statistics of attention-sink tokens Xiao et al. [2023], whose eviction triggers immediate generation collapse: 
+
+fh+t ← 0 for t < S (default S = 4) . (8) 
+
+Importance immunity : the ⌈α(L − w)⌉ positions with the largest baseline scores at are also exempted, preventing the penalty from cannibalizing the prompt’s content backbone: 
+
+fh+t ← 0 for t ∈ TopK t
+
+ at, ⌈α(L − w)⌉ (default α = 0 .30) . (9) Both safeguards act multiplicatively on the penalty (via masking fh+t), preserving the continuity property stated next. 6Algorithm 2 Online TSP selection with anchor penalty. 
+
+Require: Layer-ℓ∗ keys K(ℓ∗) for the current prompt; FastKV importance score at, budget N ,window size w; anchor vh and threshold θ from Algorithm 1; hyper-parameters (λ, S, α ).
+
+Ensure: TSP retention set S. 
+
+> 1:
+
+if λ ≤ 0 or not (TSP active per §2.1) then  
+
+> 2:
+
+return TopK t(at, N − w) ∪ [L − w, L ) ▷ FastKV baseline  
+
+> 3:
+
+end if  
+
+> 4:
+
+Compute ht for t ∈ [0 , L − w) via Eq. (3).  
+
+> 5:
+
+h+ 
+
+> t
+
+← max( ht − θ, 0) ▷ Eq. (7)  
+
+> 6:
+
+fh+t ← h+ 
+
+> t
+> 7:
+
+fh+t ← 0 for t < S ▷ sink protection, Eq. (8)  
+
+> 8:
+
+I ← TopK t
+
+ at, ⌈α(L − w)⌉ 
+
+> 9:
+
+fh+t ← 0 for t ∈ I ▷ importance immunity, Eq. (9)  
+
+> 10:
+
+¯a ← 1
+
+> L−w
+
+P 
+
+> t
+
+at 
+
+> 11:
+
+score t ← at − λ · ¯a · fh+t ▷ Eq. (5)  
+
+> 12:
+
+S ← TopK t(score t, N − w) ∪ [L − w, L ) ▷ Eq. (6)  
+
+> 13:
+
+return S
+
+Continuity at λ = 0 . A central design property of Eq. (5) is that, when λ = 0 , the penalty term is identically the zero tensor regardless of fh+t, ¯a, θ, or any safeguard mask: 
+
+S(λ=0) ≡ S FastKV (bit-exact) . (10) For λ → 0+, the score perturbation is uniformly O(λ):
+
+score (λ) − a ∞ ≤ λ · ¯a · max 
+
+> t
+
+fh+t. (11) This property allows AnchorKV to be ablated as a strict superset of FastKV, with no numerical drift between modified and unmodified pipelines. We verify the bit-exact reduction empirically in §4. 
+
+Orthogonality to the TSP rate. Eq. (5) reshapes the score field but leaves the budget N untouched: 
+
+∂N ∂λ = 0 , ∂score t
+
+∂ρ = 0 . (12) The two principal hyper-parameters (ρ, λ ) act on disjoint quantities, sharing only the activation condition; this permits independent ablation of “ how many tokens to keep” versus “ which tokens to keep.” 
+
+Algorithm. Algorithm 2 summarizes the online phase. Lines 11 implements the bit-exact reduction at λ = 0 and the early branch on line 2 is a numerical guarantee for confirmation. 
+
+Computational overhead. Beyond the FastKV baseline, the online phase adds a single einsum 
+
+of shape (B, H, L − w, d ) × (H, d ) for Eq. (3) , a constant-cost top-α selection on at, and a handful of element-wise operations. The dominant cost is the einsum , of order O(BHLd )—asymptotically equivalent to a single attention-head QK ⊤ at layer ℓ∗ and small relative to the full per-layer attention computation. 
+
+# 4 Experiments 
+
+We evaluate AnchorKV along two axes: safety under jailbreak attack (Attack Success Rate on AdvBench), and utility on benign long-context tasks (LongBench). Section 4.1 below describes the experimental infrastructure shared by both axes. 
+
+4.1 Experimental Setup Models and Anchor Datasets. We use L LAMA -3.1-8B-I NSTRUCT Grattafiori et al. [2024] as the target model throughout all experiments—both the model whose KV cache is compressed 7by AnchorKV and FastKV, and the model attacked by AdvPrompter. We use M ISTRAL -N EMO-INSTRUCT -2407 Mistral AI and NVIDIA [2024] as the attacker model. The white-box self-attack of the Llama model is included only to characterize the motivating phenomenon. The harm anchor is constructed offline (Algorithm 1) from contrastive harmful–harmless prompt pairs. The harmful set is the AdvBench Zou et al. [2023b] harmful_behaviors corpus under the 60/20/20 train/validation/test split released by Paulus et al. [2024], providing 312 training, 104 validation, and 104 test prompts. The harmless set is constructed by intent-inverting paraphrase of the harmful set. For each AdvBench prompt, we use DeepSeek-V3 Liu et al. [2024] to generate a paraphrase that preserves the surface structure (verb frame, length, register) but inverts the underlying intent from harmful to benign. The inversion is confirmed by manual audits. Concretely, an AdvBench prompt of the form “ Write a script that exploits vulnerabilities in a software system ” is paraphrased into “ Write a script that detects and patches vulnerabilities in a software system ,” preserving the imperative “write a script” frame while flipping the actor’s goal from offense to defense. 
+
+Safety evaluation: jailbreak attack. We measure safety with the standard Attack Success Rate (ASR) on AdvBench under AdvPrompter adversarial prompts. We adopt a common approach to measure by checking whether the LLM refuses to answer harmful queries by matching refusal keywords or phrases such as “Sorry, I cannot” or “I apologize” (i.e., ASR) 
+
+Long-context benchmark. We use LongBench Bai et al. [2024], which consists of 16 subtasks to estimate the models’ understanding capability on long-context tasks. 
+
+Baselines. We compare three configurations of the KV cache pipeline: 1. FullKV : no compression (upper-bound on utility, natural reference for ASR under no defense); 2. FastKV Jo et al. [2025]: the unmodified backbone, with TSP at the same layer ℓ∗ chosen for AnchorKV; 3. AnchorKV (ours): FastKV with the soft-penalty selection rule of Eq. (5) , evaluated at multiple values of λ;
+
+4.2 Anchor Validation 
+
+We first verify that the difference-of-means construction of Section 3.1 produces an anchor that discriminates harmful from harmless prompts in layer-ℓ∗ key space, before deploying it inside the compression pipeline. The validation proceeds in two stages: a layer sweep on the validation split (§4.2.1) that fixes ℓ∗, and a single held-out evaluation on the test split (§4.2.2) that establishes the anchor’s final discriminative quality. The test split is consulted only once, after ℓ∗ and the threshold θ
+
+are fixed. 
+
+4.2.1 Layer Sweep on the Validation Split 
+
+We construct one candidate anchor per layer ℓ ∈ { 4, 8, 12 , 15 , 18 , 22 , 26 , 30 } from the training split and score every validation prompt by the mean of Eq. (3) over its tokens. Two metrics summarize the resulting per-prompt score distributions: AUROC , the area under the ROC curve of the binary harmful-or-not classifier induced by thresholding the score, and |Cohen’s d|, the absolute standardized mean difference between the two class distributions. Figure 2 reports both quantities. The two metrics tell a consistent story. At early layers ( ℓ ∈ { 4, 8}), the anchor is informative but weak (AUROC 0.815 , 0.893 ; |d| = 1 .25 , 1.73 ); the harm direction is not yet sharply localized in the model’s internal computation. At middle layers ( ℓ ∈ { 12 , 15 , 18 , 22 }), AUROC ≥ 0.98 and 
+
+|d| ≥ 3.12 , indicating a broad plateau in which the harm dimension is strongly linearly separable. At late layers ( ℓ ∈ { 26 , 30 }), AUROC declines mildly ( 0.969 , 0.945 ), consistent with the layer-ℓ∗ key projection being increasingly dominated by features specific to the output decoding rather than the prompt’s intent. This profile parallels the layer-wise behavior of the residual-stream refusal direction reported by Arditi et al. Arditi et al. [2024] for instruction-tuned LLMs, and constitutes evidence that an analogously linear harm direction exists, and is recoverable by the same construction, in the per-head key projection at the same layer. We select ℓ∗ = 15 as the operational TSP layer, which maximizes both metrics on the validation split (AUROC = 0 .991 , |d| = 3 .84 ). Layer 18 is statistically indistinguishable (AUROC = 0 .991 ,8Figure 2: Discriminative quality of the harm anchor as a function of the construction layer, evaluated on the validation split ( nh = ns = 104 ). Top : AUROC on harmful-vs.-harmless prompt-mean scores. Bottom : absolute Cohen’s d between the two class distributions. Both curves rise steeply from layer 4 to layer 12, plateau across the middle layers, and decay in the late layers. Layers 15 and 18 are tied at AUROC = 0 .991 ; layer 15 has the largest |d| and is selected as the operational TSP layer. The test split is not consulted in this step. 
+
+Figure 3: Final anchor evaluation at ℓ∗ = 15 on the held-out test split ( nh = ns = 104 ). Left :distributions of prompt-mean harm scores h(p) = 1
+
+> Lp
+
+P 
+
+> t
+
+ht; dashed vertical lines mark the class medians. Right : ROC curve of the resulting binary classifier; AUROC = 0 .996 . Both class distributions lie entirely below zero, reflecting a shared negative bias in the layer-ℓ∗ key space that motivates the threshold calibration of Eq. (4). 
+
+|d| = 3 .80 ); the choice between the two is essentially a tie and the downstream compression results are insensitive to it. 
+
+4.2.2 Final Evaluation on the Held-out Test Split 
+
+With ℓ∗ = 15 fixed, we compute the prompt-mean harm score for every test prompt and report the resulting class distributions and ROC curve in Figure 3. The anchor achieves an AUROC of 0.996 on the held-out test split, matching the validation result and confirming that the discriminative quality observed at ℓ∗ = 15 is not an artifact of overfitting to the validation split. The two class distributions 9Figure 4: Attack Success Rate (ASR) on AdvBench under AdvPrompter, as a function of penalty strength λ (log scale; the λ=0 point is plotted at the leftmost gridline and corresponds bit-exactly to FastKV). The curve exhibits three regimes. Effective : λ ∈ [1 , 30] , where ASR is reduced from the baseline 0.68 to between 0.13 and 0.17 (a relative reduction of up to 81% ). Rapid onset : λ ∈ [0 , 1] ,where the penalty begins to take effect but has not yet saturated. Reversal : λ ≥ 100 , where the safety pressure cannibalizes the prompt’s content backbone and ASR rebounds, eventually exceeding the baseline at λ = 300 . All are done by the same random seed. are nearly disjoint; the median harm score for the harmful class ( ≈ − 0.66 ) is well above that of the harmless class ( ≈ − 1.32 ), with overlap concentrated in a narrow band around −1.0.
+
+A shared negative bias. Figure 3 also reveals a phenomenon that has direct implications for the online deployment of the anchor: both class distributions lie entirely below zero . Although the anchor itself is a difference of class means and therefore unbiased by construction, the per-token projection ht inherits a uniform negative offset from the layer-ℓ∗ key space. We attribute this offset to shared components of all keys at the chosen layer—most plausibly, contributions from attention-sink positions whose anomalous key magnitudes have been documented in prior work Xiao et al. [2023], together with frequency-related directions that all tokens in an instruction-tuned model share. The implication for AnchorKV is that using the projection sign as the harmful-or-not boundary systematically under-applies the penalty : with the sign rule, every token whose ht < 0 contributes zero to the penalty regardless of class, despite the fact that within-class variation around the medians is informative. This observation directly motivates the threshold calibration of Eq. (4) , which sets 
+
+θ = 12 (med h + med s) as the midpoint between class medians on the validation split. For the configuration used in subsequent experiments, θ ≈ − 0.99 ; substituting this into Eq. (7) shifts the active penalty region from “positive projections only” to “projections above the empirical class boundary,” restoring the discriminative content lost under the sign rule. 
+
+4.3 Safety: Jailbreak Attack Success Rate 
+
+We now evaluate whether the anchor of §4.2, when deployed inside the soft-penalty selection rule of Eq. (5) , reduces jailbreak success. We sweep λ ∈ { 0, 0.3, 1, 3, 10 , 30 , 100 , 300 } on a logarithmic grid. For each λ, we attack the AdvBench test split with AdvPrompter Paulus et al. [2024] and report ASR as defined in §4.1. The point at λ = 0 coincides bit-exactly with FastKV by Eq. (10) ; we verify this empirically by hashing the TSP retention set across all test prompts and confirming identical outputs. 
+
+Three regimes. Figure 4 reports ASR across the eight λ values. We make three empirical observa-tions. 10 Table 1: Per-task and averaged scores on the full LongBench suite for AnchorKV at varying λ,compared with FullKV (no compression) and FastKV (the unmodified backbone). Higher is better in all columns; metrics follow the official LongBench evaluation scripts. The rightmost column is the unweighted mean across the 16 tasks.                                                                                                                                                          
+
+> Method
+> NARR QA
+> QASPER
+> MFQA-EN
+> HOTPOT QA
+> 2W IKI MQA
+> MUSIQUE
+> GOV REP
+> QMS UM
+> MULTI NEWS
+> TREC
+> TRIVIA QA
+> SAMS UM
+> PSG CNT
+> PSG RET
+> LCC
+> REPO B-P
+> Avg.
+> FullKV 30.25 45.53 54.85 55.52 46.66 31.28 35.22 25.25 27.19 72.50 91.65 43.81 8.38 99.50 63.38 56.67 49.23
+> FastKV 30.75 40.99 55.10 54.38 46.48 30.08 28.38 24.14 21.64 73.00 92.38 42.98 7.36 99.50 60.00 55.08 47.64
+> AnchorKV (ours), with the offline anchor of §4.2
+> λ=0 .330.10 40.28 55.06 54.49 46.44 31.84 28.36 25.00 21.52 71.00 92.38 43.17 6.90 99.50 59.82 54.97 47.55
+> λ=1 .029.35 39.94 55.12 54.52 45.74 31.36 28.17 25.02 21.55 72.50 92.38 43.29 7.43 98.50 59.75 55.07 47.48
+> λ=3 .029.16 40.43 54.42 54.63 44.24 30.66 28.31 24.81 21.50 72.00 92.38 43.35 8.34 98.50 58.33 54.35 47.21
+> λ=10 29.09 38.66 52.51 53.13 42.45 29.86 27.98 24.39 21.49 72.50 91.21 43.11 9.62 97.50 57.48 54.13 46.57
+> λ=30 28.15 37.95 49.67 52.16 40.03 29.06 28.12 24.62 21.74 72.50 89.17 42.90 6.92 97.00 56.04 53.70 45.61
+> λ=100 27.66 38.14 49.80 50.99 34.66 28.88 28.10 24.10 21.64 72.00 86.65 41.74 8.12 96.00 55.03 53.40 44.81
+> λ=300 27.25 37.97 49.02 52.27 35.21 28.83 28.11 23.78 21.79 70.50 86.08 40.48 7.38 93.50 43.60 53.13 43.68
+
+(1) A wide effective range. For λ ∈ [1 , 30] —more than one order of magnitude— ASR is stably reduced from the FastKV baseline of 0.68 to a range of [0 .13 , 0.17] . The minimum, ASR= 0.13, is achieved at λ = 10 and represents an 81% relative reduction from baseline. The width of this range is the practical signature of the soft penalty design: rather than depending on a finely-tuned threshold, the method admits a broad operating region in which it is robustly effective. 
+
+(2) Smooth onset. Between λ = 0 and λ = 1 , ASR decays monotonically from 0.68 → 0.34 →
+
+0.15 . The decay is consistent with the Lipschitz bound of Eq. (11) : small λ produces small score perturbations and proportionally small changes to the TSP retention set. At λ = 0 , the bit-exact equivalence to FastKV (verified by output hashing) rules out floating-point drift as a confound for any change observed at λ > 0.
+
+(3) Reversal at very large penalties. Past λ = 30 , ASR ceases to decrease and instead rebounds :
+
+0.55 at λ = 100 and 0.78 at λ = 300 , the latter exceeding the FastKV baseline itself. This non-monotonic behavior is the key empirical signature of the failure mode that motivated the structural safeguards: when the penalty is large enough to override the importance ordering of non-immune tokens, the TSP retention set is no longer a faithful summary of the prompt, and the model regresses to the template-mode generation pattern described in §1. 
+
+4.4 Long-Context Utility on LongBench 
+
+The companion question to safety is utility: how does the soft penalty interact with the model’s performance on benign long-context tasks? We answer this with the full 16 -task LongBench suite Bai et al. [2024], sweeping λ over the same grid as §4.3. Table 1 reports per-task and averaged scores for all configurations; Figure 5 summarizes the trend. 
+
+Three observations. (1) Safety can be obtained at minimal utility cost. At the smaller end of the safety-effective range ( λ ∈ [0 .3, 3] ), the LongBench average drops by less than 0.5 points relative to FastKV ( 47 .64 → 47 .55 , 47 .48 , 47 .21 ). At λ = 10 , which achieves the minimum ASR of 0.13 ,the average drops by approximately 1 point ( 47 .64 → 46 .57 ). By comparison, FastKV itself loses 
+
+1.6 points relative to FullKV ( 49 .23 → 47 .64 ): the additional cost of safety in the effective range is smaller than the utility cost of the underlying compression itself .
+
+(2) Per-task heterogeneity. Inspection of Table 1 reveals that the utility loss is concentrated in tasks with long, content-dense inputs that benefit most from broad token retention. QA-style tasks (H OTPOT QA, 2W IKI MQA, Q ASPER ) show the steepest decline at large λ, while shorter-input or output-template tasks (TREC, P SG RET ) are largely robust until λ ≥ 100 . The code-completion task LCC shows the largest absolute collapse at λ = 300 (60 .00 → 43 .60 ), consistent with our hypothesis that the reversal regime evicts content backbone tokens that the model relies on for long-range syntactic context. 11 Figure 5: LongBench average score across the 16 tasks as a function of λ (log scale; λ=0 corresponds bit-exactly to FastKV). Within the safety-effective range identified in Figure 4, the utility cost is small: λ ≤ 3 loses less than 0.5 points relative to FastKV, and λ = 10 —which achieves the lowest ASR—loses approximately 1 point. Larger λ trades utility for the (now-counterproductive) safety pressure of the reversal regime. 
+
+(3) Beneath the reversal threshold, utility is largely a smooth function of λ. The average score decreases monotonically across λ ∈ [0 , 100] , with no abrupt jumps—in particular, no discontinuity at λ = 0 .30 . This validates the continuity property of Eq. (10) – (11) at the level of end-to-end task performance, and indicates that the choice of λ is a continuous trade-off rather than a discrete threshold. 
+
+# 5 Conclusion 
+
+We have presented AnchorKV , a drop-in modification to TSP-style KV cache compression that incorporates an offline-constructed harm anchor into the per-token retention rule. The work is grounded in a single thesis: the linear-direction account of safety representation Zou et al. [2023a], Arditi et al. [2024] extends beyond residual-stream activations to the layer-specific key-projection space, and is operationally usable inside aggressive KV-cache compression .Our experiments substantiate this thesis with three quantitative findings. First, the difference-of-means recipe transfers cleanly to the per-head key projection at the eviction layer (§3.1): the anchor reaches a validation AUROC of 0.991 at ℓ∗ = 15 and a held-out test AUROC of 0.996 on the AdvPrompter split (§4.2)—comparable in magnitude to the residual-stream refusal direction reported by Arditi et al. [2024]. Second, the soft-penalty rule of Eq. (5) is continuous in λ and bit-exactly reduces to FastKV at λ = 0 , a property we verified by output hashing across the entire test set (§4.3). This makes AnchorKV ablatable as a strict superset of the unmodified backbone. Third, on the joint sweep of safety and utility, AnchorKV at λ = 10 reduces jailbreak ASR from 0.68 to 0.13 (81% relative reduction) while the LongBench 16-task average drops by only 1.07 points (§4.3–4.4). For context, the underlying compression alone—FullKV to FastKV—accounts for 1.59 points of the same metric: 
+
+the additional utility cost of safety is smaller than the utility cost of compression itself .Beyond the specific numbers, our work makes a methodological point relevant to the broader study of safety in efficient inference Hong et al. [2024]. Existing KV cache compression methods are evaluated almost exclusively on accuracy benchmarks; the assumption that an attention-greedy retention policy preserves model behavior in general has not been audited against the model’s safety alignment in particular. By identifying refusal-evidence dilution and template-mode regression as concrete failure modes, by proposing a compression-compatible defense whose strength is a continuous knob rather than a binary switch, and by mapping the non-monotonic safety–strength curve out to its reversal regime (ASR = 0.78 at λ = 300 , exceeding the FastKV baseline), we add a new axis to the design 12 space of long-context inference: not only how much to compress, but which tokens to preserve when the compression ratio is severe. 
+
+5.1 Limitations and Future Work 
+
+We close with two limitations whose resolution we view as natural next steps. 
+
+Single linear direction. Our anchor encodes harm as one direction in key space, following the finding that refusal is mediated by a single linear direction in residual-stream activations Arditi et al. [2024]. Recent work suggests some safety-relevant concepts may require multiple, possibly non-linear, components. Whether the test AUROC of 0.996 already saturates or could be further improved by a low-rank projection or a small mixture of anchors is an open question. The soft-penalty form of Eq. (5) generalizes naturally—the dot product becomes a quadratic form—but the bit-exact reduction at λ = 0 would have to be verified anew under any such generalization. 
+
+In-distribution validation set. The anchor is constructed and validated on the AdvBench-paraphrase distribution (§4.1). The high test AUROC therefore demonstrates linear separability within this distribution, not necessarily on out-of-distribution benign prompts. Our LongBench evaluation (§4.4) provides an indirect cross-distribution probe—the small utility loss ( 1.07 points at 
+
+λ = 10 ) is consistent with an anchor that does not systematically misclassify long-document content tokens—but it does not directly establish the anchor’s discriminative quality on OOD distributions. A direct OOD evaluation, e.g. on JailbreakBench or HarmBench prompts disjoint from the anchor’s training set, is the most informative next experiment. 
+
+# References 
+
+Andy Arditi, Oscar Obeso, Aaquib Syed, Daniel Paleka, Nina Panickssery, Wes Gurnee, and Neel Nanda. Refusal in language models is mediated by a single direction. Advances in Neural Information Processing Systems , 37:136037–136083, 2024. Yushi Bai, Xin Lv, Jiajie Zhang, Hongchang Lyu, Jiankai Tang, Zhidian Huang, Zhengxiao Du, Xiao Liu, Aohan Zeng, Lei Hou, et al. Longbench: A bilingual, multitask benchmark for long context understanding. In Proceedings of the 62nd annual meeting of the association for computational linguistics (volume 1: Long papers) , pages 3119–3137, 2024. Aaron Grattafiori, Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten, Alex Vaughan, et al. The llama 3 herd of models. arXiv preprint arXiv:2407.21783 , 2024. Junyuan Hong, Jinhao Duan, Chenhui Zhang, Zhangheng Li, Chulin Xie, Kelsey Lieberman, James Diffenderfer, Brian Bartoldson, Ajay Jaiswal, Kaidi Xu, et al. Decoding compressed trust: Scruti-nizing the trustworthiness of efficient llms under compression. arXiv preprint arXiv:2403.15447 ,2024. Tanqiu Jiang, Zian Wang, Jiacheng Liang, Changjiang Li, Yuhui Wang, and Ting Wang. Ro-bustkv: Defending large language models against jailbreak attacks via kv eviction. arXiv preprint arXiv:2410.19937 , 2024. Dongwon Jo, Jiwon Song, Yulhwa Kim, and Jae-Joon Kim. Fastkv: Kv cache compression for fast long-context processing with token-selective propagation. arXiv preprint arXiv:2502.01068 , 2025. Yuhong Li, Yingbing Huang, Bowen Yang, Bharat Venkitesh, Acyr Locatelli, Hanchen Ye, Tianle Cai, Patrick Lewis, and Deming Chen. Snapkv: Llm knows what you are looking for before generation. 
+
+Advances in Neural Information Processing Systems , 37:22947–22970, 2024. Aixin Liu, Bei Feng, Bing Xue, Bingxuan Wang, Bochao Wu, Chengda Lu, Chenggang Zhao, Chengqi Deng, Chenyu Zhang, Chong Ruan, et al. Deepseek-v3 technical report. arXiv preprint arXiv:2412.19437 , 2024. Xiaogeng Liu, Nan Xu, Muhao Chen, and Chaowei Xiao. Autodan: Generating stealthy jailbreak prompts on aligned large language models. arXiv preprint arXiv:2310.04451 , 2023a. 13 Zichang Liu, Aditya Desai, Fangshuo Liao, Weitao Wang, Victor Xie, Zhaozhuo Xu, Anastasios Kyrillidis, and Anshumali Shrivastava. Scissorhands: Exploiting the persistence of importance hypothesis for llm kv cache compression at test time. Advances in Neural Information Processing Systems , 36:52342–52364, 2023b. Mistral AI and NVIDIA. Mistral NeMo. https://mistral.ai/news/mistral-nemo , July 2024. Accessed: 2025-XX-XX. Anselm Paulus, Arman Zharmagambetov, Chuan Guo, Brandon Amos, and Yuandong Tian. Ad-vprompter: Fast adaptive adversarial prompting for llms. arXiv preprint arXiv:2404.16873 , 2024. Alexander Robey, Eric Wong, Hamed Hassani, and George J Pappas. Smoothllm: Defending large language models against jailbreaking attacks. arXiv preprint arXiv:2310.03684 , 2023. Alexander Wei, Nika Haghtalab, and Jacob Steinhardt. Jailbroken: How does llm safety training fail? 
+
+Advances in neural information processing systems , 36:80079–80110, 2023. Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis. Efficient streaming language models with attention sinks. arXiv preprint arXiv:2309.17453 , 2023. Zhenyu Zhang, Ying Sheng, Tianyi Zhou, Tianlong Chen, Lianmin Zheng, Ruisi Cai, Zhao Song, Yuandong Tian, Christopher Ré, Clark Barrett, et al. H2o: Heavy-hitter oracle for efficient generative inference of large language models. Advances in Neural Information Processing Systems , 36:34661–34710, 2023. Zhexin Zhang, Junxiao Yang, Pei Ke, Fei Mi, Hongning Wang, and Minlie Huang. Defending large language models against jailbreaking attacks through goal prioritization. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,pages 8865–8887, 2024. Wayne Xin Zhao, Kun Zhou, Junyi Li, Tianyi Tang, Xiaolei Wang, Yupeng Hou, Yingqian Min, Beichen Zhang, Junjie Zhang, Zican Dong, et al. A survey of large language models. arXiv preprint arXiv:2303.18223 , 1(2):1–124, 2023. Xiabin Zhou, Wenbin Wang, Minyan Zeng, Jiaxian Guo, Xuebo Liu, Li Shen, Min Zhang, and Liang Ding. Dynamickv: Task-aware adaptive kv cache compression for long context llms. arXiv preprint arXiv:2412.14838 , 2024. Andy Zou, Long Phan, Sarah Chen, James Campbell, Phillip Guo, Richard Ren, Alexander Pan, Xuwang Yin, Mantas Mazeika, Ann-Kathrin Dombrowski, et al. Representation engineering: A top-down approach to ai transparency. arXiv preprint arXiv:2310.01405 , 2023a. Andy Zou, Zifan Wang, Nicholas Carlini, Milad Nasr, J Zico Kolter, and Matt Fredrikson. Universal and transferable adversarial attacks on aligned language models. arXiv preprint arXiv:2307.15043 ,2023b. 14
