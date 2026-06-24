@@ -6,35 +6,52 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-23
-- 运行时间：2026-06-23 05:56:33 UTC
+- 最新运行日期：2026-06-24
+- 运行时间：2026-06-24 06:01:13 UTC
 - 运行状态：成功
-- 本次总论文数：5
-- 精读区：3
-- 速读区：2
+- 本次总论文数：10
+- 精读区：6
+- 速读区：4
 
 ### 今日简报（AI）
-今日精读2篇论文，聚焦黑盒越狱防御与安全感知KV缓存压缩。最值得关注的是《DoubtProbe》（9.0分）的结构验证与语义审计方法，以及《AnchorKV》（8.0分）的软惩罚锚点压缩策略。建议优先阅读这两篇，关注AI安全中的防御机制与缓存优化创新。
-- 详情：[/202606/23/README](/202606/23/README)
+1) 今日聚焦LLM Agent安全，精选10篇论文重点攻克工具投毒与恶意技能检测，两篇9分精读揭秘隔离规划与安全OS架构。  
+2) 最值得精读《Think Twice Before You Act》和《AgenticOS》：前者提出隔离规划抵御工具描述投毒，后者构建面向Agent的安全操作系统；速读中《AgentLens》和《Detecting Malicious Agent Skills》也值得一看。  
+3) 若想快速上手安全Agent，建议先精读这两篇9分论文，再结合多轮编码的机制子空间分析（AgentLens,8分）实践防护策略。
+- 详情：[/202606/24/README](/202606/24/README)
 
 ### 精读区论文标签
-1. [DoubtProbe: Black-Box Jailbreak Defense via Structural Verification and Semantic Auditing](/202606/23/2606.16527v1-doubtprobe-black-box-jailbreak-defense-via-structural-verification-and-semantic-auditing)  
+1. [Think Twice Before You Act: Protecting LLM Agents Against Tool Description Poisoning via Isolated Planning](/202606/24/2606.20922v1-think-twice-before-you-act-protecting-llm-agents-against-tool-description-poisoning-via-isolated-planning)  
    标签：评分：9.0/10、query:llm-security
-   evidence：黑盒越狱防御，结合结构验证和语义审计
-2. [AnchorKV: Safety-Aware KV Cache Compression via Soft Penalty with a Refusal Anchor](/202606/23/2606.17872v1-anchorkv-safety-aware-kv-cache-compression-via-soft-penalty-with-a-refusal-anchor)  
-   标签：评分：8.0/10、query:llm-security
-   evidence：安全感知的KV压缩防御越狱攻击
-3. [Structural Role Injection in Handlebars-Templated LLM Prompts: Triple-Brace Interpolation, Delimiter Family, and the Limits of HTML Auto-Escaping](/202606/23/2606.18120v1-structural-role-injection-in-handlebars-templated-llm-prompts-triple-brace-interpolation-delimiter-family-and-the-limits-of-html-auto-escaping)  
-   标签：评分：8.0/10、query:llm-security
-   evidence：LLM提示中结构角色注入的分析
+   evidence：通过隔离规划保护LLM智能体免受工具描述投毒
+2. [AgenticOS: An Intent-Oriented Secure Operating System Architecture for Autonomous AI Agents](/202606/24/2606.21129v1-agenticos-an-intent-oriented-secure-operating-system-architecture-for-autonomous-ai-agents)  
+   标签：评分：9.0/10、query:llm-security
+   evidence：提出面向意图的操作系统安全架构，防御LLM智能体中的提示注入
+3. [AutoRAS: Learning Robust Agentic Systems with Primitive Representations](/202606/24/2606.21445v1-autoras-learning-robust-agentic-systems-with-primitive-representations)  
+   标签：评分：9.0/10、query:llm-security
+   evidence：利用安全信号学习鲁棒智能体系统的框架
+4. [Harness-MU: A Safe, Governed, and Effective Harness for Multi-User LLM Agents](/202606/24/2606.21856v1-harness-mu-a-safe-governed-and-effective-harness-for-multi-user-llm-agents)  
+   标签：评分：9.0/10、query:llm-security
+   evidence：多用户LLM代理的安全防控框架
+5. [IndicGuard: A Multilingual Safety Guard Model and Dataset for Indic Languages](/202606/24/2606.22841v1-indicguard-a-multilingual-safety-guard-model-and-dataset-for-indic-languages)  
+   标签：评分：9.0/10、query:llm-security
+   evidence：多语言安全防护模型和数据集，用于内容安全过滤
+6. [GIF: Locally Sound Geometric Information Flow Control for LLMs](/202606/24/2606.23277v1-gif-locally-sound-geometric-information-flow-control-for-llms)  
+   标签：评分：9.0/10、query:llm-security
+   evidence：面向提示注入防御的几何信息流控制
 
 ### 速读区论文标签
-1. [GRACE-DS: a Guarded Reward-guided Agent Correction Environment in Data Science](/202606/23/2606.16000v1-grace-ds-a-guarded-reward-guided-agent-correction-environment-in-data-science)  
-   标签：评分：6.0/10、query:llm-security
-   evidence：LLM智能体安全评估
-2. [GRACE-DS: a Guarded Reward-guided Agent Correction Environment in Data Science](/202606/23/2606.16000v2-grace-ds-a-guarded-reward-guided-agent-correction-environment-in-data-science)  
-   标签：评分：6.0/10、query:llm-security
-   evidence：LLM智能体安全评估环境
+1. [AgentLens: Interpretable Safety Steering via Mechanistic Subspaces for Multi-Turn Coding Agent](/202606/24/2606.22673v1-agentlens-interpretable-safety-steering-via-mechanistic-subspaces-for-multi-turn-coding-agent)  
+   标签：评分：8.0/10、query:llm-security
+   evidence：通过机械子空间实现多轮编码代理的安全引导
+2. [Detecting Malicious Agent Skills in the Wild using Attention](/202606/24/2606.23416v1-detecting-malicious-agent-skills-in-the-wild-using-attention)  
+   标签：评分：8.0/10、query:llm-security
+   evidence：检测恶意代理技能作为LLM代理安全措施
+3. [MIRAGE: Stealthy Visual Prompt Injection for Vulnerability Detection in Web Agents](/202606/24/2606.20717v1-mirage-stealthy-visual-prompt-injection-for-vulnerability-detection-in-web-agents)  
+   标签：评分：7.0/10、query:llm-security
+   evidence：针对Web代理漏洞检测的隐蔽视觉提示注入
+4. [DE-FIVE: Detecting Malicious Image Prompts via Fourier Features and Image Vector Embeddings](/202606/24/2606.22779v1-de-five-detecting-malicious-image-prompts-via-fourier-features-and-image-vector-embeddings)  
+   标签：评分：7.0/10、query:llm-security
+   evidence：利用傅里叶特征和嵌入检测恶意图像提示，防御间接提示注入
 
 
 <div class="dpr-home-promo-card">
