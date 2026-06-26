@@ -1,0 +1,2008 @@
+Title: CORE-BREW: LLR-Based Soft Decoding for Robust Multi-Bit LLM Watermarking
+
+URL Source: https://arxiv.org/pdf/2606.24163v1
+
+Published Time: Wed, 24 Jun 2026 00:35:18 GMT
+
+Number of Pages: 47
+
+Markdown Content:
+# CORE-BREW: LLR-Based Soft Decoding for Robust Multi-Bit LLM Watermarking 
+
+Joeun Kim 
+
+Department of AI DGIST Daegu, Republic of Korea 
+
+jowithu@dgist.ac.kr 
+
+HoEun Kim 
+
+Department of AI DGIST Daegu, Republic of Korea 
+
+hoeun.kim@dgist.ac.kr 
+
+Young-Sik Kim ∗
+
+Department of AI, Department of EECS DGIST Daegu, Republic of Korea 
+
+ysk@dgist.ac.kr 
+
+Abstract 
+
+Reliable provenance for LLM outputs requires multi-bit watermarks that remain robust under editing while maintaining strict false-positive control. Existing ECC-based LLM watermarks rely largely on hard-decision decoding, discarding token-level reliability information. We propose CORE-BREW , a CO nstant-hit-Rate 
+
+Embedding extension of block-wise BREW for robust multi-bit watermarking. CORE-BREW calibrates the watermark channel by targeting a fixed hit-rate p⋆,yielding closed-form per-token log-likelihood ratios (LLRs) for principled soft-decision decoding. It supports two detection modes: Strict-Safe , which pre-serves the bounded-distance designated-codeword acceptance region, and FPR-Calibrated , which uses likelihood-based scoring and lightweight list decoding to characterize the FPR–TPR trade-off. Experiments on open-source LLMs under token-level edits and paraphrasing demonstrate improved low-FPR discrimination and robustness over prior multi-bit watermarking baselines while maintaining comparable semantic quality. 
+
+1 Introduction 
+
+Large language models (LLMs) are now used to generate text at scale in education, journalism, software development, and public policy. This rapid deployment raises urgent questions about provenance, accountability, and safety: when a text appears online, who—or what—produced it, and under what conditions? Watermarking has emerged as a promising mechanism to embed verifiable provenance signals at generation time [ 10 ] rather than relying solely on post-hoc classifiers [ 14 ]. Recent work has moved beyond zero-bit “presence tests” toward multi-bit watermarks that embed payloads such as user identifiers or policy tags. A particularly effective line couples keyed token partitioning with error-correcting codes (ECCs) and designated-codeword verification, achieving extremely low false positive rates (FPR) by accepting only when a pre-specified codeword is recovered in enough separately seeded blocks [ 19 , 1 , 9]. In these schemes, the detector typically maps each generated token into a single bit (e.g., membership in a block-specific green/red list) and then applies a bounded-distance ECC decoder. This hard-decision interface is simple and provides clean combinatorial FPR bounds, but it discards the model’s token probabilities and can therefore suffer 
+
+> ∗Corresponding author. Preprint.
+> arXiv:2606.24163v1 [cs.CR] 23 Jun 2026
+
+elevated false negatives under moderate synonym substitution, insertion/deletion misalignment, or paraphrasing, even when text quality and FPR are tightly controlled. A natural idea is to apply soft-decision decoding, which is well known to improve reliability in classical communication systems when calibrated log-likelihood ratios (LLRs) are available [ 13 , 21 ]. However, in existing LLM watermarking pipelines, the induced “channel” from hidden bits to observed token categories is highly context-dependent: the probability of sampling a green token given a target bit can vary substantially across prompts and time steps. Without a principled, position-homogeneous channel model, LLRs are ill-defined, and off-the-shelf soft decoding becomes ad hoc. We propose CORE-BREW , a Constant Hit-Rate extension of block-wise BREW that makes soft decoding principled by explicitly shaping the watermark channel. On the embedding side, it introduces a constant hit-rate rule that adaptively chooses a logit offset at each time step so that the total probability mass assigned to the target token list is fixed to p⋆ ∈ (0 , 1) , independent of context. This calibration makes each token position behave, from the watermark’s perspective, like an approximately stationary binary symmetric channel (BSC) with crossover probability 1 − p⋆ in the fully-embedded regime (i.e., when no erasure safeguard is triggered). As a consequence, each observed token category yields a closed-form per-token LLR of constant magnitude log p⋆ 
+
+> 1−p⋆
+
+with sign determined by list membership, enabling a clean soft-information interface for ECC-based multi-bit watermarking. Constant hit-rate embedding can, in principle, require large logit shifts in low-entropy contexts where the base model assigns extremely small mass to the target list. To prevent severe quality degradation and ensure the empirical stability of the channel model, we introduce 
+
+distortion guards : we cap the bias magnitude and optionally skip embedding at low-entropy positions, treating them as neutral “erasures” (zero LLR contribution) during detection. This improves the robustness–quality trade-off while remaining compatible with block-wise ECC aggregation. On the detection side, CORE-BREW integrates calibrated LLRs into a block-wise BCH framework with window shifting [ 9 ]. Since preserving the bounded-distance acceptance region and expanding detection power are distinct goals, we provide two complementary modes. Strict-Safe converts erasures into key-derived pseudorandom bits and accepts only when the resulting hard-decision vector lies within Hamming radius t of the designated codeword. Thus, its acceptance region remains contained in the baseline bounded-distance region, preserving the corresponding combinatorial FPR behavior. FPR-Calibrated preserves erasures as zero-LLR positions and applies likelihood-based scoring with statistical thresholds. This allows controlled acceptance beyond the bounded-distance region when the evidence for the designated codeword is strong, improving detection power while explicitly characterizing the FPR–TPR trade-off. We evaluate CORE-BREW on open-source LLMs under clean generation, token-level attacks, and paraphrasing, comparing against strong ECC-based baselines [ 19 , 1, 9]. Across settings, CORE-BREW improves low-FPR discrimination while maintaining comparable semantic quality, with Strict-Safe serving as a conservative alternative. 
+
+Contributions. Our main contributions are: 1. CORE-BREW and channel shaping for principled LLRs. We propose CORE-BREW, which extends block-wise BREW with Constant Hit-Rate embedding to calibrate the water-mark channel to a position-homogeneous reliability scale with target parameter p⋆. This enables closed-form token-level and bit-level LLR computation. 2. Two-mode decoding that separates guarantees from detection power. We provide (i) a 
+
+Strict-Safe decoder that preserves the designated-codeword bounded-distance acceptance region, and (ii) an FPR-Calibrated likelihood-based decoder that exploits soft evidence and explicitly characterizes the FPR–TPR trade-off. 3. Entropy-aware erasure safeguards. We introduce practical safeguards that mitigate quality degradation in low-entropy contexts and integrate naturally into the LLR pipeline as zero-evidence positions, yielding a BSEC-style interpretation. 4. Robustness and quality evaluation. We evaluate CORE-BREW across models, datasets, token-level attacks, and paraphrasing, showing improved low-FPR discrimination and analyzing the associated quality–robustness trade-off. 22 Background and Related Work 
+
+2.1 Watermarking for LLM-generated text 
+
+Text watermarking methods for large language models are broadly divided into (i) zero-bit schemes that test only for watermark presence and (ii) multi-bit schemes that embed recoverable payloads. A canonical zero-bit approach is the keyed green–red partition method of Kirchenbauer et al. [ 10 ], which biases sampling toward a secret “green” subset and detects by statistical tests on green-token counts. Subsequent work studies robustness, distributional fidelity, and detectability limits of such partition-based signals [ 26 , 30 , 22 ]. Post-hoc detectors such as DetectGPT provide complementary evidence but do not offer keyed provenance guarantees [14]. 
+
+2.2 Multi-bit Watermarking with Error-Correcting Codes 
+
+Multi-bit watermarking embeds recoverable metadata, such as user or policy identifiers, into gen-erated text. Early designs, such as MPAC [ 27 ], demonstrate the feasibility of multi-bit payload embedding via direct token-level signaling, but their recovery reliability can degrade under editing and paraphrasing attacks. This motivates ECC-based approaches that introduce redundancy for robust payload recovery. Qu et al. [ 19 ] study multi-bit watermarking with classical ECCs and a security-oriented evaluation protocol emphasizing robustness to edits, while Chao et al. [ 1] adopt LDPC-style and window-based constructions to improve recovery on short texts. A central challenge in ECC-based multi-bit watermarking is false-positive control. If a detector accepts any decoded codeword, or relies on nearest-codeword recovery without a designated target, watermark-free text may still be mapped to a valid payload, inflating the false positive rate (FPR). Recent block-wise designs address this issue with a designated-codeword architecture, as in BREW [ 9], where each block is associated with a pre-specified keyed codeword, and detection is successful only when sufficient blocks match their designated targets. This structure yields strong FPR control because unwatermarked text is unlikely to fall near the designated codewords. 
+
+2.3 Soft information, channel modeling, and decoding 
+
+In classical coding theory, soft-decision decoding improves reliability when calibrated log-likelihood ratios (LLRs) are available. For algebraic block codes such as BCH—which offer well-understood minimum-distance properties and bounded-distance decoders—Chase-type and ordered-statistics algorithms provide standard practical realizations of soft decoding [ 2, 13 , 21 ]. Despite these gains, most ECC-based LLM watermarking methods still rely on hard decisions: each token is mapped to a single bit and decoded using bounded-distance, nearest-codeword, or any-codeword acceptance rules [ 19 , 1 , 9 ]. The key obstacle is that the induced watermark channel is highly context-dependent: under fixed logit biasing, the probability of sampling from the intended list varies across prompts and time steps, making LLRs ill-defined without calibration. These issues motivate explicit channel calibration. Our approach induces a position-homogeneous channel from token-level statistics, enabling principled LLR-based decoding and separating two detection perspectives: (i) a bounded-distance, acceptance-region-constrained mode aligned with classical designated-codeword FPR analyses, and (ii) an FPR-calibrated likelihood-test mode whose detection-FPR trade-off is directly quantified. We instantiate both modes on BCH codes (Section 4), which support bounded-distance decoding while remaining compatible with soft-decision algorithms. 
+
+2.4 Attacks, paraphrasing, and evaluation protocols 
+
+Robust watermark evaluation considers both token-level edits (e.g., synonym substitution, insertion, deletion) and higher-level paraphrasing or rewriting [ 23 , 15 , 11 ]. Prior work shows that sufficiently strong paraphrasing can substantially degrade watermark signals, motivating evaluation across a range of attack strengths rather than at a single operating point [ 25 ]. From a cryptographic perspective, pseudorandom code constructions highlight inherent trade-offs between robustness and indistinguishability [ 3]. Together, this literature suggests that practical watermark systems should (i) analyze detection performance in terms of the FPR–TPR trade-off, (ii) characterize robustness under both token-level and semantic-level attacks, and (iii) clearly specify the acceptance criterion used to control false positives. Our evaluation follows these principles by explicitly analyzing the FPR–TPR trade-off. 3Strict-Safe             
+
+> FPR-Calibrated
+> LLM
+> Embedding
+> GR?G?
+> PRF Fill
+> GRRGG
+> BSEC → PRF Fill → BSC
+> Embedding
+> GR?G?
+> Preserve E (LLR = 0)
+> BSEC (E kept as erasure)
+> Attacker
+> Decoding
+> Soft: signed LLR sum >
+> Decoding
+> c⁽ʲ⁾
+> t
+> Hard decision · bounded distance ≤ t
+> Watermarked Text
+> c⁽ʲ⁾
+> t
+
+Figure 1: Overview of CORE-BREW. Constant Hit-Rate embedding provides calibrated reliability scores shared by two detection modes: Strict-Safe fills erasures with key-derived hard decisions for bounded-distance checking, while FPR-Calibrated uses score-thresholded list decoding with erasure-aware candidate evaluation. 
+
+3 Problem Setup & Baseline 
+
+We adopt a hypothesis-testing formulation for watermark detection. Given a secret key K shared between an embedder and a detector, the detector decides whether a text is watermarked ( H1) or unwatermarked ( H0), and performance is measured by the false positive rate (FPR) and the true positive rate (TPR). As a strong designated-codeword baseline, we consider BREW [ 9 ], a recent block-wise multi-bit watermarking scheme that combines keyed token partitions with error-correcting codes (ECCs) and designated-codeword verification. Generation is partitioned into fixed-length blocks, each associated with a pre-specified keyed codeword. Detection is accepted only when a block decodes to its designated codeword, yielding strong control of false positives, with FPR decreasing exponentially in the number of blocks. These guarantees rely on a hard-decision acceptance rule: a block is accepted only if the observed hard-decision bit vector lies within the bounded-distance decoding region of the designated codeword. While this ensures robust FPR control, it discards token-level probability information and induces a context-dependent, uncalibrated channel. These limitations motivate our channel-calibrated embedding and soft-information decoding framework introduced in Section 4. Formal definitions and analysis of the baseline are provided in Appendix A. 
+
+4 Proposed Method 
+
+We propose CORE-BREW , a CO nstant-hit-Rate Embedding extension of block-wise BREW [ 9]for robust multi-bit LLM watermarking. CORE-BREW keeps the block-wise designated-codeword structure of the baseline (Section 3), while modifying the embedding rule to calibrate the watermark channel and the decoding rule to exploit calibrated log-likelihood evidence. The same calibrated embedding supports two complementary detection modes (Figure 1): Strict-Safe , which fills erasures with PRF bits and applies bounded-distance decoding to preserve baseline-style FPR control, and 
+
+FPR-Calibrated , which preserves erasures and uses likelihood-based decoding to improve detection power under a statistical acceptance rule. Section 4.4 details both modes. 
+
+4.1 Constant Hit-Rate Soft Embedding 
+
+At each generation step t, let pt(v) be the base model distribution over the vocabulary v ∈ V (after any standard sampling temperature, if used). Given a block index j and a designated codeword bit 
+
+zt ∈ { 0, 1} for that position, we define the target list Lt := Lzt from the fixed keyed vocabulary partition (Section 3). Let mt := P 
+
+> v∈Lt
+
+pt(v) be the base model probability mass assigned to the target list. 4Constant hit-rate calibration. We choose a single global hit-rate target p⋆ ∈ (1 /2, 1) and compute a logit offset δt so that the post-bias distribution assigns exactly p⋆ total mass to the target list: 
+
+δt = log p⋆
+
+1 − p⋆ − log mt
+
+1 − mt
+
+. (1) We then bias logits by adding δt to tokens in Lt:
+
+˜ℓt(v) = 
+
+ℓt(v) + δt, v ∈ Lt,ℓt(v), v / ∈ Lt, ˜pt(v) = exp( ˜ℓt(v)) 
+
+P 
+
+> u∈V
+
+exp( ˜ℓt(u)) . (2) This choice makes P 
+
+> v∈Lt
+
+˜pt(v) = p⋆ (see Appendix C.1). Unlike fixed logit biasing, Constant Hit-Rate explicitly fixes the target-list mass to p⋆, yielding a position-homogeneous reliability scale for LLR computation. 
+
+Entropy-aware erasures for quality safety. A practical issue is that when the base distribution is 
+
+low-entropy (e.g., near-deterministic next-token), forcing a fixed p⋆ can require arbitrarily large |δt|,which can harm fluency and factuality (a form of degeneration under distributional perturbations [ 6]). To prevent this, we introduce an entropy-aware erasure safeguard :• Bias cap: we first compute the raw constant hit-rate bias and clamp it as δt ←
+
+clip( δt, −δmax , δ max ). We then compute the post-bias target-list mass induced by the clamped bias. • Erasure condition (feasibility): if, after clamping, the induced target-list mass is not safely above 1/2 (i.e., the embedding cannot guarantee positive correlation), we skip embedding at step t and treat it as an erasure. Equivalently, we set δt = 0 and mark this position as erased. • Erasure condition (entropy/peakness): we also skip embedding if the base distribution is too peaked or too low-entropy, i.e., max v pt(v) ≥ qmax or Ht < H min .In decoding, erased positions contribute zero LLR (Section 4.2), yielding a binary-symmetric channel with erasures. This mitigates quality degradation in low-entropy regions while preserving erasure-tolerant detection. 
+
+Detector access note. The erasure rule depends on pt(·), and hence on quantities such as mt, entropy, or peak probability. A detector that uses erasures therefore needs access to the generator or an equivalent scoring model to recompute these quantities from the observed prefix. This model-aware assumption makes CORE-BREW most suitable for provider-side verification, where such access is available. Token-only detection remains possible by disabling erasures, but it does not benefit from the entropy-aware safeguard and is not the focus of our evaluation. 
+
+4.2 Channel Modeling and Per-Token LLRs 
+
+Define the observed watermark bit at step t as Yt := fK (st) ∈ { 0, 1}, where st is the sampled token and fK indicates whether st ∈ L1 under the fixed keyed partition (Section 3). Under Constant Hit-Rate embedding (without erasure), the induced watermark bit channel is approximately position-homogeneous and can be modeled as a binary symmetric channel (BSC): Pr( Yt = zt) = p⋆, Pr( Yt̸ =
+
+zt) = 1 − p⋆, with a target hit probability that is independent of the local context. This justifies a principled per-token log-likelihood ratio (LLR): 
+
+Λt(Yt) = log Pr( Yt | zt = 1) Pr( Yt | zt = 0) =
+
+( log p⋆ 
+
+> 1−p⋆
+
+, Yt = 1 ,
+
+− log p⋆ 
+
+> 1−p⋆
+
+, Yt = 0 .
+
+Under attacks, these LLRs should be interpreted as calibrated pre-attack reliability scores rather than exact post-attack likelihoods. Estimating attack-dependent channel parameters at detection time is an interesting direction for future work. When an erasure safeguard is triggered at step t, we set 
+
+Λt(Yt) = 0 , so that erased positions contribute no evidence. 5Acceptance region and soft decoding. In the FPR-Calibrated mode, the decoder is not restricted to the raw hard-decision acceptance region. We use a bounded-distance BCH hard decoder as a subroutine inside a controlled list-decoding wrapper with score-based rejection (Section 4.4). This can recover the designated codeword beyond the nominal radius t of the raw hard decision in some cases, but the gains also arise from erasure-aware scoring and LLR-based candidate evaluation within the bounded-distance regime. False positives are controlled by (i) limiting the list size and shifts, (ii) requiring equality to the designated codeword, and (iii) requiring strong log-likelihood evidence; Section 5 provides the analysis. 
+
+4.3 From Token-Level to Bit-Level LLRs 
+
+Let the code length be n. For each block j and candidate shift s, we construct a bit-level reliability vector Λ(j,s ) ∈ Rn by assigning shifted token positions to BCH bit positions. Let u(j,s ) 
+
+> b
+
+denote the token index assigned to bit position b under the shifted candidate block. For each bit position, we set 
+
+Λ(j,s ) 
+
+> b
+
+=
+
+(
+
+Λu(j,s )
+
+> b
+
+
+
+Yu(j,s )
+
+> b
+
+
+
+, if u(j,s ) 
+
+> b
+
+is valid ,
+
+0, otherwise .
+
+Invalid positions are treated as erasures and contribute zero evidence. The shift s is applied when constructing the candidate block representation, while the fixed keyed partition is used to map each observed token to its hard bit. 
+
+4.4 Soft-Decision BCH Decoding with Window Shifting 
+
+Edits and paraphrases can introduce insertion/deletion noise that misaligns token positions. We therefore test candidate shifts s ∈ [−smax , s max ] for each block j. For a shift s, we compute a block-level alignment score for the designated codeword c(j) ∈ { 0, 1}n:
+
+S(j)(s) = 
+
+> n−1
+
+X
+
+> b=0
+
+
+
+2c(j)[b] − 1
+
+
+
+Λ(j,s ) 
+
+> b
+
+.
+
+Intuitively, S(j)(s) is the log-likelihood evidence for the designated codeword under the calibrated channel. 
+
+Safe list-based soft decoding. Given Λ(j,s ), we run a safe list-decoding wrapper that returns either (i) an accepted designated-codeword match, or (ii) a rejection symbol ⊥ when no candidate both decodes to the designated codeword and provides sufficient evidence. We implement this via a Chase-style list-decoding wrapper [ 2 , 13 ]: it enumerates a small set of erasure-filled candidate hard-decision vectors, applies the bounded-distance BCH hard decoder to each candidate, and accepts a block only when the decoded codeword equals the designated codeword and its block score exceeds τblk .This procedure can sometimes recover the designated codeword even when the raw hard decision is outside radius t. However, its gains also come from erasure-aware scoring and reliability-aware candidate evaluation within the bounded-distance regime, so using a bounded-distance decoder as a subroutine remains compatible with improved detection power. 
+
+Block and text-level decision. In Strict-Safe mode, the list-decoding step is replaced by a direct bounded-distance check between the erasure-filled hard-decision vector and the designated codeword. For each block j, we accept a match if ∃s ∈ [−smax , s max ] s.t. ˆc(j) 
+
+> s
+
+= c(j). Let Mmatch be the number of matched blocks among M . We decide watermarked if the match ratio exceeds θ: 
+
+> Mmatch
+> M
+
+≥ θ. This decision rule is compatible with both token-only decoding (no erasures) and erasure-aware decoding (recommended). 
+
+4.5 Design Choices and Practical Considerations Choosing p⋆. The target hit-rate p⋆ controls the reliability of the induced bit channel: larger values yield larger LLR magnitudes and stronger watermark evidence, but may require larger logit shifts when mt is far from the target. We treat p⋆ as a tunable parameter, analyzing detection reliability in Section 6 and detailed hit-rate/text-quality trends in Appendices D.4 and D.2. 6Low-entropy safeguards. The entropy-aware erasure mechanism prevents extreme biasing when the base model is near-deterministic. This preserves text quality and turns difficult positions into erasures (LLR = 0 ), which modern soft decoders handle well [ 13 , 21 ]. In practice, we tune δmax and 
+
+Hmin (or qmax ) to trade off capacity vs. quality. 
+
+Why TPR can improve without violating FPR control. FPR-Calibrated improves TPR through reliability-aware list decoding and erasure-aware LLR scoring; beyond-radius recovery is possible but not the only source of gain. FPR remains controlled because we (i) limit the number of tested shifts and candidates, (ii) require equality to the designated codeword, and (iii) impose a likelihood threshold (and optional margin). Section 5 derives the resulting bounds, and Section 6 validates the resulting FPR–TPR trade-off empirically. 
+
+Implementation. We compute mt using masked softmax sums or stable log-sum-exp over the target list and its complement. Decoding scales with (2 smax + 1) shifts and a small Chase-style candidate list; detailed thresholds and list-decoding parameters are given in Appendix E. 
+
+5 Theoretical Analysis 
+
+Our analysis separates two notions often conflated in prior multi-bit watermarking work: (i) applying a bounded-distance acceptance rule to the detector’s hard-decision representation, which yields designated-codeword-style false positive control under the stated analysis model, and (ii) improving detection power using soft information, which requires a statistical acceptance rule and may expand the acceptance region. Under Constant Hit-Rate embedding, non-erased positions approximately follow a position-homogeneous binary symmetric channel with target hit rate p⋆, enabling principled reliability scoring and LLR computation. We therefore provide two detection modes: Strict-Safe 
+
+detection, which applies bounded-distance verification to the PRF-filled hard-decision representation and follows the designated-codeword FPR analysis, and FPR-Calibrated detection, which uses calibrated block scores and score-thresholded list decoding to control the FPR–TPR trade-off. Formal assumptions, false positive bounds, and detection power analyses are provided in Appendix C. For window-shift FPR control under H0, we employ Hunter’s spanning-tree inequality [ 7], which tightens the loose union bound by incorporating adjacent-shift joint probabilities Pr( Es ∩ Es+1 ). These joint probabilities admit a closed-form expression determined by the codeword shift autocorrelation 
+
+a(1) = |{ i : c[i + 1] = c[i]}| , derived in Appendix C. 
+
+6 Experiments 
+
+Our experiments address four questions: (Q1) clean detection performance; (Q2) robustness under token-level attacks; (Q3) robustness under paraphrasing and semantic rewriting; and (Q4) sensitivity to key parameters. All experiments are conducted within the MarkLLM framework [ 16 ], using official baseline implementations and a unified pipeline for generation, attacks, and detection. Unless otherwise stated, we report mean performance over multiple random seeds, with 95% confidence intervals for the main numerical results. 
+
+6.1 Experimental Setup Models and datasets. We evaluate OPT-1.3B [ 28 ] and Mistral-7B [ 8] on C4 and OpenGen, where OpenGen consists of 3,000 two-sentence prompts derived from WikiText-103. Unless otherwise specified, OPT-1.3B on C4 is used as the default setting, and we generate continuations of length 
+
+T = 500 tokens. 
+
+Schemes compared. We compare MPAC [ 27 ], Qu et al. [ 19 ], BREW [ 9 ], and our two variants: CORE-BREW-Strict and CORE-BREW-Cal. All methods are evaluated under comparable payload budgets, BCH code settings, and block segmentation when applicable. BREW serves as the block-wise designated-codeword baseline, using bounded-distance BCH decoding with window-shifting detection. CORE-BREW-Strict uses Strict-Safe block acceptance to isolate the effect of channel shaping, whereas CORE-BREW-Cal additionally uses calibrated block scores and lightweight erasure-aware list decoding. 70.0 0.2 0.4 0.6 0.8 1.0                  
+
+> False Positive Rate (FPR)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> True Positive Rate (TPR)
+> Ideal
+> (FPR=0, TPR=1)
+> (a) Full ROC
+> MPAC (AUC=0.575)
+> Qu et al. (AUC=0.542)
+> BREW (AUC=0.960)
+> CORE-BREW-Strict (Ours) (AUC=0.952)
+> CORE-BREW-Cal (Ours) (AUC=0.970)
+> 0.00 0.02 0.04 0.06 0.08 0.10 0.12 0.14
+> False Positive Rate (FPR)
+> 0.86
+> 0.88
+> 0.90
+> 0.92
+> 0.94
+> 0.96
+> 0.98
+> 1.00
+> True Positive Rate (TPR)
+> FPR = 5%
+> (b) Zoom Low-FPR Region
+> MPAC
+> Qu et al.
+> BREW
+> CORE-BREW-Strict (Ours)
+> CORE-BREW-Cal (Ours)
+> Clean Setting
+
+Figure 2: ROC curves under the clean setting. (a) Full ROC comparison. (b) Zoomed view of the low-FPR region. CORE-BREW variants and BREW [ 9] achieve strong discrimination, while MPAC [ 27 ] and Qu et al. [ 19 ] remain close to random guessing. 0.0 0.2 0.4 0.6 0.8 1.0                    
+
+> False Positive Rate (FPR)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> True Positive Rate (TPR)
+> Ideal
+> (FPR=0, TPR=1)
+> C4
+> MPAC (AUC=0.580)
+> Qu et al. (AUC=0.512)
+> BREW (AUC=0.828)
+> CORE-BREW-Strict (Ours) (AUC=0.828)
+> CORE-BREW-Cal (Ours) (AUC=0.837)
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> False Positive Rate (FPR)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> True Positive Rate (TPR)
+> Ideal
+> (FPR=0, TPR=1)
+> OpenGen
+> MPAC (AUC=0.560)
+> Qu et al. (AUC=0.530)
+> BREW (AUC=0.837)
+> CORE-BREW-Strict (Ours) (AUC=0.846)
+> CORE-BREW-Cal (Ours) (AUC=0.857)
+> Substitution Attack 10%
+
+Figure 3: ROC curves under 10% token-level sub-stitution on C4 (left) and OpenGen (right). CORE-BREW and BREW [ 9] maintain strong discrim-ination, while MPAC [ 27 ] and Qu et al. [ 19 ] de-grade toward near-random performance. 
+
+Code, detection parameters, and metrics. Unless otherwise stated, we use BCH parameters 
+
+(n, k, t ) = (63 , 7, 15) [ 13 ], window shifting with smax = 10 , and p⋆ = 0 .9 as the default CORE-BREW setting after sweeping p⋆ ∈ { 0.6, 0.7, 0.8, 0.9}. We report text-level TPR/FPR with 95% confidence intervals for the main numerical results, distinct designated-codeword match rate for block-level recovery, and PPL, BLEU [ 17 ], and BERTScore [ 29 ] for text quality. Details on code-length selection, entropy-aware safeguards, list-decoding parameters, interval calculation, and text-quality results are provided in Appendices D.3, E, and D.2. 
+
+6.2 Clean Detection Performance (Q1) 
+
+We first evaluate detection performance on clean generations, with a particular focus on false positive behavior. Figure 2 reports ROC curves under the clean setting, comparing the observed FPR–TPR trade-offs of all methods. MPAC [ 27 ] and Qu et al. [ 19 ] exhibit weak discriminative power, with ROC curves close to the random-guessing diagonal and low AUC values. In contrast, BREW [ 9]and the proposed CORE-BREW variants achieve strong separation, maintaining high TPR in the low-FPR region. Among them, CORE-BREW-Cal achieves the best overall performance, while CORE-BREW-Strict provides more conservative detection behavior. Detailed numerical results and diagnostics are reported in Appendix D.1. 
+
+6.3 Synthetic Token-Level Attacks (Q2) 
+
+We study robustness to controlled token-level perturbations applied to both watermarked and unwa-termarked texts at attack rate α = 0 .1. We consider three attack types: token-preserving substitution ,which replaces tokens with synonyms while preserving tokenizer length using TextAttack-style transformations [ 15 ]; deletion-like edits , which remove tokens independently with probability α; and 
+
+insertion-like edits , which insert additional tokens or replace tokens with longer variants. For insertion and deletion attacks, we apply window-shifting detection with maximum offset smax 
+
+to compensate for alignment shifts. This allows the detector to search over local offsets around each block boundary, whereas substitution preserves token positions and does not require alignment correction. 
+
+Results. Figures 3, 4, and 5 report ROC curves under substitution, deletion, and insertion attacks, respectively. Detailed numerical TPR/FPR values, including 95% confidence intervals, are reported in Appendix D.8. MPAC [ 27 ] and Qu et al. [ 19 ] show weak discrimination across attacks, with ROC curves close to the random-guessing diagonal. In contrast, BREW [ 9] and the CORE-BREW variants remain effective in the low-FPR region. Under substitution, CORE-BREW achieves the strongest low-FPR separation, outperforming BREW while MPAC and Qu et al. degrade toward random guessing. Under deletion, the detection task simplifies significantly, with CORE-BREW and BREW achieving near-perfect ROC behavior. Insertion is the most challenging setting: all methods degrade, but CORE-BREW maintains stronger low-FPR discrimination than MPAC and Qu et al. Overall, these results show that CORE-BREW provides reliable detection under diverse token-level perturbations, with a consistent advantage in low-FPR regimes. 80.0 0.2 0.4 0.6 0.8 1.0                    
+
+> False Positive Rate (FPR)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> True Positive Rate (TPR)
+> Ideal
+> (FPR=0, TPR=1)
+> C4
+> MPAC (AUC=0.588)
+> Qu et al. (AUC=0.505)
+> BREW (AUC=0.995)
+> CORE-BREW-Strict (Ours) (AUC=0.992)
+> CORE-BREW-Cal (Ours) (AUC=0.992)
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> False Positive Rate (FPR)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> True Positive Rate (TPR)
+> Ideal
+> (FPR=0, TPR=1)
+> OpenGen
+> MPAC (AUC=0.588)
+> Qu et al. (AUC=0.528)
+> BREW (AUC=1.000)
+> CORE-BREW-Strict (Ours) (AUC=1.000)
+> CORE-BREW-Cal (Ours) (AUC=1.000)
+> Deletion Attack 10%
+
+Figure 4: ROC curves under 10% token-level deletion on C4 (left) and OpenGen (right). CORE-BREW and BREW [ 9 ] achieve near-perfect dis-crimination, while MPAC [27] and Qu et al. [19] remain close to random guessing. 0.0 0.2 0.4 0.6 0.8 1.0                    
+
+> False Positive Rate (FPR)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> True Positive Rate (TPR)
+> Ideal
+> (FPR=0, TPR=1)
+> C4
+> MPAC (AUC=0.580)
+> Qu et al. (AUC=0.510)
+> BREW (AUC=0.723)
+> CORE-BREW-Strict (Ours) (AUC=0.711)
+> CORE-BREW-Cal (Ours) (AUC=0.735)
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> False Positive Rate (FPR)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> True Positive Rate (TPR)
+> Ideal
+> (FPR=0, TPR=1)
+> OpenGen
+> MPAC (AUC=0.552)
+> Qu et al. (AUC=0.520)
+> BREW (AUC=0.713)
+> CORE-BREW-Strict (Ours) (AUC=0.696)
+> CORE-BREW-Cal (Ours) (AUC=0.729)
+> Insertion Attack 10%
+
+Figure 5: ROC curves under 10% token-level in-sertion on C4 (left) and OpenGen (right). All methods degrade under insertion, but CORE-BREW and BREW [ 9] maintain stronger perfor-mance than MPAC [27] and Qu et al. [19]. 
+
+6.4 Paraphrasing and Semantic Editing (Q3) 0.0 0.2 0.4 0.6 0.8 1.0                    
+
+> False Positive Rate (FPR)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> True Positive Rate (TPR)
+> Ideal
+> (FPR=0, TPR=1)
+> C4
+> MPAC (AUC=0.710)
+> Qu et al. (AUC=0.495)
+> BREW (AUC=0.770)
+> CORE-BREW-Strict (Ours) (AUC=0.795)
+> CORE-BREW-Cal (Ours) (AUC=0.820)
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> False Positive Rate (FPR)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> True Positive Rate (TPR)
+> Ideal
+> (FPR=0, TPR=1)
+> OpenGen
+> MPAC (AUC=0.685)
+> Qu et al. (AUC=0.520)
+> BREW (AUC=0.805)
+> CORE-BREW-Strict (Ours) (AUC=0.820)
+> CORE-BREW-Cal (Ours) (AUC=0.815)
+> Paraphrase Attack (T5)
+
+Figure 6: ROC curves under T5-based paraphras-ing on C4 and OpenGen. CORE-BREW maintains strong low-FPR discrimination, while MPAC and Qu et al. [19] suffer from high FPR. We evaluate robustness against realistic para-phrasing attacks that aim to remove watermark signals while preserving semantic content. Para-phrases are generated using models distinct from the watermark generator, following prior work [ 23 , 15 , 11 , 25 ]. To ensure semantic fi-delity with non-trivial surface variation, we re-tain paraphrases with BERTScore ≥ 0.5 and BLEU ≥ 0.3. Because paraphrasing and se-mantic filtering are substantially more expensive than token-level attacks, we use continuations of length T = 200 tokens for this experiment. De-tection performance is evaluated by comparing the resulting (FPR , TPR) operating points under a T5-based paraphraser [ 20 ] on C4 and OpenGen (Figure 6), using representative parameter settings: δ = 3 for all baselines (MPAC [ 27 ], Qu et al. [ 19 ], and BREW [ 9 ]), and p⋆ = 0 .9 for CORE-BREW. Detailed numerical results are provided in Appendix D.9. Figure 6 shows that MPAC and Qu et al. achieve high TPR under paraphrasing but incur severely elevated FPR, with Qu et al. approaching near-random behavior. In contrast, BREW maintains strict FPR control but suffers from lower TPR due to its conservative bounded-distance acceptance. CORE-BREW achieves a more favorable trade-off: both variants maintain near-zero FPR while im-proving TPR over BREW. In particular, CORE-BREW-Cal shows the strongest overall performance, combining high detection sensitivity with strict false-positive control. These results highlight that explicit false-positive control is essential for reliable watermark detection under semantic rewriting. 
+
+6.5 Targeted Ablations on Key Parameters (Q4) 
+
+We conduct targeted ablations on key design components that directly affect robustness and reliability under token-level attacks. Specifically, we analyze sensitivity to the hit-rate p⋆, which controls the reliability of the induced bit channel; the window-shift budget smax , which governs tolerance to insertion and deletion noise; and the entropy-aware erasure mechanism, which acts as a distortion-control safeguard in low-entropy contexts. A detailed sweep of p⋆ is reported in Appendix D.4, the effect of erasures is analyzed in Appendix D.5, and sensitivity to smax is analyzed in Appendix D.6. 
+
+6.6 Limitations and Threat Model 
+
+We discuss practical deployment considerations and robustness limits under strong semantic rewriting, with further details provided in Appendix F. Model-aware detection incurs additional computational cost, but this overhead can be mitigated using lightweight proxy models that approximate entropy and erasure patterns. CORE-BREW operates at moderately higher perplexity, reflecting a likelihood– robustness trade-off rather than consistent semantic-quality degradation; detailed text-quality evalua-9tions are provided in Appendix D.2. Improving this trade-off, for example via adaptive p⋆, remains an important direction for future work. 
+
+7 Conclusion 
+
+We present CORE-BREW , a block-wise multi-bit watermarking framework that makes soft-decision decoding principled by shaping the induced watermark channel. Constant Hit-Rate embedding yields calibrated LLRs for BCH-based decoding, while window shifting supports alignment-robust detection. The framework separates two detector modes: Strict-Safe , which preserves the bounded-distance designated-codeword acceptance region, and FPR-Calibrated , which uses likelihood-based scoring and lightweight list decoding to characterize the FPR–TPR trade-off. With entropy-aware distortion guards, CORE-BREW improves robustness under token-level attacks and paraphrasing while maintaining strong false-positive control across models and datasets. 
+
+Acknowledgments 
+
+This work was partly supported by Institute of Information & communications Technology Planning & Evaluation (IITP) grant funded by the Korea government (MSIT) (RS-2024-00399401, Development of Quantum-Safe Infrastructure Migration and Quantum Security Verification Technologies, 50%) and Institute of Information & communications Technology Planning & Evaluation (IITP) grant funded by the Korea government (MSIT) (RS-2024-00442085, Development of V2X Infra Security Core Technologies for Autonomous Vehicle Services, 50%). 
+
+References 
+
+[1] Patrick Chao, Yan Sun, Edgar Dobriban, and Hamed Hassani. Watermarking language models with error correcting codes. arXiv preprint arXiv:2406.10281 , 2024. [2] D. Chase. Class of algorithms for decoding block codes with channel measurement information. 
+
+IEEE Transactions on Information Theory , 18(1):170–182, 1972. doi: 10.1109/TIT.1972. 1054746. [3] Miranda Christ and Sam Gunn. Pseudorandom error-correcting codes. In Leonid Reyzin and Douglas Stebila, editors, Advances in Cryptology – CRYPTO 2024 , pages 325–347, Cham, 2024. Springer Nature Switzerland. [4] Oded Goldreich. Foundations of Cryptography, Volume 1: Basic Tools . Cambridge University Press, 2001. ISBN 0-521-79172-3. [5] Wassily Hoeffding. Probability inequalities for sums of bounded random variables. Journal of the American Statistical Association , 58(301):13–30, 1963. URL https://doi.org/10. 1080/01621459.1963.10500830 .[6] Ari Holtzman, Jan Buys, Li Du, Maxwell Forbes, and Yejin Choi. The curious case of neural text degeneration. In International Conference on Learning Representations (ICLR 2020) , 2020. URL https://openreview.net/forum?id=rygGQyrFvH .[7] David Hunter. An upper bound for the probability of a union. Journal of Applied Probability ,13(3):597–603, 1976. [8] Albert Q. Jiang, Alexandre Sablayrolles, Arthur Mensch, Chris Bamford, Devendra Singh Chaplot, Diego de las Casas, Florian Bressand, Gianna Lengyel, Guillaume Lample, Lucile Saulnier, Lélio Renard Lavaud, Marie-Anne Lachaux, Pierre Stock, Teven Le Scao, Thibaut Lavril, Thomas Wang, Timothée Lacroix, and William El Sayed. Mistral 7b, 2023. URL 
+
+https://arxiv.org/abs/2310.06825 .[9] Joeun Kim, HoEun Kim, Dongsup Jin, and Young-Sik Kim. Block-wise codeword embedding for reliable multi-bit text watermarking, 2026. URL https://arxiv.org/abs/2605.00348 .10 [10] John Kirchenbauer, Jonas Geiping, Yuxin Wen, Jonathan Katz, Ian Miers, and Tom Goldstein. A watermark for large language models. In Proceedings of the 40th International Conference on Machine Learning (ICML 2023) , pages 17061–17084. PMLR, 2023. [11] Kalpesh Krishna, Yixiao Song, Marzena Karpinska, John Wieting, and Mohit Iyyer. Paraphras-ing evades detectors of ai-generated text, but retrieval is an effective defense. Advances in Neural Information Processing Systems (NeurIPS 2023) , 36:27469–27500, 2023. [12] Taku Kudo and John Richardson. SentencePiece: A simple and language independent subword tokenizer and detokenizer for neural text processing. In Eduardo Blanco and Wei Lu, editors, 
+
+Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing: System Demonstrations , pages 66–71, Brussels, Belgium, November 2018. Association for Computational Linguistics. doi: 10.18653/v1/D18-2012. URL https://aclanthology. org/D18-2012/ .[13] Shu Lin and Daniel J. Costello. Error Control Coding: Fundamentals and Applications .Prentice Hall, Upper Saddle River, NJ, 2 edition, 2004. ISBN 0-13-042672-6. URL 
+
+https://www.pearson.com/en-us/subject-catalog/p/error-control-coding/ P200000003536/9780130426727 .[14] Eric Mitchell, Yoonho Lee, Alexander Khazatsky, Christopher D. Manning, and Chelsea Finn. Detectgpt: Zero-shot machine-generated text detection using probability curvature. In 
+
+Proceedings of the 40th International Conference on Machine Learning (ICML 2023) , pages 24950–24962. PMLR, 2023. [15] John X. Morris, Eli Lifland, Jin Yong Yoo, and Yanjun Qi. Textattack: A framework for adversarial attacks, data augmentation, and adversarial training in nlp. In Proceedings of the 2020 conference on empirical methods in natural language processing: System demonstrations ,pages 119–126, 2020. [16] Leyi Pan, Aiwei Liu, Zhiwei He, Zitian Gao, Xuandong Zhao, Yijian Lu, Binglin Zhou, Shuliang Liu, Xuming Hu, Lijie Wen, Irwin King, and Philip S. Yu. MarkLLM: An open-source toolkit for LLM watermarking. In Delia Irazu Hernandez Farias, Tom Hope, and Manling Li, editors, 
+
+Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing: System Demonstrations (EMNLP 2024) , pages 61–71, Miami, Florida, USA, November 2024. Association for Computational Linguistics. doi: 10.18653/v1/2024.emnlp-demo.7. URL 
+
+https://aclanthology.org/2024.emnlp-demo.7/ .[17] Kishore Papineni, Salim Roukos, Todd Ward, and Wei-Jing Zhu. BLEU: a method for automatic evaluation of machine translation. In Pierre Isabelle, Eugene Charniak, and Dekang Lin, editors, 
+
+Proceedings of the 40th Annual Meeting of the Association for Computational Linguistics (ACL 2002) , pages 311–318, Philadelphia, Pennsylvania, USA, July 2002. Association for Computational Linguistics. doi: 10.3115/1073083.1073135. URL https://aclanthology. org/P02-1040/ .[18] Adam Paszke, Sam Gross, Francisco Massa, Adam Lerer, James Bradbury, Gregory Chanan, Trevor Killeen, Zeming Lin, Natalia Gimelshein, Luca Antiga, Alban Desmaison, An-dreas Kopf, Edward Yang, Zach DeVito, Martin Raison, Alykhan Tejani, Sasank Chil-amkurthy, Benoit Steiner, Lu Fang, Junjie Bai, and Soumith Chintala. PyTorch: An imperative style, high-performance deep learning library. In H. Wallach, H. Larochelle, A. Beygelzimer, F. d'Alché-Buc, E. Fox, and R. Garnett, editors, Advances in Neu-ral Information Processing Systems 32 (NeurIPS 2019) , volume 32. Curran Associates, Inc., 2019. URL https://proceedings.neurips.cc/paper_files/paper/2019/file/ bdbca288fee7f92f2bfa9f7012727740-Paper.pdf .[19] Wenjie Qu, Wengrui Zheng, Tianyang Tao, Dong Yin, Yanze Jiang, Zhihua Tian, Wei Zou, Jinyuan Jia, and Jiaheng Zhang. Provably robust multi-bit watermarking for {AI-generated }
+
+text. In 34th USENIX Security Symposium (USENIX Security 25) , pages 201–220, 2025. [20] Colin Raffel, Noam Shazeer, Adam Roberts, Katherine Lee, Sharan Narang, Michael Matena, Yanqi Zhou, Wei Li, and Peter J. Liu. Exploring the limits of transfer learning with a unified text-to-text transformer. Journal of machine learning research , 21(140):1–67, 2020. 11 [21] Tom Richardson and Rudiger Urbanke. Modern coding theory . Cambridge university press, 2008. [22] Yuki Takezawa, Ryoma Sato, Han Bao, Kenta Niwa, and Makoto Yamada. Necessary and sufficient watermark for large language models. arXiv preprint arXiv:2310.00833 , 2023. [23] John Wieting and Kevin Gimpel. ParaNMT-50M: Pushing the limits of paraphrastic sentence embeddings with millions of machine translations. In Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics (ACL) , pages 451–462, 2018. URL https: //arxiv.org/abs/1711.05732 .[24] Thomas Wolf, Lysandre Debut, Victor Sanh, Julien Chaumond, Clement Delangue, Anthony Moi, Pierric Cistac, Tim Rault, Remi Louf, Morgan Funtowicz, et al. Transformers: State-of-the-art natural language processing. In Proceedings of the 2020 conference on empirical methods in natural language processing: system demonstrations , pages 38–45, 2020. [25] Max Wolff and Stuart Wolff. Attacking neural text detectors. arXiv preprint arXiv:2002.11768 ,2020. [26] Yihan Wu, Zhengmian Hu, Junfeng Guo, Hongyang Zhang, and Heng Huang. A resilient and accessible distribution-preserving watermark for large language models. In Proceedings of the 41st International Conference on Machine Learning (ICML 2024) , volume 235 of Proceedings of Machine Learning Research , pages 53443–53470. PMLR, 2024. [27] KiYoon Yoo, Wonhyuk Ahn, and Nojun Kwak. Advancing beyond identification: Multi-bit watermark for large language models. In Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers) , pages 4031–4055, 2024. [28] Susan Zhang, Stephen Roller, Naman Goyal, Mikel Artetxe, Moya Chen, Shuohui Chen, Christopher Dewan, Mona Diab, Xian Li, Xi Victoria Lin, et al. OPT: Open pre-trained transformer language models. arXiv preprint arXiv:2205.01068 , 2022. [29] Tianyi Zhang, Varsha Kishore, Felix Wu, Kilian Q. Weinberger, and Yoav Artzi. BERTScore: Evaluating text generation with BERT, 2020. URL https://arxiv.org/abs/1904.09675 .[30] Xuandong Zhao, Prabhanjan Ananth, Lei Li, and Yu-Xiang Wang. Provable robust watermarking for AI-generated text. In Proceedings of the 12th International Conference on Learning Representations (ICLR 2024) , 2024. 
+
+A Baseline Full Details 
+
+A.1 Block-wise Designated-Codeword Watermarking 
+
+This appendix summarizes the generic block-wise designated-codeword watermarking framework used by BREW [ 9] and related ECC-based watermarking schemes [ 19 , 1]. The framework combines keyed token partitions with error-correcting codes (ECCs), and accepts a block only when the decoded codeword matches its pre-specified designated codeword. While the framework generalizes to various block codes, in this work we use a binary BCH instantiation with parameters (n, k, t ) = (63 , 7, 15) ,as discussed in Appendix D.3. 
+
+Scope of this appendix. This appendix describes the generic block-wise designated-codeword baseline framework used for comparison and for the standard false-positive analysis. Our evaluated CORE-BREW instantiation in Appendix B uses a fixed keyed vocabulary partition shared across positions to improve reconstruction stability under insertion/deletion attacks. Accordingly, the false-positive discussion below should be read as a standard designated-codeword analysis model rather than an exact independence guarantee for every partition schedule. 12 Code and blocks. Let C ⊆ { 0, 1}n be a binary BCH code of length n, dimension k, and minimum Hamming distance dmin . Let 
+
+t =
+
+ dmin − 12
+
+
+
+denote its unique-decoding radius under bounded-distance decoding [ 13 ]. Generation positions after the prompt are partitioned into blocks of length n. For a continuation position r = t − Np, we define: 
+
+j =
+
+ t − Np
+
+n
+
+
+
+, b = ( t − Np) mod n, 
+
+where j ∈ { 0, 1, . . . } is the block index and b ∈ { 0, . . . , n − 1} is the within-block offset. 
+
+Designated codewords. For each block j, the embedder and detector share a designated codeword 
+
+c(j) ∈ C, derived from the payload and the key. A typical construction uses a per-block pseudorandom mask before encoding to balance codeword weights and to avoid fixed patterns [ 19 , 9]. The detector later checks specifically whether the decoded block equals c(j); it does not accept arbitrary decoded codewords. 
+
+Keyed token partitions. A common designated-codeword construction uses block-dependent keyed vocabulary partitions. For each block j, a keyed partition of the vocabulary is constructed as two disjoint lists L(j)0 and L(j)1 (“red/green”) using a cryptographic hash seeded by (K, j ):
+
+L(j)0 = {v ∈ V : H(K∥j∥v) mod 2 = 0 },L(j)1 = {v ∈ V : H(K∥j∥v) mod 2 = 1 },
+
+where H(·) is modeled as a pseudorandom mapping for analysis [ 4 , 10 , 19 ]. This induces a determin-istic map fj : V → { 0, 1} by membership, used both during embedding and detection. Appendix B specifies the fixed-partition instantiation used in our evaluated CORE-BREW implementation. 
+
+A.2 Baseline Embedding with Fixed Logit Bias (Hard-BCH) 
+
+At each generation step t in block j and offset b, the next code bit to embed is 
+
+zt = c(j)[b] ∈ { 0, 1}.
+
+Let ℓt(v) be the base model logit for token v ∈ V at step t. For the block-dependent baseline notation in this appendix, the target list is indexed by the block-specific partition. The hard-decision baseline applies a fixed logit bias δ > 0 to tokens in the target list L(j) 
+
+> zt
+
+:
+
+˜ℓt(v) = 
+
+(
+
+ℓt(v) + δ, v ∈ L(j) 
+
+> zt
+
+,ℓt(v), otherwise. This formulation follows the partition-based biasing paradigm [ 10 ] adapted for the designated-codeword block-wise setting, consistent with recent approaches [ 19 , 1, 9]. Importantly, with fixed δ,the probability mass on the target list varies with context; thus the induced bit channel is generally non-stationary and not calibrated for LLR computation. 
+
+A.3 Baseline Detection with Window Shifting and Bounded-Distance Decoding 
+
+Given a candidate text (s0, . . . , s T ) and the prompt length Np, the detector forms a block-wise binary sequence by mapping each token through the keyed partition. For each position t in block j and offset b, it sets 
+
+B(j)[b] = fj (st) ∈ { 0, 1},
+
+yielding B(j) ∈ { 0, 1}n.
+
+Window shifting for insertions/deletions. Insertions and deletions can shift the observed token positions relative to the expected block boundaries. For each designated codeword block j, the detector searches over a bounded set of local offsets around the nominal block anchor jn . Let 
+
+smax ∈ N and define 
+
+S = {− smax , . . . , −1, 0, 1, . . . , s max }, S = |S| = 2 smax + 1 .
+
+For each s ∈ S , the detector constructs a candidate block vector B(j,s ) ∈ { 0, 1}n from the n token positions starting at the shifted anchor jn + s.13 Bounded-distance BCH decoding and designated-codeword verification. For each shift s ∈ S ,the detector applies a bounded-distance BCH decoder to the candidate block vector B(j,s ). A block 
+
+j is counted as a match if there exists a shift s such that the decoder outputs exactly the designated codeword c(j). Over M blocks, let Mmatch be the number of matched blocks and define the match ratio 
+
+ρ = Mmatch 
+
+M .
+
+The text is declared watermarked if ρ ≥ θ for a threshold θ ∈ (0 , 1] .
+
+A.4 Baseline False Positive Behavior and Guarantees 
+
+The designated-codeword architecture provides a transparent FPR control mechanism under the standard analysis model. Under H0 and pseudorandom partition assumptions, we model the detector-facing candidate block vector as approximately uniform over {0, 1}n [19, 9]. For a fixed alignment, the probability that such a random block vector lies within Hamming distance at most t of a fixed designated codeword is 
+
+p0 = V2(n, t )2n , V2(n, t ) = 
+
+> t
+
+X
+
+> i=0
+
+ni
+
+
+
+,
+
+the volume of a Hamming ball in {0, 1}n [13]. With window shifting, a union bound gives 
+
+p(shift) 0 ≤ S p 0.
+
+For aggregate text-level bounds, we use an idealized approximate block-independence model. Under this approximation, the number of spurious matches under H0 can be modeled as a binomial random variable with success probability p(shift) 0 . This gives the standard Chernoff-style intuition that, when 
+
+θ > p (shift) 0 , the aggregate FPR decays exponentially with the number of blocks M [ 13 ]. For the fixed-partition instantiation in Appendix B, this should be interpreted as an idealized analysis tool complemented by empirical calibration and validation on held-out unwatermarked text, since repeated tokens and natural-language correlations can induce dependencies across positions and blocks. 
+
+Baseline limitations (motivating calibrated soft information). The baseline’s guarantees are tied to its acceptance region : it accepts a block only when the detector-facing hard-decision vector falls within the bounded-distance decoding neighborhood of the designated codeword. This yields strong combinatorial-style FPR control under the analysis model, but it also (i) discards token probability information and (ii) operates over a context-dependent, uncalibrated induced channel due to fixed bias δ. These limitations motivate our channel-calibrated embedding and LLR-based detection in Appendix B. We explicitly separate two detection perspectives: a strict mode that applies a bounded-distance rule to the detector’s hard-decision representation, and a likelihood-calibrated mode that controls FPR statistically while improving robustness at low-FPR operating points. 
+
+B Algorithmic Details 
+
+This appendix provides concrete algorithmic descriptions for the main components of our water-marking scheme. It mirrors the block-wise designated-codeword framework used by recent robust multi-bit watermarks [ 19 , 1, 9] while incorporating (i) Constant Hit-Rate channel calibration and (ii) two explicit detector modes— Strict-Safe and FPR-Calibrated —to avoid acceptance-region ambiguity. Both evaluated modes use a fixed keyed vocabulary partition and a key-derived alternating pair of designated BCH codewords. They differ in how candidate blocks are accepted: Strict-Safe uses a conservative bounded-distance check, whereas FPR-Calibrated uses score-thresholded list decoding. 
+
+B.1 Keyed Partitions and Codeword Assignment 
+
+We recall the ingredients from Sections 3–4. Let V denote the vocabulary and K a secret key shared by the embedder and detector. Let C ⊆ { 0, 1}n be a binary BCH code of length n and dimension k.We use a cryptographic hash function H modeled as a random oracle [4]. 14 Fixed keyed partitions. In the implementation used for our experiments, we use a single keyed vocabulary split that is shared across all block positions. Given a secret key K, we define 
+
+L0 = {v ∈ V : H(K∥v) mod 2 = 0 }, L1 = {v ∈ V : H(K∥v) mod 2 = 1 }.
+
+This follows the keyed green–red paradigm [ 10 ], but unlike position-dependent partition schedules, the token-to-bit mapping is independent of the bit offset. This fixed mapping makes shifted block reconstruction more stable under insertion and deletion attacks, because the same token is mapped to the same hard bit even when its position changes. 
+
+Designated codeword assignment. In our evaluated instantiation, we use a key-derived pair of nonzero BCH codewords, denoted by c0 and c1. The two codewords are selected so that they are well separated, and blocks alternate between them: 
+
+c(j) = cj mod 2 .
+
+This instantiation is sufficient for watermark detection experiments, where the detector verifies whether each reconstructed block matches its designated codeword. The more general payload-carrying variant can be obtained by replacing this alternating pair with block-dependent encoded payloads. 
+
+B.2 Constant Hit-Rate Soft Embedding with Distortion-Aware Erasures 
+
+Algorithm 1 summarizes online embedding for a single sequence. At each generation step, it determines the current block and code-bit offset, computes the base target-list mass mt, and chooses a Constant Hit-Rate bias after applying distortion guards. If the clamped bias cannot make the target-list mass safely exceed 1/2, if the base distribution is too peaked, or if the base entropy is below a minimum threshold, the step is skipped and marked as an erasure. This mitigates quality degradation and keeps non-erased steps close to the calibrated BSC model used in Section 5. The model-aware detector applies the same erasure rule through EraseCheck in Algorithm 3, ensuring consistent zero-LLR treatment of skipped positions. 
+
+Relation to the hard-decision baseline. The hard-decision baseline is obtained by replacing the adaptive Constant Hit-Rate bias δt with a fixed constant bias δ and omitting the dependence on mt.In this case, the target-list probability varies with context rather than being explicitly calibrated. 15 Algorithm 1 Constant Hit-Rate block-wise embedding with distortion-aware erasures 
+
+Input: prompt tokens (s0, . . . , s Np−1), secret key K, BCH code C, block length n, target hit-rate 
+
+p⋆, language model LM , bias cap δmax , peak threshold qmax , entropy threshold Hmin , numerical clamp ε
+
+Output: watermarked continuation tokens (sNp , . . . , s T )
+
+for t = 0 to Np − 1 do 
+
+Emit prompt token st without modification 
+
+end for for t = Np to T do 
+
+(j, b ) ← divmod( t − Np, n )
+
+if fixed partition not initialized then 
+
+Construct the keyed fixed partition L0, L 1 from K
+
+end if if designated codeword pair not initialized then 
+
+Derive two nonzero BCH codewords c0, c 1 from K
+
+end if 
+
+c(j) ← cj mod 2 
+
+zt ← c(j)[b]
+
+Lt ← Lzt
+
+Query LM to obtain logits ℓt(v)
+
+pt(v) ← softmax( ℓt)( v)
+
+pmax ← max v pt(v)
+
+Ht ← − P 
+
+> v∈V
+
+pt(v) log pt(v)
+
+mt ← P 
+
+> v∈Lt
+
+pt(v)
+
+mt ← min(max( mt, ε ), 1 − ε)
+
+δraw  
+
+> t
+
+← log p⋆ 
+
+> 1−p⋆
+
+− log mt
+
+> 1−mt
+
+δt ← clip( δraw  
+
+> t
+
+, −δmax , δ max )
+
+emt ← eδt mt
+
+eδt mt + (1 − mt)
+
+if pmax ≥ qmax or Ht < H min or emt ≤ 1/2 then 
+
+δt ← 0
+
+Mark position t as erased 
+
+end if 
+
+Bias logits toward Lt using δt
+
+Sample st from the biased distribution 
+
+end for B.3 Bit Sequence Extraction and Block Reconstruction 
+
+On the detection side, the first step is to map observed tokens back to bit sequences using the same fixed keyed partition derived from K. Algorithm 2 summarizes this mapping for the unshifted case. For each complete block, the detector reuses the fixed partition (L0, L 1) and maps each token to a hard bit according to its membership in L1. The resulting vector B(j) ∈ { 0, 1}n is used as the hard-decision representation for bounded-distance decoding and corresponds to the hard decisions induced by the LLR signs in soft decoding. Shifted candidates used in Algorithm 3 are constructed by applying the same token-to-bit mapping and then evaluating shifted block representations within the allowed shift budget. 16 Algorithm 2 Bit sequence extraction and block reconstruction 
+
+Input: text tokens (s0, . . . , s T ), prompt length Np, secret key K, block length n
+
+Output: complete block-wise bit sequences B(0) , . . . , B (M −1) ∈ { 0, 1}n
+
+U ← T − Np + 1 {number of post-prompt positions} 
+
+M ← ⌊ U/n ⌋ {number of complete blocks} 
+
+if M ≤ 0 then return [ ] 
+
+end if 
+
+Construct the fixed keyed partition (L0, L 1) from K
+
+for j = 0 to M − 1 do 
+
+Initialize B(j) as an array of length n
+
+for b = 0 to n − 1 do 
+
+t ← Np + jn + bB(j)[b] ← I[st ∈ L1]
+
+end for end for return (B(0) , . . . , B (M −1) )
+
+B.4 LLR Computation and Window-Shifting Detection (Strict-Safe vs. FPR-Calibrated) 
+
+Algorithm 3 summarizes detection with window shifting and LLR-based scoring. On non-erased positions, the calibrated hit-rate model uses the constant reliability magnitude λ = log 
+
+ p⋆
+
+> 1−p⋆
+
+
+
+. We support two detector modes: • Strict-Safe: erasures are filled with key-derived PRF bits, and a block is accepted only if the filled hard-decision vector lies within Hamming distance tBCH of its designated codeword. • FPR-Calibrated: erasures remain zero-LLR positions, and blocks are evaluated using reliability-aware list decoding with score-based rejection. This improves detection power through erasure-aware LLR scoring and candidate evaluation, while explicitly characterizing the FPR–TPR trade-off. Here, EraseCheck uses the same distortion-aware erasure rule as Algorithm 1, returning true if the base distribution is too peaked ( pmax ≥ qmax ), if the base entropy is below Hmin , or if the clipped bias cannot make the target-list mass safely exceed 1/2.
+
+B.5 Decoding Wrapper (Strict-Safe vs. FPR-Calibrated) 
+
+The FPR-Calibrated mode uses a score-thresholded list-decoding wrapper: it enumerates a small set of erasure-filled candidates, runs a bounded-distance decoder on each candidate, and accepts a block only when the decoded codeword matches the designated codeword and the block score exceeds the calibrated threshold τblk [ 2, 13 , 21 ]. Unlike Strict-Safe mode, the calibrated wrapper does not claim that the acceptance region is contained in the Hamming ball around the raw hard decision; instead, it uses an explicit score threshold and a small search budget as the primary safety control. 17 Algorithm 3 Window-Shifting Detection with Fixed Partition and Alternating Codeword Pair  
+
+> 1:
+
+Input: tokens (s0, . . . , s T ), prompt length Np, key K, BCH code C with HardDecode , decoding radius tBCH , block length n, max shift smax , text threshold θ, hit-rate p⋆, mode ∈ { strict , cal } 
+
+> 2:
+
+Parameters: block threshold τblk , erasure parameters δmax , q max , H min , ε , optional base model 
+
+LM , list-decoding parameters wmax , L max , ℓ  
+
+> 3:
+
+Output: watermarked or unwatermarked  
+
+> 4:
+
+Construct the fixed keyed partition (L0, L 1) from K 
+
+> 5:
+
+Derive a key-dependent pair of nonzero BCH codewords (c0, c 1) 
+
+> 6:
+
+λ ← log 
+
+ p⋆
+
+> 1−p⋆
+
+
+
+, Mmatch ← 0 
+
+> 7:
+
+Determine the number of complete candidate blocks M 
+
+> 8:
+
+for j = 0 to M − 1 do  
+
+> 9:
+
+c(j) ← cj mod 2  
+
+> 10:
+
+matched ← false  
+
+> 11:
+
+for each shift s ∈ {− smax , . . . , s max } do  
+
+> 12:
+
+Construct a shifted candidate block representation for shift s 
+
+> 13:
+
+Initialize Λ ← 0 ∈ Rn 
+
+> 14:
+
+for b = 0 to n − 1 do  
+
+> 15:
+
+u ← ub 
+
+> 16:
+
+if u < N p or u > T then  
+
+> 17:
+
+continue {invalid position is treated as an erasure}  
+
+> 18:
+
+end if  
+
+> 19:
+
+if model-aware erasures enabled then  
+
+> 20:
+
+erased ← EraseCheck( s<u , L c(j)[b], LM , p ⋆, δ max , q max , H min , ε ) 
+
+> 21:
+
+if erased then  
+
+> 22:
+
+continue {keep Λb = 0 } 
+
+> 23:
+
+end if  
+
+> 24:
+
+end if  
+
+> 25:
+
+Λb ← λ(I[su ∈ L1] − I[su ∈ L0])  
+
+> 26:
+
+end for  
+
+> 27:
+
+S(j)(s) ← Pn−1 
+
+> b=0
+
+(2 c(j)[b] − 1)Λ b 
+
+> 28:
+
+if mode = cal and S(j)(s) < τ blk then  
+
+> 29:
+
+continue  
+
+> 30:
+
+end if  
+
+> 31:
+
+if mode = strict then  
+
+> 32:
+
+Form eB(j,s ) from the hard signs of Λ, filling erasures (Λ b = 0) with PRF( K, j, b ) mod 2  
+
+> 33:
+
+if dH ( eB(j,s ), c (j)) ≤ tBCH then  
+
+> 34:
+
+matched ← true  
+
+> 35:
+
+break  
+
+> 36:
+
+end if  
+
+> 37:
+
+else  
+
+> 38:
+
+ˆc ← ChaseListDecode(Λ , C, HardDecode , t BCH , L max , ℓ ) 
+
+> 39:
+
+if ˆc = c(j) then  
+
+> 40:
+
+matched ← true  
+
+> 41:
+
+break  
+
+> 42:
+
+end if  
+
+> 43:
+
+end if  
+
+> 44:
+
+end for  
+
+> 45:
+
+if matched then  
+
+> 46:
+
+Mmatch ← Mmatch + 1  
+
+> 47:
+
+end if  
+
+> 48:
+
+end for  
+
+> 49:
+
+output watermarked iff Mmatch  
+
+> M
+
+≥ θ
+
+18 C Theoretical Proofs 
+
+This appendix provides detailed proofs of the main analytical claims in Section 5. We first prove the Constant Hit-Rate property of our embedding rule, then analyze false positives under the null hypoth-esis in Strict-Safe mode, and finally provide score-based tail bounds that underlie the FPR-Calibrated 
+
+mode. We conclude with standard concentration results that justify finite-sample estimation of empirical detection rates used in Section 6. 
+
+C.1 Proof of Constant Hit-Rate Embedding 
+
+We restate and prove the constant hit-rate property used in Sections 4–5. 
+
+Proposition 1 (Constant hit-rate property) . Let p⋆ ∈ (0 , 1) be a fixed target hit-rate and Lt ⊆ V be a target token list at position t. Let ℓt(v) denote the base model logit for token v ∈ V and let 
+
+pt(v) = exp( ℓt(v)) 
+
+P 
+
+> u∈V
+
+exp( ℓt(u)) 
+
+be the corresponding softmax distribution. Define 
+
+mt = X
+
+> v∈Lt
+
+pt(v),
+
+and choose the bias 
+
+δt = log 
+
+ p⋆
+
+1 − p⋆
+
+
+
+− log 
+
+ mt
+
+1 − mt
+
+
+
+.
+
+Define biased logits by ˜ℓt(v) = ℓt(v) + δt for v ∈ Lt and ˜ℓt(v) = ℓt(v) otherwise, and let 
+
+˜pt = softmax( ˜ℓt). Then the biased distribution satisfies 
+
+X
+
+> v∈Lt
+
+˜pt(v) = p⋆.
+
+Proof. Let 
+
+At = X
+
+> v∈Lt
+
+exp( ℓt(v)) , Bt = X
+
+> v / ∈Lt
+
+exp( ℓt(v)) .
+
+Then mt = At/(At + Bt) and (1 − mt) = Bt/(At + Bt), so At/B t = mt/(1 − mt). Under the bias, the total mass on Lt becomes 
+
+X
+
+> v∈Lt
+
+˜pt(v) = 
+
+P 
+
+> v∈Lt
+
+exp( ℓt(v) + δt)
+
+P 
+
+> u∈V
+
+exp( ˜ℓt(u)) = eδt At
+
+eδt At + Bt
+
+.
+
+Substitute eδt = p⋆ 
+
+> 1−p⋆
+
+· 1−mt 
+
+> mt
+
+= p⋆ 
+
+> 1−p⋆
+
+· Bt 
+
+> At
+
+to obtain 
+
+eδt At
+
+eδt At + Bt
+
+= 
+
+> p⋆
+> 1−p⋆
+
+Btp⋆ 
+
+> 1−p⋆
+
+Bt + Bt
+
+= 
+
+> p⋆
+> 1−p⋆
+> p⋆
+> 1−p⋆
+
++ 1 = p⋆.
+
+Remark (distortion guards and erasures). When distortion guards are enabled (bias cap or skip), the equality above may not hold at every position. In that case we treat skipped positions as erasures (LLR set to 0) and retain boundedness of the per-position contribution used in the concentration arguments below. 
+
+C.2 Strict-Safe: False Positive Bounds under H0
+
+We derive the false positive bounds for the Strict-Safe detector used in Section 5. Under the null hypothesis H0, the text is unwatermarked and independent of the secret key K. Our analysis separates two levels of modeling. First, for a single block, we use the standard designated-codeword approximation that the hard-decision block induced by the keyed partition behaves approximately as a uniform element of {0, 1}n under H0. Second, for text-level aggregation, we use an idealized block-level independence approximation for analytical intuition. This aggregate independence argument does not require exact bit-wise independence within a block. 19 Proposition 2 (Single-block false positive probability, Strict-Safe) . Let C ⊆ { 0, 1}n be a binary BCH code with minimum distance dmin and unique-decoding radius t = ⌊(dmin − 1) /2⌋ [13 ]. Fix a designated codeword c ∈ C. Under the standard uniform-block approximation for H0, the single-block false match probability is 
+
+p0 = Pr  dist H (B, c ) ≤ t = V2(n, t )2n , V2(n, t ) = 
+
+> t
+
+X
+
+> i=0
+
+ni
+
+
+
+.
+
+Proof. Under the uniform-block approximation, B is treated as uniformly distributed over {0, 1}n.The event dist H (B, c ) ≤ t holds iff B lies in the Hamming ball of radius t around c. That ball contains exactly V2(n, t ) binary strings. Therefore, the probability is V2(n, t )/2n.
+
+Text-level aggregation model. For text-level FPR analysis, we use an idealized approximation in which block-level spurious match indicators are treated as approximately independent Bernoulli variables. This approximation is standard in designated-codeword analyses and is useful for un-derstanding how text-level FPR scales with the number of complete blocks. However, for the fixed-partition instantiation in Appendix B, the approximation is not an exact consequence of in-dependently seeded block partitions. The same vocabulary partition is reused across blocks, so repeated tokens and natural-language correlations can introduce dependencies. Accordingly, we use the aggregate Chernoff bound below as an idealized analysis tool, complemented by empirical calibration and validation on held-out unwatermarked text. For the shifted-window analysis below, we continue to use the same uniform-block approximation for each candidate block vector. This approximation is used to estimate single-block false-match probabilities and shift-overlap corrections; text-level aggregation is handled separately through the idealized block-level aggregation model described above. 
+
+Lemma 1 (Adjacent-shift joint probability under the uniform-block model) . Let ∆ ∈ { 1, . . . , n − 1}
+
+and let c ∈ { 0, 1}n be a fixed designated codeword. Define the codeword shift autocorrelation 
+
+a(∆) = |{ i ∈ [0 , n − ∆) : c[i + ∆] = c[i]}| .
+
+Under the uniform-block approximation for a candidate block vector B,
+
+Pr( Es ∩ Es+∆ ) = 
+
+> a(∆)
+
+X
+
+> a=0
+> n−∆−a(∆)
+
+X
+
+> b=0
+
+a(∆) 
+
+a
+
+n − ∆ − a(∆) 
+
+b
+
+
+
+2−(n−∆) 
+
+× F∆(t − a − b) F∆
+
+ t − a − (n − ∆ − a(∆)) + b,
+
+where F∆(k) = Pr(Bin(∆ , 1/2) ≤ k) for k ≥ 0 and F∆(k) = 0 for k < 0.Proof. Decompose the two windows as B(s) = ( X, Y ) and B(s+∆) = ( Y, Z ), where |X| = |Z| = ∆ 
+
+and |Y | = n − ∆. Under the uniform-block approximation, the non-overlapping portions X and Z
+
+and the shared portion Y are treated as independent uniform bit strings. Define: • A ∼ Bin( a(∆) , 1/2) : errors of Y at the a(∆) positions where c[i + ∆] = c[i] (which contribute identically to both events); • B ∼ Bin( n − ∆ − a(∆) , 1/2) : errors of Y in Es at positions where c[i + ∆] ̸ = c[i] (errors in Es+∆ at these positions equal n − ∆ − a(∆) − B); • WX ∼ Bin(∆ , 1/2) and WZ ∼ Bin(∆ , 1/2) : errors on the non-shared portions. The total errors satisfy dH (B(s), c ) = WX + A + B and dH (B(s+∆) , c ) = WZ + A + ( n − ∆ −
+
+a(∆)) − B. The joint event {Es ∩ Es+∆ } requires both sums ≤ t. Conditioning on (A, B ) and using independence of WX , W Z yields the stated closed form. 
+
+Proposition 3 (Window-shifting bound, Strict-Safe) . Under the uniform-block approximation for candidate block vectors, the single-block false positive probability under window shifting satisfies: 
+
+Pr [
+
+> s∈S
+
+Es
+
+!
+
+≤ S · p0 − (S − 1) · Pr( Es ∩ Es+1 ) ≤ S · p0.
+
+20 Proof. The first inequality follows from Hunter’s spanning-tree bound [ 7 ] applied to the chain spanning tree on S. The second follows from Pr( Es ∩ Es+1 ) ≥ 0. The joint probability Pr( Es ∩
+
+Es+1 ) admits the closed-form expression given in Lemma 1 with ∆ = 1 , depending on the codeword shift autocorrelation a(1) = |{ i : c[i + 1] = c[i]}| .
+
+Proposition 4 (Aggregate FPR Chernoff bound under an idealized aggregation model) . Let 
+
+X1, . . . , X M be block-level spurious match indicators under H0. Under the idealized block-level aggregation model, suppose these indicators are treated as independent Bernoulli variables satisfying 
+
+Pr( Xj = 1) ≤ p0 for all j. Let 
+
+ρM = 1
+
+M
+
+> M
+
+X
+
+> j=1
+
+Xj .
+
+Then for any threshold θ ∈ (p0, 1) ,
+
+Pr( ρM ≥ θ) ≤ exp  −M D (θ∥p0),
+
+where D(θ∥p0) = θ log θp0 + (1 − θ) log 1−θ 
+
+> 1−p0
+
+is the binary Kullback–Leibler divergence. Proof. Under the idealized aggregation model, the block-level indicators are dominated by indepen-dent Bernoulli variables with success probability at most p0. The result follows from the standard Chernoff bound for the upper tail of their empirical mean. 
+
+Strict-Safe text-level FPR. Applying the aggregate bound with p0 replaced by the shifted single-block bound p(shift) 0,strict gives the idealized Strict-Safe text-level FPR bound used for analysis in Section 5. For the fixed-partition instantiation, this bound should be interpreted together with empirical FPR calibration and validation under H0.We denote the shifted single-block false-match bound by 
+
+p(shift) 0,strict = Sp 0 − (S − 1) Pr( Es ∩ Es+1 ) ≤ Sp 0.
+
+C.3 Strict-Safe: Single-Block Success Probability under H1
+
+For completeness, we restate the standard bounded-distance success probability of the Strict-Safe 
+
+detector under the alternative hypothesis H1, assuming a BSC observation model on the detector’s PRF-filled hard-decision representation. 
+
+Proposition 5 (Single-block success probability, Strict-Safe) . Assume that under H1 (no attacks) the channel from a designated codeword c ∈ C to the detector’s PRF-filled hard-decision block 
+
+eB ∈ { 0, 1}n is a binary symmetric channel with crossover probability q ∈ [0 , 1/2) . Assume the Strict-Safe block rule succeeds whenever the number of bit errors in eB is at most t and fails otherwise. Then the single-block success probability is 
+
+p1,strict = Pr  dist H ( eB, c ) ≤ t H1
+
+ =
+
+> t
+
+X
+
+> i=0
+
+ni
+
+
+
+qi(1 − q)n−i.
+
+Proof. Under a BSC with crossover q on the PRF-filled hard-decision representation, the number of bit errors dist H ( eB, c ) has distribution Bin( n, q ). The Strict-Safe rule succeeds iff the error count is at most t, yielding the stated sum. 
+
+C.4 FPR-Calibrated: Score-Based Tail Bounds 
+
+We next analyze the score-based acceptance rule used in the FPR-Calibrated mode. Since the block score is a sum of bounded random variables, it admits exponential tail bounds under both H0 and 
+
+H1. These bounds provide a way to control false positives through score-based rejection, without requiring the acceptance region to coincide with a bounded-distance Hamming ball. 21 For the fixed-partition instantiation, the independence assumptions in this subsection should be understood as an idealized bounded-variable analysis model for score calibration rather than exact probabilistic guarantees. Let p⋆ ∈ (1 /2, 1) be the Constant Hit-Rate parameter and let 
+
+L = log 
+
+ p⋆
+
+1 − p⋆
+
+
+
+.
+
+For each block j and shift s, define per-bit LLRs Λ(j,s ) 
+
+> b
+
+∈ [−L, L ], where erasures correspond to 
+
+Λ = 0 . Define the designated-codeword score 
+
+S(j)(s) = 
+
+> n−1
+
+X
+
+> b=0
+
+(2 c(j)[b] − 1) Λ (j,s ) 
+
+> b
+
+.
+
+In FPR-Calibrated Mode, a block can be accepted only if max s S(j)(s) ≥ τblk (and optionally additional checks); therefore, bounding Pr(max s S(j)(s) ≥ τblk ) suffices to upper bound the block-level false positive probability. 
+
+Proposition 6 (Score tail bounds under H0 and H1). For the following score tail bound, we use an analysis model in which, for a fixed block j and shift s, the variables 
+
+Zb = (2 c(j)[b] − 1) Λ (j,s )
+
+> b
+
+are treated as independent and bounded, with Zb ∈ [−L, L ].
+
+(Null hypothesis H0.) If E[Zb] = 0 for all b under H0, then for any τblk > 0,
+
+Pr 
+
+> H0
+
+ S(j)(s) ≥ τblk 
+
+ ≤ exp 
+
+
+
+− τ 2blk 
+
+2nL 2
+
+
+
+.
+
+Consequently, with window shifting over S = 2 smax + 1 shifts, 
+
+Pr 
+
+> H0
+
+
+
+max  
+
+> s
+
+S(j)(s) ≥ τblk 
+
+
+
+≤ S exp 
+
+
+
+− τ 2blk 
+
+2nL 2
+
+
+
+.
+
+(Alternative hypothesis H1.) Suppose that at the true alignment s = strue , there are neff non-erased positions and the non-erased Zb satisfy E[Zb] = μ > 0 while erased positions contribute Zb = 0 .Then for any τblk < n eff μ,
+
+Pr 
+
+> H1
+
+ S(j)(strue ) ≤ τblk 
+
+ ≤ exp 
+
+
+
+− (neff μ − τblk )2
+
+2neff L2
+
+
+
+.
+
+Proof. Under this bounded-independence analysis model, both inequalities follow from Hoeffding’s inequality for sums of bounded independent random variables [ 5]. Under H0, apply Hoeffding to 
+
+S(j)(s) = P 
+
+> b
+
+Zb with mean 0 and bounds ±L. The shift-max bound follows by a union bound over 
+
+S shifts. Under H1, apply Hoeffding to the sum over the neff non-erased positions (erased positions contribute 0 deterministically). 
+
+Remark (decoding does not increase FPR beyond the score bound). In Mode II we also require that a decoding wrapper returns the designated codeword c(j). This can only reduce acceptance relative to the pure score test, so the probability bounds above remain valid upper bounds for block-level false positives. Conversely, the score separation under H1 explains why Mode II can increase detection power, especially when a reliability-aware decoder (e.g., Chase-type list decoding) exploits favorable reliability patterns [2, 13, 21]. 
+
+C.5 Aggregate False Negative Bound 
+
+We state the standard binomial lower-tail bound used to convert single-block success probabilities into a text-level FNR bound. 22 Proposition 7 (Aggregate false negative bound) . Let Y1, . . . , Y M be block-level success indicators under H1. Under the block-level independence analysis model, suppose that Pr( Yj = 1) ≥ p1 for all j. Let 
+
+ρM = 1
+
+M
+
+> M
+
+X
+
+> j=1
+
+Yj .
+
+Then for any threshold θ ∈ (0 , 1) with θ < p 1,
+
+Pr( ρM < θ ) ≤ exp  −M D (θ∥p1),
+
+where D(θ∥p1) is the binary relative entropy. Proof. Under the block-level independence analysis model, the lower tail of the average success rate is bounded by the standard Chernoff bound with dominating Bernoulli parameter p1. This yields the stated inequality. 
+
+Application to Strict-Safe vs. Calibrated modes. For Strict-Safe, p1 can be taken as p1,strict (or its shifted variant). For FPR-Calibrated mode, p1 can be lower bounded using the H1 score tail bound together with the probability of selecting the correct alignment in the shift search; we report these trade-offs empirically in Section 6. 
+
+C.6 Concentration of Empirical FPR (Finite-sample justification) 
+
+We provide a standard concentration inequality justifying empirical estimation of (single-block or text-level) FPR. This result applies to independently sampled evaluation texts or trials and is used to justify uncertainty estimates for empirical FPR measurements. 
+
+Lemma 2 (Concentration of empirical FPR) . Let X1, . . . , X M be independent Bernoulli variables with Pr( Xj = 1) = p0, representing false positives for M independent trials under H0 (a “trial” may refer to a block event or a text-level event). Let 
+
+ˆp0,M = 1
+
+M
+
+> M
+
+X
+
+> j=1
+
+Xj
+
+be the empirical estimate of p0. Then for any ε > 0,
+
+Pr  |ˆp0,M − p0| ≥ ε ≤ 2 exp( −2M ε 2).
+
+In particular, to guarantee Pr( |ˆp0,M − p0| ≥ ε) ≤ δ, it suffices to take 
+
+M ≥ 12ε2 log 
+
+ 2
+
+δ
+
+
+
+.
+
+Proof. This is Hoeffding’s inequality applied to the empirical mean of bounded independent random variables [5]. 
+
+D Additional Experiments 
+
+This appendix reports additional empirical results and diagnostics that complement the main ex-periments in Section 6. Our goals are threefold: (i) to provide stronger empirical evidence for the robustness–quality trade-offs of constant hit-rate embedding and decoding, (ii) to clarify the source of detection gains and the mechanism of false-positive control when the decoder explores candidates beyond the unique-decoding radius, and (iii) to provide practical evaluation templates for future multi-bit LLM watermark studies [10, 19, 1, 9]. 23 Table 1: Detection performance under the clean setting ( T = 500 ) on the C4 dataset. We report TPR/FPR with 95% confidence intervals and match rates in percent. All confidence intervals are reported as [lower, upper]. All results are reported using the default detection configuration for each method. CORE-BREW is evaluated at the primary operating point p⋆ = 0 .9.                                          
+
+> Scheme Parameter TPR FPR Match rate (%)
+> MPAC δ= 3 1.000 [0 .991 ,1.000] 0.850 [0 .801 ,0.899] –Qu et al. [19] δ= 3 1.000 [0 .991 ,1.000] 0.915 [0 .876 ,0.954] –BREW δ= 3 0.920 [0 .875 ,0.965] 0.000 [0 .000 ,0.009] 89 .50 [84 .42 ,94 .58]
+> CORE-BREW-Strict p⋆= 0 .90.903 [0 .863 ,0.943] 0.000 [0 .000 ,0.009] 88 .58 [86 .79 ,90 .37]
+> CORE-BREW-Cal p⋆= 0 .90.940 [0 .907 ,0.973] 0.002 [0 .000 ,0.009] 92 .58 [89 .52 ,95 .64]
+
+Schemes compared. Unless otherwise stated, all experiments follow the setup in Section 6, using the same models, prompts, sampling settings, payload sizes, BCH parameters, and shift range. We compare: • BREW [ 9]: the block-wise designated-codeword baseline, using fixed-bias embedding, hard-decision BCH decoding, and window-shifting detection. • CORE-BREW-Strict: Constant Hit-Rate embedding (Section 4.1) with Strict-Safe detec-tion. Erased positions are filled with key-derived PRF bits, and a block is accepted only through bounded-distance decoding against the designated codeword. This variant serves as a conservative reference point that preserves the baseline bounded-distance acceptance region. • CORE-BREW-Cal: Constant Hit-Rate embedding with entropy-aware erasures and likelihood-based decoding. This variant preserves erasures as zero-LLR positions and uses reliability-aware list decoding with score-based rejection, allowing improved detection power while explicitly characterizing the FPR–TPR trade-off [2, 13, 21]. 
+
+Entropy-aware embedding and erasures. CORE-BREW uses entropy-aware erasures to avoid excessive biasing in low-entropy contexts. After computing and clamping the raw Constant Hit-Rate bias, we erase a position if the base distribution is too peaked ( max v pt(v) ≥ qmax ) or if the clamped bias cannot keep the target-list mass safely above 1/2. Erased positions are sampled without watermark bias and assigned zero token-level LLR at detection, allowing soft decoding to handle them naturally [13, 21]. 
+
+D.1 Clean Detection Results 
+
+Table 1 summarizes detection performance under the clean setting at text length T = 500 , evaluated using the default detection configuration for each method. MPAC [ 27 ] and Qu et al. [ 19 ] exhibit very high false positive rates, indicating weak discriminative power even in the absence of attacks. In contrast, the BREW [ 9] and CORE-BREW variants achieve near-zero FPR while maintaining strong detection performance. Among these, CORE-BREW-Cal achieves the highest match rate, indicating more reliable aggregation of block-level evidence without sacrificing false positive behavior. All CORE-BREW results are reported at the primary operating point p⋆ = 0 .9, while a full hit-rate sweep is provided in Appendix D.4. 
+
+Reviewer-critical diagnostic: beyond-radius corrections. To clarify the source of gains, we report 
+
+π>t = Pr 
+
+
+
+dH
+
+
+
+B(j,s ⋆), c (j)
+
+> t bc(j) = c(j)
+
+, (3) the fraction of accepted blocks whose raw hard-decision vector lies outside the radius-t Hamming ball around the designated codeword. By construction, π>t = 0 for CORE-BREW-Strict. For CORE-BREW-Cal, we observe a small but nonzero value of π>t = 0 .0114 ± 0.0403 at p⋆ = 0 .9, confirming that the calibrated decoder can occasionally recover designated codewords beyond the unique-decoding radius. Since this fraction is 24 Table 2: Text quality under varying watermark strengths ( T = 500 ). CORE-BREW maintains stable semantic quality across different p⋆, while baseline methods degrade as watermark strength increases. Scheme Parameter PPL ↓ BLEU ↑ BERTScore ↑
+
+Unwatermarked – 15.51 31.81 0.8201 MPAC δ = 2 11.27 28.25 0.8068 
+
+δ = 3 13.68 22.29 0.7771 Qu et al. [19] δ = 2 13.50 26.44 0.7995 
+
+δ = 3 16.34 21.41 0.7657 BREW δ = 2 12.83 28.39 0.8014 
+
+δ = 3 16.27 21.89 0.7703 CORE-BREW-Strict p⋆ = 0 .6 16.97 31.72 0.8201 
+
+p⋆ = 0 .7 16.99 31.71 0.8201 
+
+p⋆ = 0 .8 17.35 31.71 0.8201 
+
+p⋆ = 0 .9 18.41 31.75 0.8201 CORE-BREW-Cal p⋆ = 0 .6 16.68 31.80 0.8201 
+
+p⋆ = 0 .7 17.11 31.81 0.8201 
+
+p⋆ = 0 .8 17.48 31.81 0.8201 
+
+p⋆ = 0 .9 18.27 31.82 0.8201 small, the gains should be interpreted as arising from the combined effect of beyond-radius recovery, erasure-aware soft scoring, and reliability-aware candidate evaluation, rather than from beyond-radius recovery alone. 
+
+D.2 Text Quality Evaluation 
+
+We evaluate text quality under varying watermark strengths by sweeping the main embedding parameters of each scheme. Baseline methods control watermark strength via a fixed logit bias magnitude δ, whereas CORE-BREW regulates embedding strength through a target hit-rate p⋆ with entropy-aware safeguards. Table 2 reports perplexity (PPL), BLEU [ 17 ], and BERTScore [ 29 ], all measured relative to the unwatermarked continuation. As watermark strength increases, baseline methods exhibit clear degradation in both surface-level and semantic similarity: larger δ values substantially reduce BLEU and BERTScore, indicating noticeable changes in wording and meaning. In contrast, CORE-BREW maintains BLEU scores around 31.8 and BERTScore values around 0.82 across different p⋆ settings, closely matching the unwatermarked baseline. This indicates that CORE-BREW preserves both surface form and semantic content despite enforcing a stronger watermark signal. CORE-BREW operates at higher perplexity compared to baseline methods, reflecting a controlled and intentional shift in the model distribution induced by watermark embedding. Importantly, this increase in perplexity does not correspond to degraded semantic or perceptual quality, as evidenced by consistently high BLEU and BERTScore. From a watermarking perspective, modifying likelihood is not a drawback but a necessary mechanism to encode a detectable signal. Moreover, CORE-BREW exhibits stable perplexity across different p⋆ values , whereas baseline methods show substantial variation as δ increases. This indicates that CORE-BREW provides a predictable and well-behaved mechanism for controlling watermark strength without introducing abrupt quality changes. Such stability is particularly important in practical deployment settings, where consistent behavior across operating points is required. Taken together, these results show that CORE-BREW sacrifices base-model likelihood in a controlled and stable manner while preserving semantic meaning. This behavior is desirable for watermarking: the signal is strong enough to influence likelihood-based statistics, yet remains imperceptible in terms of meaning, style, and readability. 25 Table 3: Detection performance (TPR/FPR) of different BCH configurations at p⋆ = 0 .9, smax = 5 
+
+(T = 200 ).                             
+
+> 10% Deletion 10% Insertion
+> Strict Cal Strict Cal (15,5,3) (31,6,7) (63,7,15) (15,5,3) (31,6,7) (63,7,15) (15,5,3) (31,6,7) (63,7,15) (15,5,3) (31,6,7) (63,7,15) TPR 0.905 0.915 0.865 0.940 0.885 0.845 0.660 0.400 0.120 0.730 0.510 0.105 FPR 0.165 0.085 0.000 0.350 0.240 0.000 0.150 0.105 0.000 0.360 0.250 0.005
+
+Table 4: Effect of hit-rate p⋆ on detection performance under the clean setting ( T = 500 ). Scheme p⋆ TPR FPR Match rate (%) CORE-BREW-Strict 0.6 0.0283 0.0000 1.42 0.7 0.5533 0.0000 34.58 0.8 0.8983 0.0000 85.50 0.9 0.9033 0.0000 88.58 CORE-BREW-Cal 0.6 0.0350 0.0000 1.75 0.7 0.6433 0.0000 44.17 0.8 0.9100 0.0000 87.83 0.9 0.9400 0.0017 92.58 
+
+Why entropy-aware safeguards matter. A naive constant hit-rate rule can require very large instantaneous biases |δt| when the target-list mass mt is close to 0 or 1, which frequently occurs in low-entropy contexts. Such extreme biasing can distort the output distribution and degrade quality. The entropy-aware mechanism bounds |δt| and converts these positions into erasures, preventing significant semantic degradation while preserving detectability through erasure-tolerant decoding [13, 21]. 
+
+D.3 Code Length and Error-Correction Parameters 
+
+Table 3 compares three BCH configurations with increasing code length and error-correction capability under 10% deletion and insertion attacks. For this code-length sweep, we fix the window-shift budget to smax = 5 , a moderate value within the sweep range considered in Appendix D.6. This provides a balanced setting for comparing code choices without overly favoring configurations that benefit from a larger alignment-search budget. As the code length increases, we observe a clear trade-off between detection power and false positive control. Shorter codes such as (15 , 5, 3) achieve high TPR but suffer from significantly elevated FPR, particularly for the calibrated variant. In contrast, the longest code (63 , 7, 15) consistently achieves near-zero FPR across all settings, demonstrating strong robustness in terms of false positive control. However, this improvement comes at the cost of reduced detection power under insertion attacks, where (63 , 7, 15) exhibits lower TPR due to increased sensitivity to synchronization errors. Despite this limitation, we prioritize reliable false positive control as the primary design objective. Therefore, we adopt (63 , 7, 15) as the default BCH configuration in subsequent experiments, as it provides the strongest false-positive control while maintaining acceptable detection performance. In the main insertion/deletion experiments, we use the larger default shift budget smax = 10 to improve alignment robustness, as analyzed in Appendix D.6. 
+
+D.4 Hit-Rate Sweep under Fixed False Positive Constraint 
+
+We analyze how the target hit-rate p⋆ affects detection performance under the clean setting. Table 4 reports the corresponding TPR, FPR, and match rate as p⋆ varies. As p⋆ increases, both CORE-BREW variants exhibit a clear and monotonic improvement in TPR while maintaining near-zero FPR across all settings. In particular, TPR rises sharply from low values at p⋆ = 0 .6 to near-saturation at p⋆ ∈ { 0.8, 0.9}, a trend that is consistently reflected in the block-level match rate, indicating increasingly reliable recovery of designated codewords. Comparing the two variants, CORE-BREW-26 CORE-BREW-Strict CORE-BREW-Cal  
+
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> TPR
+> 0.9033
+> 0.9400
+> 0.9200 0.9350
+> Erasure Ablation
+> With erasures
+> No erasures
+
+Figure 7: Ablation on entropy-aware erasures under the clean setting at p⋆ = 0 .9 and T = 500 .Bars compare TPR with and without erasures for CORE-BREW-Strict and CORE-BREW-Cal. CORE-BREW-Cal exhibits nearly unchanged TPR across the two settings, indicating that calibrated detection compensates well for erasure-induced evidence reduction while preserving clean detection performance. Table 5: Ablation on entropy-aware erasures under the clean setting ( T = 500 ). We compare CORE-BREW with and without erasures as the target hit-rate p⋆ varies. Scheme p⋆ With erasures No erasures TPR FPR TPR FPR CORE-BREW-Strict 0.6 0.0283 0.0000 0.0400 0.0000 0.7 0.5533 0.0000 0.6150 0.0000 0.8 0.8983 0.0000 0.9000 0.0000 0.9 0.9033 0.0000 0.9200 0.0000 CORE-BREW-Cal 0.6 0.0350 0.0000 0.0500 0.0000 0.7 0.6433 0.0000 0.7000 0.0000 0.8 0.9100 0.0000 0.9050 0.0000 0.9 0.9400 0.0017 0.9350 0.0000 Cal achieves consistently higher TPR and match rate than CORE-BREW-Strict, at the cost of a slight increase in FPR at high p⋆. Overall, these results demonstrate that p⋆ serves as an effective control knob for improving detection reliability while preserving strict false positive control, with performance stabilizing at high values (e.g., p⋆ = 0 .9), which we adopt as the default operating point. 
+
+D.5 Ablation on Entropy-Aware Erasures 
+
+Table 5 ablates the entropy-aware erasure mechanism under the clean setting, and Figure 7 visualizes the comparison at p⋆ = 0 .9. Since this ablation is intended to isolate text-level detection behavior, we report only TPR and FPR; distinct match rate is not measured for the no-erasure variant. Removing erasures can slightly increase TPR in some low-hit-rate settings because more token positions contribute watermark evidence. For example, at p⋆ = 0 .7, TPR increases from 0.5533 to 0.6150 for CORE-BREW-Strict and from 0.6433 to 0.7000 for CORE-BREW-Cal. However, as p⋆
+
+increases, the gap becomes small. This trend is also visible in Figure 7: at p⋆ = 0 .9, CORE-BREW-27 0 1 2 3 4 5 6 7 8 9 10                                
+
+> smax
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> TPR (True Positive Rate)
+> TPR (True Positive Rate)
+> 012345678910
+> smax
+> 0.00
+> 0.01
+> 0.02
+> 0.03
+> 0.04
+> 0.05
+> FPR (False Positive Rate)
+> FPR (False Positive Rate)
+> 012345678910
+> smax
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> F1 Score
+> F1 Score
+> 012345678910
+> smax
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> Distinct Match Rate
+> Distinct Match Rate
+> CORE-BREW-Strict CORE-BREW-Cal
+
+Figure 8: Sensitivity of detection performance to the window-shift budget smax under a 10% insertion attack, with p⋆ = 0 .9. We report TPR, FPR, F1 score, and distinct match rate as functions of 
+
+smax ∈ { 0, . . . , 10 }. Increasing smax improves alignment robustness and detection performance, while introducing a modest increase in false positives, illustrating the trade-off between alignment tolerance and false positive control. Strict shows only a modest TPR increase when erasures are removed, from 0.9033 to 0.9200, while CORE-BREW-Cal remains nearly unchanged, changing from 0.9400 with erasures to 0.9350 without erasures. This suggests that the calibrated detector is largely insensitive to the presence of erasures and can compensate well for the reduced amount of usable evidence introduced by entropy-aware erasure. Importantly, both with- and without-erasure variants maintain near-zero FPR across all settings. These results suggest that entropy-aware erasures are not primarily introduced to improve clean detection accuracy. Rather, they serve as a distortion-control safeguard by avoiding excessive logit shifts in low-entropy contexts, while preserving comparable clean detection behavior. In particular, Figure 7 highlights that CORE-BREW-Cal achieves almost the same TPR with erasures as without erasures, supporting the use of erasures as a safeguard that does not sacrifice detection reliability. 
+
+D.6 Window-Shift Sensitivity under Insertion Attacks 
+
+We analyze the sensitivity of detection performance to the window-shift budget smax under insertion attacks, which explicitly disrupt token–block alignment. Unlike the hit-rate p⋆, which controls the reliability of the induced bit channel, smax governs the degree of local realignment allowed during detection, introducing a trade-off between robustness to misalignment and false positive control. Figure 8 reports TPR, FPR, F1 score, and distinct match rate as functions of smax ∈ { 0, . . . , 10 }
+
+under a 10% insertion attack, with p⋆ = 0 .9. Results are shown for both C4 and OpenGen datasets, and for the CORE-BREW-Strict and CORE-BREW-Cal variants. As smax increases, both variants exhibit consistent improvements in TPR and match rate, reflecting increased tolerance to local 28 0.0 0.2 0.4 0.6 0.8 1.0 
+
+> False Positive Rate (FPR)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> True Positive Rate (TPR)
+> Ideal
+> (FPR=0, TPR=1)
+
+C4             
+
+> MPAC (AUC=0.635)
+> Qu et al. (AUC=0.537)
+> BREW (AUC=0.947)
+> CORE-BREW-Strict (Ours) (AUC=0.950)
+> CORE-BREW-Cal (Ours) (AUC=0.945)
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> False Positive Rate (FPR)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> True Positive Rate (TPR)
+> Ideal
+> (FPR=0, TPR=1)
+
+OpenGen        
+
+> MPAC (AUC=0.583)
+> Qu et al. (AUC=0.528)
+> BREW (AUC=0.973)
+> CORE-BREW-Strict (Ours) (AUC=0.984)
+> CORE-BREW-Cal (Ours) (AUC=0.972)
+
+Substitution Attack 10% Figure 9: ROC curves under 10% token-level substitution attacks on C4 (left) and OpenGen (right). CORE-BREW and BREW [ 9] maintain strong discrimination in the low-FPR region, while MPAC and Qu et al. [19] degrade toward near-random performance. 0.0 0.2 0.4 0.6 0.8 1.0 
+
+> False Positive Rate (FPR)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> True Positive Rate (TPR)
+> Ideal
+> (FPR=0, TPR=1)
+
+C4             
+
+> MPAC (AUC=0.613)
+> Qu et al. (AUC=0.525)
+> BREW (AUC=0.999)
+> CORE-BREW-Strict (Ours) (AUC=0.997)
+> CORE-BREW-Cal (Ours) (AUC=0.998)
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> False Positive Rate (FPR)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> True Positive Rate (TPR)
+> Ideal
+> (FPR=0, TPR=1)
+
+OpenGen        
+
+> MPAC (AUC=0.593)
+> Qu et al. (AUC=0.523)
+> BREW (AUC=0.996)
+> CORE-BREW-Strict (Ours) (AUC=0.999)
+> CORE-BREW-Cal (Ours) (AUC=0.998)
+
+Deletion Attack 10% 
+
+Figure 10: ROC curves under 10% deletion attacks on C4 (left) and OpenGen (right). CORE-BREW and BREW [9] achieve near-perfect detection with strong low-FPR behavior. misalignment introduced by token insertions. Notably, the gains are most significant in the low-to-moderate range of smax and gradually saturate at higher values. At the same time, FPR remains near zero for CORE-BREW-Strict and increases only marginally for CORE-BREW-Cal, indicating that improved alignment does not significantly compromise false positive control. These results suggest that increasing smax provides substantial benefits in robustness without intro-ducing severe false positive degradation. Based on this observation, we adopt smax = 10 as the default setting for insertion and deletion attacks in the main experiments, as it offers strong alignment robustness with minimal impact on false positive behavior. 
+
+D.7 Additional Results on Mistral-7B 
+
+This appendix reports additional robustness results under synthetic token-level attacks using Mistral-7B as the backbone model. All experiments follow the same evaluation protocol, attack configurations, and parameter settings as those described in Section 6.3. Figure 9 presents results under substitution attacks, while Figures 10 and 11 report results under deletion and insertion attacks, respectively. Overall, the results on Mistral-7B exhibit trends consistent with those observed for OPT-1.3B. Under substitution attacks, CORE-BREW maintains strong 29 0.0 0.2 0.4 0.6 0.8 1.0                    
+
+> False Positive Rate (FPR)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> True Positive Rate (TPR)
+> Ideal
+> (FPR=0, TPR=1)
+> C4
+> MPAC (AUC=0.633)
+> Qu et al. (AUC=0.523)
+> BREW (AUC=0.638)
+> CORE-BREW-Strict (Ours) (AUC=0.613)
+> CORE-BREW-Cal (Ours) (AUC=0.641)
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> False Positive Rate (FPR)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> True Positive Rate (TPR)
+> Ideal
+> (FPR=0, TPR=1)
+> OpenGen
+> MPAC (AUC=0.593)
+> Qu et al. (AUC=0.528)
+> BREW (AUC=0.646)
+> CORE-BREW-Strict (Ours) (AUC=0.628)
+> CORE-BREW-Cal (Ours) (AUC=0.659)
+> Insertion Attack 10%
+
+Figure 11: ROC curves under 10% insertion attacks on C4 (left) and OpenGen (right). All methods experience performance degradation, but CORE-BREW maintains stronger discrimination than MPAC and Qu et al. [19], particularly in the low-FPR region. Table 6: OPT results on the C4 dataset under 10% substitution, deletion, and insertion attacks. We report TPR/FPR with 95% confidence intervals, shown as [lower, upper]. For MPAC [ 27 ], Qu et al. [ 19 ], and BREW [ 9 ], the parameter denotes δ; for CORE-BREW-Strict and CORE-BREW-Cal, it denotes the target hit-rate setting. Substitution 10% Deletion 10% Insertion 10% Algorithm Parameter TPR FPR TPR FPR TPR FPR MPAC δ = 3 1.000 [0 .991 , 1.000] 0.840 [0 .789 , 0.891] 1.000 [0 .991 , 1.000] 0.825 [0 .772 , 0.878] 1.000 [0 .991 , 1.000] 0.840 [0 .789 , 0.891]                                                         
+
+> Qu et al. [19] δ= 3 0.965 [0 .938 ,0.992] 0.940 [0 .906 ,0.974] 0.955 [0 .925 ,0.985] 0.945 [0 .913 ,0.977] 0.965 [0 .938 ,0.992] 0.945 [0 .913 ,0.977]
+> BREW δ= 3 0.655 [0 .580 ,0.730] 0.000 [0 .000 ,0.009] 0.990 [0 .990 ,0.990] 0.000 [0 .000 ,0.009] 0.448 [0 .323 ,0.573] 0.002 [0 .000 ,0.009]
+> CORE-BREW-Strict p⋆= 0 .90.657 [0 .553 ,0.761] 0.000 [0 .000 ,0.009] 0.985 [0 .952 ,1.000] 0.003 [0 .000 ,0.010] 0.442 [0 .416 ,0.468] 0.003 [0 .000 ,0.017]
+> CORE-BREW-Cal p⋆= 0 .90.673 [0 .600 ,0.746] 0.000 [0 .000 ,0.009] 0.985 [0 .973 ,0.997] 0.002 [0 .000 ,0.009] 0.460 [0 .403 ,0.517] 0.003 [0 .000 ,0.010]
+
+discrimination in the low-FPR region, whereas MPAC and Qu et al. [ 19 ] degrade toward near-random performance. Under deletion, detection achieves near-perfect discrimination, with both CORE-BREW and BREW approaching ideal ROC behavior. Insertion remains the most challenging setting, where all methods degrade; however, CORE-BREW consistently maintains stronger discrimination than MPAC and Qu et al., particularly at low FPR. 
+
+D.8 Detailed Results under Synthetic Token-Level Attacks 
+
+Tables 6 and 7 summarize the OPT-based robustness results under 10% substitution, deletion, and insertion attacks. While MPAC [ 27 ] and Qu et al. [ 19 ] obtain high TPR, they also incur very high FPR across all attacks. By contrast, BREW [9] and CORE-BREW variants maintain near-zero FPR while preserving strong robustness, especially under deletion. Insertion remains the most challenging setting because it disrupts block alignment, but CORE-BREW-Cal consistently achieves the best insertion TPR among the CORE-BREW variants with only marginal FPR. Tables 8 and 9 report Mistral-based robustness under 10% substitution, deletion, and insertion attacks on C4 and OpenGen. We present TPR and FPR together to directly compare detection sensitivity and false-positive behavior. Although MPAC [ 27 ] and Qu et al. [ 19 ] achieve near-perfect TPR, their FPR remains very high across all attacks, often exceeding 0.7 and reaching above 0.9. In contrast, BREW [ 9 ] and CORE-BREW variants maintain near-zero FPR while preserving strong robustness under substitution and deletion. Insertion is the most challenging setting because it disrupts block alignment, but CORE-BREW-Cal achieves the highest insertion TPR among the CORE-BREW variants on both datasets, with only marginal FPR. 
+
+D.9 Detailed Results under Paraphrasing Attacks 
+
+Table 10 reports detection performance under T5-based paraphrasing attacks on C4 and OpenGen (T = 200 ), including text-level TPR, FPR, and block-level match rate. MPAC [ 27 ] maintains high 30 Table 7: OPT results on the OpenGen dataset under 10% substitution, deletion, and insertion attacks. We report TPR/FPR with 95% confidence intervals, shown as [lower, upper]. For MPAC [ 27 ], Qu et al. [ 19 ], and BREW [ 9 ], the parameter denotes δ; for CORE-BREW-Strict and CORE-BREW-Cal, it denotes the target hit-rate setting. Substitution 10% Deletion 10% Insertion 10% Algorithm Parameter TPR FPR TPR FPR TPR FPR MPAC δ = 3 1.000 [0 .991 , 1.000] 0.880 [0 .835 , 0.925] 1.000 [0 .991 , 1.000] 0.825 [0 .772 , 0.878] 1.000 [0 .991 , 1.000] 0.895 [0 .852 , 0.938] 
+
+Qu et al. [19] δ = 3 1.000 [0 .991 , 1.000] 0.940 [0 .906 , 0.974] 1.000 [0 .991 , 1.000] 0.945 [0 .913 , 0.977] 1.000 [0 .991 , 1.000] 0.960 [0 .932 , 0.988] 
+
+BREW δ = 3 0.673 [0 .629 , 0.717] 0.000 [0 .000 , 0.009] 1.000 [1 .000 , 1.000] 0.003 [0 .000 , 0.010] 0.428 [0 .402 , 0.454] 0.002 [0 .000 , 0.009] 
+
+CORE-BREW-Strict p⋆ = 0 .9 0.692 [0 .598 , 0.786] 0.000 [0 .000 , 0.009] 1.000 [1 .000 , 1.000] 0.002 [0 .000 , 0.009] 0.397 [0 .359 , 0.435] 0.003 [0 .000 , 0.010] 
+
+CORE-BREW-Cal p⋆ = 0 .9 0.713 [0 .675 , 0.751] 0.000 [0 .000 , 0.009] 1.000 [1 .000 , 1.000] 0.007 [0 .000 , 0.026] 0.467 [0 .375 , 0.559] 0.007 [0 .000 , 0.026] 
+
+Table 8: Mistral results on the C4 dataset under 10% substitution, deletion, and insertion attacks. We report TPR/FPR with 95% confidence intervals, shown as [lower, upper]. For MPAC [ 27 ], Qu et al. [ 19 ], and BREW [ 9 ], the parameter denotes δ; for CORE-BREW-Strict and CORE-BREW-Cal, it denotes the target hit-rate setting. Substitution 10% Deletion 10% Insertion 10% Algorithm Parameter TPR FPR TPR FPR TPR FPR MPAC δ = 3 1.000 [0 .991 , 1.000] 0.730 [0 .669 , 0.791] 1.000 [0 .991 , 1.000] 0.775 [0 .717 , 0.833] 1.000 [0 .991 , 1.000] 0.735 [0 .674 , 0.796] 
+
+Qu et al. [19] δ = 3 1.000 [0 .991 , 1.000] 0.925 [0 .888 , 0.962] 1.000 [0 .991 , 1.000] 0.905 [0 .864 , 0.946] 1.000 [0 .991 , 1.000] 0.905 [0 .864 , 0.946] 
+
+BREW δ = 3 0.893 [0 .830 , 0.956] 0.000 [0 .000 , 0.009] 0.998 [0 .991 , 1.000] 0.003 [0 .000 , 0.017] 0.277 [0 .216 , 0.338] 0.000 [0 .000 , 0.009] 
+
+CORE-BREW-Strict p⋆ = 0 .9 0.900 [0 .875 , 0.925] 0.000 [0 .000 , 0.009] 0.995 [0 .983 , 1.000] 0.002 [0 .000 , 0.009] 0.230 [0 .193 , 0.267] 0.003 [0 .000 , 0.010] 
+
+CORE-BREW-Cal p⋆ = 0 .9 0.900 [0 .858 , 0.942] 0.000 [0 .000 , 0.009] 0.997 [0 .990 , 1.000] 0.002 [0 .000 , 0.009] 0.290 [0 .268 , 0.312] 0.007 [0 .000 , 0.014] 
+
+TPR under paraphrasing but incurs consistently high FPR ( > 0.5), indicating a lack of effective false positive control. Similarly, Qu et al. [ 19 ] exhibits extremely high FPR (up to ∼0.95), approaching random-guess behavior despite high TPR. BREW [ 9 ] achieves strict false positive control (FPR ≈ 0), but suffers from relatively low TPR, reflecting its conservative bounded-distance acceptance. In contrast, CORE-BREW variants maintain strict FPR control while achieving substantially higher TPR and match rates. In particular, CORE-BREW-Cal consistently provides the best trade-off, achieving the highest TPR and match rate across datasets without sacrificing false positive control. These results demonstrate that CORE-BREW enables robust and reliable detection even under strong semantic rewriting. 31 Table 9: Mistral results on the OpenGen dataset under 10% substitution, deletion, and insertion attacks. We report TPR/FPR with 95% confidence intervals, shown as [lower, upper]. For MPAC [ 27 ], Qu et al. [ 19 ], and BREW [ 9], the parameter denotes δ; for CORE-BREW-Strict and CORE-BREW-Cal, it denotes the target hit-rate setting. Substitution 10% Deletion 10% Insertion 10% Algorithm Parameter TPR FPR TPR FPR TPR FPR MPAC δ = 3 1.000 [0 .991 , 1.000] 0.835 [0 .784 , 0.886] 1.000 [0 .991 , 1.000] 0.815 [0 .761 , 0.869] 1.000 [0 .991 , 1.000] 0.815 [0 .761 , 0.869]                                                         
+
+> Qu et al. [19] δ= 3 1.000 [0 .991 ,1.000] 0.945 [0 .913 ,0.977] 0.990 [0 .974 ,1.000] 0.945 [0 .913 ,0.977] 1.000 [0 .991 ,1.000] 0.945 [0 .913 ,0.977]
+> BREW δ= 3 0.947 [0 .940 ,0.954] 0.000 [0 .000 ,0.009] 0.992 [0 .966 ,1.000] 0.000 [0 .000 ,0.009] 0.298 [0 .211 ,0.385] 0.005 [0 .005 ,0.005]
+> CORE-BREW-Strict p⋆= 0 .90.968 [0 .918 ,1.000] 0.000 [0 .000 ,0.009] 0.998 [0 .991 ,1.000] 0.002 [0 .000 ,0.009] 0.257 [0 .136 ,0.378] 0.000 [0 .000 ,0.009]
+> CORE-BREW-Cal p⋆= 0 .90.945 [0 .913 ,0.977] 0.000 [0 .000 ,0.009] 0.997 [0 .983 ,1.000] 0.000 [0 .000 ,0.009] 0.328 [0 .228 ,0.428] 0.008 [0 .000 ,0.027]
+
+Table 10: Detection performance under T5 paraphrasing attacks on C4 and OpenGen. We report TPR/FPR with approximate 95% confidence intervals and match rates in percent. 
+
+C4 OpenGen Algorithm Parameter TPR FPR Match rate (%) TPR FPR Match rate (%) 
+
+MPAC δ = 2 0.990 ±0.016 0.560 ±0.068 – 1.000 ±0.009 0.660 ±0.065 –
+
+δ = 3 1.000 ±0.009 0.580 ±0.068 – 1.000 ±0.009 0.630 ±0.066 –Qu et al. [19] δ = 2 0.920 ±0.038 0.930 ±0.036 – 0.960 ±0.028 0.960 ±0.028 –
+
+δ = 3 0.960 ±0.028 0.970 ±0.025 – 0.960 ±0.028 0.920 ±0.038 –BREW δ = 2 0.330 ±0.065 0.000 ±0.009 31 .50 ±6.4 0.510 ±0.069 0.000 ±0.009 48 .00 ±6.9
+
+δ = 3 0.540 ±0.068 0.000 ±0.009 53 .00 ±6.9 0.610 ±0.067 0.000 ±0.009 59 .50 ±6.7
+
+CORE-BREW-Strict p⋆ = 0 .8 0.410 ±0.068 0.000 ±0.009 33 .50 ±6.5 0.560 ±0.068 0.000 ±0.009 43 .50 ±6.8
+
+p⋆ = 0 .9 0.590 ±0.068 0.000 ±0.009 57 .50 ±6.8 0.640 ±0.066 0.000 ±0.009 63 .00 ±6.6
+
+CORE-BREW-Cal p⋆ = 0 .8 0.460 ±0.068 0.000 ±0.009 38 .00 ±6.7 0.580 ±0.068 0.000 ±0.009 49 .50 ±6.9
+
+p⋆ = 0 .9 0.640 ±0.066 0.000 ±0.009 63 .50 ±6.6 0.630 ±0.066 0.000 ±0.009 63 .00 ±6.6
+
+E Implementation Details and Reproducibility 
+
+This appendix summarizes implementation choices and settings required to reproduce our results, with special emphasis on: (i) the separation between Strict-Safe and FPR-Calibrated detection modes (Sections 4–6), (ii) the entropy-aware safeguards for low-entropy contexts, including erasure handling and bias control, (iii) detection thresholds, score-based rejection, and FPR–TPR evaluation, and (iv) the licenses and terms of use for external assets used in our experiments. Our implementation builds on standard open-source tooling for deep learning and text processing [18, 24]. 
+
+E.1 Codebase Organization 
+
+The codebase is organized as a Python package. We implement the designated-codeword baseline components following the standard block-wise framework described in recent literature [ 19 , 9]. The package includes modules for: (i) keyed vocabulary partitioning and payload-to-codeword construc-tion, (ii) embedding, including logit interception and Constant Hit-Rate biasing, (iii) extraction and detection, including bit extraction, window shifting, decoding, and scoring, (iv) attack pipelines for token edits and paraphrasing, and (v) evaluation, including metric computation and result aggregation. Entry-point scripts provide executable examples for running generation and detection and for produc-ing the corresponding output summaries. The released code is intended to support reproducibility of the main CORE-BREW pipeline, while full-scale table and figure generation uses the saved artifacts and evaluation logs described below. To support reproducibility and auditing, we save intermediate artifacts, including generated texts (watermarked and unwatermarked), attacked texts, per-block matches, and per-block scores. This allows evaluation and plotting to be rerun without regenerating text. 
+
+E.2 Software and hardware environment Software stack. All experiments are implemented in Python and use: PyTorch for model ex-ecution [ 18 ], Hugging Face Transformers for model loading and generation [ 24 ], and Sentence-Piece for models requiring subword tokenization [ 12 ]. We use standard scientific Python utilities (NumPy/SciPy) for evaluation and statistics. 32 Table 11: Approximate per-run compute for the main δ = 3 and p⋆ = 0 .9 experiments. Nominal 4-GPU hours are computed as 4× wall-clock hours.             
+
+> Algorithm Runtime/run Nominal 4-GPU hours/run
+> MPAC 3:53:37 (3.89 h) 15.57 Qu et al. [19] 3:59:10 (3.99 h) 15.94 BREW 1:41:26 (1.69 h) 6.76 CORE-BREW-Strict 1:32:15 (1.54 h) 6.15 CORE-BREW-Cal 1:42:22 (1.71 h) 6.82
+
+Hardware. Generation is run on CUDA-enabled GPUs when available. Detection can be run on CPU for offline or batched evaluation, although model-aware erasure computation requires access to the generator or an equivalent scoring model. 
+
+Compute resources. All experiments are inference-time evaluations; no model training or fine-tuning is performed. Experiments were run on a local CUDA 13.0 server with four NVIDIA RTX PRO 6000 Blackwell GPUs, each with 96GB of VRAM, an Intel Xeon 6740P CPU with 96 physical cores, and 1.5TB of RAM. The dominant compute costs are autoregressive text generation, attack generation, and model-aware detection, which requires additional forward passes to recompute token-level probabilities and erasure indicators. Token-only detection and metric aggregation are lightweight and can be run offline from cached outputs. We cache generated texts, attacked texts, per-block matches, and per-block scores, so downstream analyses such as threshold sweeps, ROC construction, and summary table/figure generation can be run without regenerating model outputs. Table 11 reports approximate per-run compute for the main δ = 3 and p⋆ = 0 .9 experiments, reconstructed from completed notebook runtime logs. 
+
+Determinism notes. Exact bitwise determinism can be affected by nondeterministic GPU kernels and external paraphrasers. We therefore report averages over multiple seeds and log the seeds, configurations, generated outputs, and detection summaries needed to audit the reported results. 
+
+E.3 Models, tokenization, and datasets Models and checkpoints. We evaluate on open-source autoregressive LLM checkpoints loaded via Transformers [ 24 ]. Model identifiers (name, revision hash, tokenizer version) are recorded and written into each run’s log. 
+
+Tokenization. All watermark operations (partition membership, bit extraction, and block recon-struction) are performed on token IDs. Word-level attacks such as synonym substitution are filtered according to the token-level constraints required by each experiment. 
+
+Datasets and prompt sampling. We use C4 as the long-form corpus and OpenGen, consisting of short two-sentence prompts derived from WikiText-103, as the short-form prompt set. Prompt splits are kept disjoint across development and test evaluation. All reported numbers are computed on test prompts, and the same splits are reused across schemes and attacks for fair comparison. 
+
+E.4 Asset licenses and terms of use 
+
+Table 12 summarizes the external assets used in our experiments. We use all assets under their stated licenses or terms of use and do not redistribute pretrained model checkpoints or third-party baseline code. The supplementary package includes small processed prompt/evaluation subsets derived from existing public datasets; the original dataset licenses and terms of use apply to these derived files. 33 Table 12: External assets used in our experiments. We list dataset and model assets separately because the corresponding licenses and terms differ by asset. Detailed URLs, revisions, commit hashes, and package versions are provided in the supplementary README. 
+
+Asset Role License / terms Use in this work 
+
+OPT-1.3B Target LLM OPT license / model terms Used for inference-time evaluation; checkpoint not redistributed. Mistral-7B-v0.3 Target LLM Apache-2.0 Used for inference-time evaluation; checkpoint not redistributed. C4 processed subset Prompt/evaluation corpus ODC-BY 1.0; Common Crawl terms Processed prompt/evaluation subset included in the supplementary package; original terms apply. OpenGen processed subset Prompt/evaluation corpus Source dataset terms Processed prompt/evaluation subset included in the supplementary package; original terms apply. WikiText-103, if used to construct OpenGen Source corpus CC BY-SA / GFDL ac-cording to the source re-lease Used only through the derived OpenGen prompt/evaluation subset. MarkLLM Evaluation frame-work Apache-2.0 Used as a unified water-marking evaluation frame-work with attribution. MPAC implementa-tion Baseline Stated repository license Used for research compar-ison; original notices pre-served where applicable. Qu et al. implemen-tation Baseline Stated repository license Used for research compar-ison; original notices pre-served where applicable. BREW implementa-tion Baseline Stated repository license Used for comparison; original notices preserved where applicable. PyTorch; NumPy; SciPy Software libraries BSD-style licenses Used for model infer-ence, numerical computa-tion, and evaluation. Transformers; Sen-tencePiece Software libraries Apache-2.0 Used for loading pre-trained models and tok-enizers. 
+
+E.5 Generation and watermark embedding configuration Sampling settings. Unless otherwise stated, generation uses temperature 1.0 and nucleus (top-p)sampling with p = 0 .9 [ 6 ]. We log all decoding parameters (temperature, top-p, max new tokens, stop criteria). 
+
+ECC and block parameters. We use a binary BCH code C ⊆ { 0, 1}n with code parameters 
+
+(n, k, t ) as specified in Section 6 and the appendix ablations [ 13 , 21 ]. The block length is set to n.The payload m ∈ { 0, 1}k is either fixed per run or sampled per text, and the mapping from payload to per-block designated codewords c(j) is deterministic given the key and block index. 34 Constant hit-rate embedding. At each generation step t (block j, offset b), we compute the base distribution pt(·) from the model logits and the target-list mass mt = P
+
+> v∈L(j)
+> zt
+
+pt(v). The raw Constant Hit-Rate bias is 
+
+δraw  
+
+> t
+
+= log 
+
+ p⋆
+
+1 − p⋆
+
+
+
+− log 
+
+ mt
+
+1 − mt
+
+
+
+.
+
+For numerical stability, we clamp mt to [ε, 1 − ε] and compute mt using log-sum-exp over the target list and its complement. The applied bias is then obtained after the distortion-guard procedure described below. 
+
+Distortion guards and erasures (low-entropy safety). To prevent extreme biases in low-entropy contexts, we first compute the raw Constant Hit-Rate bias, clamp it to the range [−δmax , δ max ], and then compute the resulting post-bias target-list mass. If the base distribution is too peaked (i.e., 
+
+max v pt(v) ≥ qmax ) or if the clamped bias cannot keep the target-list mass safely above 1/2, we skip watermarking at step t by setting δt = 0 and marking the position as an erasure. In detection, erasures contribute LLR 0 (Section 4; Appendix B, Algorithms 1 and 3). We log the erasure rate and tail statistics of |δt| for diagnostic analysis. 
+
+E.6 Detection implementation: Strict-Safe vs. FPR-Calibrated 
+
+Detection follows the block-wise designated-codeword framework with window shifting [ 9 ]. For each block, we test candidate offsets s ∈ {− smax , . . . , s max } around the nominal block anchor and compute either a hard-decision block or an LLR-based score (Appendix B, Algorithm 3). 
+
+Per-bit LLRs. Under Constant Hit-Rate embedding, each non-erased position has constant LLR magnitude 
+
+λ = log 
+
+ p⋆
+
+1 − p⋆
+
+
+
+,
+
+with sign determined by keyed list membership. Erased positions contribute zero LLR. 
+
+Strict-Safe mode. Strict-Safe preserves the bounded-distance acceptance region of the designated-codeword baseline. For each candidate offset, erased positions are filled with key-derived PRF bits, the resulting hard-decision vector is decoded using a bounded-distance BCH decoder, and a block is accepted only if the decoded codeword equals the designated codeword. By construction, this mode does not expand the baseline bounded-distance acceptance region and therefore serves as a conservative detector with baseline-style FPR behavior. 
+
+FPR-Calibrated mode. FPR-Calibrated preserves erasures as zero-LLR positions and uses score-based rejection with reliability-aware list decoding. For each candidate offset, we compute the designated-codeword score 
+
+S(j)(s) = 
+
+> n−1
+
+X
+
+> b=0
+
+(2 c(j)[b] − 1)Λ (j,s ) 
+
+> b
+
+,
+
+and require the best candidate score to exceed a block-level threshold τblk , optionally with a margin condition. The list-decoding wrapper follows a Chase/OSD-style procedure: it flips a limited set of least-reliable positions, runs the bounded-distance decoder on each candidate, and selects the codeword maximizing the LLR-consistent score [ 2, 13 , 21 ]. This allows recovery of the designated codeword even when the raw hard decision lies beyond radius t, while false positives are controlled through score-based rejection and a bounded candidate budget. 
+
+Detection thresholds and list-decoding parameters. For text-level detection, a sample is classified as watermarked if at least one complete block is accepted as matching its designated codeword. Equivalently, the text-level threshold is set to require Mmatch ≥ 1. For CORE-BREW-Cal, a shifted candidate block is accepted only if the Chase-decoded codeword equals the designated codeword and its LLR score exceeds the block-level threshold τblk . Unless otherwise specified, we set τblk = 10 .0.For Chase-style list decoding, we sort bit positions by increasing reliability |Λb|, select the ℓ least reliable positions as flip candidates, and enumerate flip patterns up to a maximum list size L. We use 35 ℓ = 2 and L = 32 , resulting in at most min(2 ℓ, L ) = 4 candidate hard-decision vectors per shifted block. For insertion and deletion attacks, we additionally search over 2smax + 1 shifted alignments per block. 
+
+Detector capability setting. When erasures are enabled, the detector recomputes the same erasure indicators from the observed prefix using the base model or an equivalent scoring model. This model-aware setting is most appropriate for provider-side verification. For token-only detection, erasures are disabled and the detector uses the constant-magnitude LLR rule without prefix probability recomputation; such settings are explicitly labeled in configurations and results. 
+
+E.7 Threshold Selection and Reporting Reporting protocol. We report detection performance using text-level TPR and FPR, and addi-tionally provide ROC curves when comparing trade-offs across thresholds. Unless otherwise stated, each method is evaluated using its default detection configuration specified in the corresponding experiment. When threshold sweeps are used, we report the resulting FPR–TPR trade-off rather than relying solely on a single target-FPR operating point. 
+
+Confidence intervals. For the main TPR/FPR results, we report 95% confidence intervals for detection rates. Each reported value is the empirical mean detection rate over the evaluated test samples, aggregated across random seeds when multiple seeds are used. The intervals capture variability from the finite number of evaluated samples, with randomness induced by prompt sampling, watermark key/payload sampling, model generation, and attack procedures. For a detection rate ˆp
+
+estimated from N binary detection outcomes, we compute the confidence interval using the normal approximation to the binomial proportion, 
+
+ˆp ± 1.96 
+
+r ˆp(1 − ˆp)
+
+N .
+
+For rates near 0 or 1, we clip the interval to the valid range [0 , 1] .
+
+Threshold sweeps. For hard-decision methods such as the BREW baseline and CORE-BREW-Strict, threshold sweeps vary the text-level match threshold θ. For CORE-BREW-Cal, sweeps may vary the block-level score threshold τblk , the text-level threshold θ, and the margin parameter when used. All reported values are computed on disjoint test prompts, and unwatermarked test texts are used to estimate FPR. 
+
+Attacked-H0 FPR. To assess whether false positive behavior remains stable under distribution shift, we apply the same attack pipelines to unwatermarked texts and report the resulting attacked-H0
+
+FPR. This is particularly important for score-based detectors, whose score distributions may shift under paraphrasing or token-level edits. 
+
+E.8 Attack pipelines and evaluation metrics Token-level edits. We implement substitution/insertion/deletion pipelines inspired by TextAt-tack [ 15 ]. For token-preserving substitution, we restrict to synonym replacements that preserve tokenization length to maintain alignment. For insertion/deletion-like attacks, we allow length changes and rely on window shifting during detection. 
+
+Paraphrasing. Paraphrasing attacks use a separate paraphraser model (distinct from the generator) following common paraphrase evaluation setups [ 23 , 11 ]. The paraphraser does not receive the watermark key. We quantify paraphrase strength using BLEU [ 17 ] and semantic similarity via BERTScore (or a comparable embedding-based metric) [29]. 
+
+Metrics. We report text-level TPR and FPR, distinct designated-codeword match rate, and text-quality metrics including PPL, BLEU, and BERTScore. We also log diagnostic quantities such as erasure rate and |δt| tail statistics to analyze the behavior of entropy-aware safeguards. 36 E.9 Random seeds, logging, and released artifacts 
+
+We control randomness at multiple layers: prompt sampling, watermark key generation, payload sampling, model sampling RNG states (Python/NumPy/PyTorch CPU and CUDA), and attack randomness. We log all hyperparameters in machine-readable configuration files (YAML/JSON) including: model checkpoint, dataset split, (n, k, t ), p⋆, smax , θ, τblk , δmax , qmax , list-decoding budget parameters, and all generation/attack settings. We release (or will release upon acceptance, consistent with policy) scripts to: (i) regenerate water-marked and unwatermarked corpora from prompts, (ii) apply attack pipelines, (iii) run detection and threshold sweeps, and (iv) reproduce all reported figures and tables from saved artifacts. 
+
+F Limitations, Ethics, and Threat Model Clarification 
+
+This appendix clarifies the threat model and limitations of our approach, and discusses ethical considerations. We clarify three aspects of the proposed framework: (i) the separation between 
+
+Strict-Safe and FPR-Calibrated detection modes, (ii) the practical risks of distortion in low-entropy contexts and our safeguards, and (iii) the limits of robustness under strong semantic rewriting. 
+
+F.1 Threat model and deployment assumptions Keyed provenance, not universal detection. Our objective is keyed provenance verification: given a secret key K, a provider (or authorized verifier) can test whether a text was generated by a watermarked model under that key. This is distinct from open-set, keyless classifiers for “AI-generated” text and does not attempt to detect text generated by arbitrary models without key access [10, 14]. 
+
+Detector capabilities: token-only vs. model-aware. We consider two detector capability settings: • Token-only detector: the detector receives only the final text and the key K. This supports hard-decision extraction and Strict-Safe detection without recomputing model probabilities. • Model-aware detector: the detector also has access to the base model (or an equivalent scor-ing model), allowing it to recompute token probabilities on the observed prefix. This enables entropy-aware erasures and LLR-based per-token scoring (Sections 4–6 and Appendix E). In provider-side deployments (e.g., a model service verifying its own outputs), model-aware detection is natural. In third-party auditing without model access, token-only detection is more realistic, but it cannot implement all safeguards and may be less robust in low-entropy regimes. 
+
+Adversary goals and knowledge. We assume an adversary can post-process the text via paraphras-ing, synonym substitution, insertion, deletion, or reformatting, as commonly studied in watermark robustness evaluations [ 15 , 25 ]. We primarily consider black-box adversaries who do not know the key K. A fully informed attacker who knows K and can exactly simulate the detector could, in principle, remove the watermark by targeted rewriting; like most keyed watermarking schemes, we do not claim robustness against such a worst-case white-box adversary. 
+
+F.2 Limitations of the channel model Idealized BSC and independence assumptions. Our theory models Constant Hit-Rate embedding as inducing a stationary memoryless binary channel with known parameter p⋆. While channel shaping reduces context dependence relative to fixed-bias watermarking, real LLM generation is not strictly i.i.d.: token distributions depend on long-range context, and adversarial edits introduce correlated changes. Consequently, the BSC model and approximate block independence are best viewed as 
+
+analysis tools rather than exact realities. We therefore complement theoretical bounds with empirical evaluations of the observed FPR–TPR trade-off in Section 6. For deployment, detection thresholds should be selected using in-domain unwatermarked validation text. 
+
+Fixed partitions and Strict-Safe interpretation. Our evaluated instantiation uses a fixed keyed vocabulary partition to improve reconstruction stability under insertion/deletion attacks, since a token’s partition bit remains stable when its position shifts. However, reuse of the same partition 37 can introduce dependencies through repeated tokens and natural-language correlations, so aggregate FPR bounds should be interpreted as idealized analysis tools complemented by empirical calibration on unwatermarked text. Similarly, Strict-Safe preserves a bounded-distance rule with respect to the detector’s PRF-filled hard-decision representation, not necessarily with respect to the raw token-only hard vector when erasure replacement changes observed bits. 
+
+Shift search limitations. Window shifting partially addresses insertion/deletion noise by searching a bounded set of alignments. However, large or highly structured edits can break local alignment assumptions and reduce match rates. More powerful synchronization mechanisms (e.g., learned alignment or marker-based synchronization) are outside our scope. 
+
+F.3 Limitations of robustness under semantic rewriting 
+
+Paraphrasing and semantic rewriting can eventually destroy most token-level watermarks, including ours, if the attacker is allowed sufficient edit budget and can rewrite aggressively [ 25 , 11 ]. Our goal is to improve robustness in the practically relevant regime of moderate edits while maintaining strict false-positive control. We report ROC curves and TPR/FPR measurements under paraphrasing attacks to characterize degradation under semantic rewriting (Section 6). We do not claim unconditional robustness to arbitrary meaning-preserving transformations, which remains an open challenge for token-level watermarking. 
+
+F.4 Low-Entropy Contexts and Quality Risks 
+
+Enforcing a fixed hit-rate in low-entropy contexts can require large logit shifts when the base model assigns very small probability mass to the target list. Such shifts may affect fluency, factuality, or style [ 6 ]. To mitigate this risk, we use bias control and feasibility-based erasures (Section 4), and analyze their effects through text-quality and erasure ablations in Appendices D.2 and D.5. These safeguards trade off watermark capacity for quality: when many positions are erased, the effective evidence per block decreases, so longer text or more blocks may be needed for reliable detection. 
+
+F.5 Acceptance Regions and Detection Modes 
+
+A persistent technical ambiguity in soft-decision watermarking is whether one can simultaneously (i) preserve the hard-decision bounded-distance acceptance region exactly (thereby inheriting a combinatorial FPR argument), and (ii) correct strictly more errors than a bounded-distance decoder. In our framework these are intentionally separated: • Strict-Safe mode preserves the bounded-distance acceptance region and therefore inherits baseline-style FPR behavior, but it does not claim beyond-t correction. • FPR-Calibrated mode uses an explicit likelihood-score threshold and limited list decoding (e.g., Chase-type) [ 2 , 13 ], which can recover the designated codeword beyond the nominal radius when reliability patterns are favorable. False positives are controlled statistically through score-based rejection, bounded candidate search, and tail-bound analysis (Section 5), and detection performance is reported through the observed FPR–TPR trade-off (Section 6). This separation makes the trade-off explicit and avoids relying on logically inconsistent acceptance-region claims. 
+
+F.6 Ethical considerations and potential misuse Intended use. Our primary intended use is provenance verification for transparency and account-ability, including attribution of model-generated content, auditing of policy compliance tags, and tracing misuse when a model provider is responsible for outputs. The designated-codeword design targets extremely low FPR to reduce the risk of falsely accusing a human author. 
+
+Misuse and over-reliance. Watermarks should not be treated as a sole or definitive indicator of authorship. Watermarks can be removed or corrupted, and absence of a watermark does not imply human authorship. Over-reliance can lead to erroneous conclusions, especially under distribution 38 shift or when the detector is used outside its validated domain. We therefore recommend using watermark signals as one component in a broader provenance and safety pipeline. 
+
+Privacy and data handling. Multi-bit payloads can encode identifiers. Even when keys are secret, embedding persistent identifiers may raise privacy concerns. We recommend minimizing payload content, adopting rotation/expiration policies for identifiers, and restricting detector access. We also emphasize that our evaluation does not require training on private user data; it uses public corpora and model outputs. 39 NeurIPS Paper Checklist 
+
+1. Claims 
+
+Question: Do the main claims made in the abstract and introduction accurately reflect the paper’s contributions and scope? Answer: [Yes]. Justification: The abstract and introduction summarize the paper’s main contributions: Constant Hit-Rate embedding, calibrated LLR-based decoding, and the separation between Strict-Safe and FPR-Calibrated detection modes. These claims are supported by the method description in Section 4, the theoretical analysis in Section 5, and the empirical evaluation in Section 6. The empirical claims are scoped to the evaluated open-source LLMs, datasets, BCH settings, and attack configurations. In particular, the paper does not claim that CORE-BREW uniformly dominates every baseline in every metric or attack setting; rather, it reports the observed FPR–TPR trade-offs, low-FPR behavior, and robustness–quality trade-offs, including challenging cases such as insertion attacks and paraphrasing. Limitations and deployment assumptions are discussed in Section 6.6 and Appendix F. Guidelines: • The answer [N/A] means that the abstract and introduction do not include the claims made in the paper. • The abstract and/or introduction should clearly state the claims made, including the contributions made in the paper and important assumptions and limitations. A [No] or [N/A] answer to this question will not be perceived well by the reviewers. • The claims made should match theoretical and experimental results, and reflect how much the results can be expected to generalize to other settings. • It is fine to include aspirational goals as motivation as long as it is clear that these goals are not attained by the paper. 2. Limitations 
+
+Question: Does the paper discuss the limitations of the work performed by the authors? Answer: [Yes]. Justification: The paper discusses limitations and deployment assumptions in Section 6.6 and Appendix F, including model-aware detector requirements, robustness limits under strong semantic rewriting, channel-model assumptions, and quality–robustness trade-offs. Guidelines: • The answer [N/A] means that the paper has no limitation while the answer [No] means that the paper has limitations, but those are not discussed in the paper. • The authors are encouraged to create a separate “Limitations” section in their paper. • The paper should point out any strong assumptions and how robust the results are to violations of these assumptions (e.g., independence assumptions, noiseless settings, model well-specification, asymptotic approximations only holding locally). The authors should reflect on how these assumptions might be violated in practice and what the implications would be. • The authors should reflect on the scope of the claims made, e.g., if the approach was only tested on a few datasets or with a few runs. In general, empirical results often depend on implicit assumptions, which should be articulated. • The authors should reflect on the factors that influence the performance of the approach. For example, a facial recognition algorithm may perform poorly when image resolution is low or images are taken in low lighting. Or a speech-to-text system might not be used reliably to provide closed captions for online lectures because it fails to handle technical jargon. • The authors should discuss the computational efficiency of the proposed algorithms and how they scale with dataset size. • If applicable, the authors should discuss possible limitations of their approach to address problems of privacy and fairness. 40 • While the authors might fear that complete honesty about limitations might be used by reviewers as grounds for rejection, a worse outcome might be that reviewers discover limitations that aren’t acknowledged in the paper. The authors should use their best judgment and recognize that individual actions in favor of transparency play an impor-tant role in developing norms that preserve the integrity of the community. Reviewers will be specifically instructed to not penalize honesty concerning limitations. 3. Theory assumptions and proofs 
+
+Question: For each theoretical result, does the paper provide the full set of assumptions and a complete (and correct) proof? Answer: [Yes]. Justification: The paper states the theoretical assumptions and results in Section 5, with complete proofs provided in Appendix C. The appendix covers the Constant Hit-Rate prop-erty, Strict-Safe false-positive bounds, FPR-Calibrated score-based tail bounds, aggregate error bounds, and empirical FPR concentration under the stated channel, independence, and bounded-LLR assumptions. Guidelines: • The answer [N/A] means that the paper does not include theoretical results. • All the theorems, formulas, and proofs in the paper should be numbered and cross-referenced. • All assumptions should be clearly stated or referenced in the statement of any theorems. • The proofs can either appear in the main paper or the supplemental material, but if they appear in the supplemental material, the authors are encouraged to provide a short proof sketch to provide intuition. • Inversely, any informal proof provided in the core of the paper should be complemented by formal proofs provided in appendix or supplemental material. • Theorems and Lemmas that the proof relies upon should be properly referenced. 4. Experimental result reproducibility 
+
+Question: Does the paper fully disclose all the information needed to reproduce the main ex-perimental results of the paper to the extent that it affects the main claims and/or conclusions of the paper (regardless of whether the code and data are provided or not)? Answer: [Yes]. Justification: The paper provides the information needed to reproduce the main experimental results in Section 6 and Appendix E, including models, datasets, baselines, BCH parameters, generation settings, attack pipelines, detection thresholds, and evaluation metrics. Ap-pendix E further specifies implementation details, software and hardware settings, random seeds, logging, and saved artifacts used to reproduce the reported tables and figures. Guidelines: • The answer [N/A] means that the paper does not include experiments. • If the paper includes experiments, a [No] answer to this question will not be perceived well by the reviewers: Making the paper reproducible is important, regardless of whether the code and data are provided or not. • If the contribution is a dataset and/or model, the authors should describe the steps taken to make their results reproducible or verifiable. • Depending on the contribution, reproducibility can be accomplished in various ways. For example, if the contribution is a novel architecture, describing the architecture fully might suffice, or if the contribution is a specific model and empirical evaluation, it may be necessary to either make it possible for others to replicate the model with the same dataset, or provide access to the model. In general. releasing code and data is often one good way to accomplish this, but reproducibility can also be provided via detailed instructions for how to replicate the results, access to a hosted model (e.g., in the case of a large language model), releasing of a model checkpoint, or other means that are appropriate to the research performed. 41 • While NeurIPS does not require releasing code, the conference does require all submis-sions to provide some reasonable avenue for reproducibility, which may depend on the nature of the contribution. For example (a) If the contribution is primarily a new algorithm, the paper should make it clear how to reproduce that algorithm. (b) If the contribution is primarily a new model architecture, the paper should describe the architecture clearly and fully. (c) If the contribution is a new model (e.g., a large language model), then there should either be a way to access this model for reproducing the results or a way to reproduce the model (e.g., with an open-source dataset or instructions for how to construct the dataset). (d) We recognize that reproducibility may be tricky in some cases, in which case authors are welcome to describe the particular way they provide for reproducibility. In the case of closed-source models, it may be that access to the model is limited in some way (e.g., to registered users), but it should be possible for other researchers to have some path to reproducing or verifying the results. 5. Open access to data and code 
+
+Question: Does the paper provide open access to the data and code, with sufficient instruc-tions to faithfully reproduce the main experimental results, as described in supplemental material? Answer: [Yes]. Justification: We provide an anonymized code release with instructions for reproducing the main CORE-BREW experiments. The released materials include the implementations of CORE-BREW-Strict and CORE-BREW-Cal, configuration files, environment require-ments, processed C4 and OpenGen prompt files, and an executable script for generation and detection. The README provides setup instructions, including the Python/SageMath environment, package requirements, model download procedure, example commands, and output locations. Additional implementation and reproducibility details, including hard-ware, hyperparameters, random seeds, logging, and evaluation protocols, are provided in Appendix E. Guidelines: • The answer [N/A] means that paper does not include experiments requiring code. • Please see the NeurIPS code and data submission guidelines ( https://neurips.cc/ public/guides/CodeSubmissionPolicy ) for more details. • While we encourage the release of code and data, we understand that this might not be possible, so [No] is an acceptable answer. Papers cannot be rejected simply for not including code, unless this is central to the contribution (e.g., for a new open-source benchmark). • The instructions should contain the exact command and environment needed to run to reproduce the results. See the NeurIPS code and data submission guidelines ( https: //neurips.cc/public/guides/CodeSubmissionPolicy ) for more details. • The authors should provide instructions on data access and preparation, including how to access the raw data, preprocessed data, intermediate data, and generated data, etc. • The authors should provide scripts to reproduce all experimental results for the new proposed method and baselines. If only a subset of experiments are reproducible, they should state which ones are omitted from the script and why. • At submission time, to preserve anonymity, the authors should release anonymized versions (if applicable). • Providing as much information as possible in supplemental material (appended to the paper) is recommended, but including URLs to data and code is permitted. 6. Experimental setting/details 
+
+Question: Does the paper specify all the training and test details (e.g., data splits, hyperpa-rameters, how they were chosen, type of optimizer) necessary to understand the results? Answer: [Yes]. 42 Justification: The paper specifies the experimental settings in Section 6 and Appendix E, in-cluding the models, datasets, prompt splits, generation settings, BCH parameters, watermark hyperparameters, attack pipelines, detection thresholds, and evaluation metrics. Since the method does not involve additional model training or fine-tuning, optimizer details are not applicable; all reported experiments are inference-time generation and detection evaluations. Guidelines: • The answer [N/A] means that the paper does not include experiments. • The experimental setting should be presented in the core of the paper to a level of detail that is necessary to appreciate the results and make sense of them. • The full details can be provided either with the code, in appendix, or as supplemental material. 7. Experiment statistical significance 
+
+Question: Does the paper report error bars suitably and correctly defined or other appropriate information about the statistical significance of the experiments? Answer: [Yes]. Justification: The paper reports approximate TPR/FPR with 95% confidence intervals for the main numerical results, including the clean setting in Appendix D.1 and the robustness exper-iments under substitution, deletion, insertion, and paraphrasing attacks in Appendices D.8 and D.9. Appendix E explains how the intervals are computed for detection rates, what sources of variability they capture, including finite test-sample variability, prompt sampling, watermark key/payload sampling, model generation randomness, and attack randomness, and notes that the intervals are clipped to the valid range [0 , 1] for rates near 0 or 1. In addi-tion, the paper logs random seeds and configurations as described in Appendix E, supporting reproducibility of the reported estimates. Guidelines: • The answer [N/A] means that the paper does not include experiments. • The authors should answer [Yes] if the results are accompanied by error bars, confidence intervals, or statistical significance tests, at least for the experiments that support the main claims of the paper. • The factors of variability that the error bars are capturing should be clearly stated (for example, train/test split, initialization, random drawing of some parameter, or overall run with given experimental conditions). • The method for calculating the error bars should be explained (closed form formula, call to a library function, bootstrap, etc.) • The assumptions made should be given (e.g., Normally distributed errors). • It should be clear whether the error bar is the standard deviation or the standard error of the mean. • It is OK to report 1-sigma error bars, but one should state it. The authors should preferably report a 2-sigma error bar than state that they have a 96% CI, if the hypothesis of Normality of errors is not verified. • For asymmetric distributions, the authors should be careful not to show in tables or figures symmetric error bars that would yield results that are out of range (e.g., negative error rates). • If error bars are reported in tables or plots, the authors should explain in the text how they were calculated and reference the corresponding figures or tables in the text. 8. Experiments compute resources 
+
+Question: For each experiment, does the paper provide sufficient information on the com-puter resources (type of compute workers, memory, time of execution) needed to reproduce the experiments? Answer: [Yes]. Justification: Appendix E.2 reports the main compute environment, including a local CUDA 13.0 server with four NVIDIA RTX PRO 6000 Blackwell GPUs, 96GB VRAM per GPU, an Intel Xeon 6740P CPU with 96 physical cores, and 1.5TB system memory. The paper 43 clarifies that all reported experiments are inference-only and do not involve model training or fine-tuning. It also explains which stages dominate compute cost—text generation, attack generation, and model-aware detection—and which stages can be rerun cheaply from cached artifacts. Table 11 provides approximate per-run wall-clock time and nominal 4-GPU hours for the main δ = 3 and p⋆ = 0 .9 experiments. Guidelines: • The answer [N/A] means that the paper does not include experiments. • The paper should indicate the type of compute workers CPU or GPU, internal cluster, or cloud provider, including relevant memory and storage. • The paper should provide the amount of compute required for each of the individual experimental runs as well as estimate the total compute. • The paper should disclose whether the full research project required more compute than the experiments reported in the paper (e.g., preliminary or failed experiments that didn’t make it into the paper). 9. Code of ethics 
+
+Question: Does the research conducted in the paper conform, in every respect, with the NeurIPS Code of Ethics https://neurips.cc/public/EthicsGuidelines ?Answer: [Yes]. Justification: The research conforms to the NeurIPS Code of Ethics. The paper uses public corpora and model outputs rather than private user data or human-subject experiments, preserves anonymity in the submission, and discusses intended use, misuse risks, over-reliance, and privacy considerations in Appendix F. Guidelines: • The answer [N/A] means that the authors have not reviewed the NeurIPS Code of Ethics. • If the authors answer [No], they should explain the special circumstances that require a deviation from the Code of Ethics. • The authors should make sure to preserve anonymity (e.g., if there is a special consid-eration due to laws or regulations in their jurisdiction). 10. Broader impacts 
+
+Question: Does the paper discuss both potential positive societal impacts and negative societal impacts of the work performed? Answer: [Yes]. Justification: The paper discusses both positive and negative societal impacts in Appendix F.6. It describes intended uses such as provenance verification, accountability, and policy-compliance auditing, while also addressing risks of misuse, over-reliance on watermark signals, false attribution, and privacy concerns associated with multi-bit payloads. Guidelines: • The answer [N/A] means that there is no societal impact of the work performed. • If the authors answer [N/A] or [No], they should explain why their work has no societal impact or why the paper does not address societal impact. • Examples of negative societal impacts include potential malicious or unintended uses (e.g., disinformation, generating fake profiles, surveillance), fairness considerations (e.g., deployment of technologies that could make decisions that unfairly impact specific groups), privacy considerations, and security considerations. • The conference expects that many papers will be foundational research and not tied to particular applications, let alone deployments. However, if there is a direct path to any negative applications, the authors should point it out. For example, it is legitimate to point out that an improvement in the quality of generative models could be used to generate Deepfakes for disinformation. On the other hand, it is not needed to point out that a generic algorithm for optimizing neural networks could enable people to train models that generate Deepfakes faster. 44 • The authors should consider possible harms that could arise when the technology is being used as intended and functioning correctly, harms that could arise when the technology is being used as intended but gives incorrect results, and harms following from (intentional or unintentional) misuse of the technology. • If there are negative societal impacts, the authors could also discuss possible mitigation strategies (e.g., gated release of models, providing defenses in addition to attacks, mechanisms for monitoring misuse, mechanisms to monitor how a system learns from feedback over time, improving the efficiency and accessibility of ML). 11. Safeguards 
+
+Question: Does the paper describe safeguards that have been put in place for responsible release of data or models that have a high risk for misuse (e.g., pre-trained language models, image generators, or scraped datasets)? Answer: [Yes]. Justification: We do not release pretrained model checkpoints, image generators, scraped raw corpora, or full repackaged scraped datasets. The supplementary materials contain anonymized code, configuration files, prompt sampling scripts, prompt identifiers, and the processed C4 and OpenGen prompt/evaluation subsets used for evaluation and reproducibil-ity. To reduce redistribution and misuse risks, the released prompt/evaluation subsets are limited to the sampled evaluation material needed to reproduce the reported experiments rather than the full source corpora. The provenance, licenses, and terms of use for these assets are documented in Appendix E.4 and Table 12, including the C4 processed subset, the OpenGen processed subset, and the relevant source-corpus terms. The supplementary README further records detailed URLs, revisions, commit hashes, package versions, prompt processing details, and instructions for accessing the original public datasets through their respective providers and licenses. Responsible-use considerations, including misuse, over-reliance, false attribution, and privacy concerns, are discussed in Appendix F.6. Guidelines: • The answer [N/A] means that the paper poses no such risks. • Released models that have a high risk for misuse or dual-use should be released with necessary safeguards to allow for controlled use of the model, for example by requiring that users adhere to usage guidelines or restrictions to access the model or implementing safety filters. • Datasets that have been scraped from the Internet could pose safety risks. The authors should describe how they avoided releasing unsafe images. • We recognize that providing effective safeguards is challenging, and many papers do not require this, but we encourage authors to take this into account and make a best faith effort. 12. Licenses for existing assets 
+
+Question: Are the creators or original owners of assets (e.g., code, data, models), used in the paper, properly credited and are the license and terms of use explicitly mentioned and properly respected? Answer: [Yes]. Justification: We credit the original creators of existing assets used in the paper, including model checkpoints, datasets, baseline methods, the MarkLLM framework, software libraries, attack/paraphrase tools, and evaluation metrics. Appendix E.4 lists the representative external assets separately and summarizes their corresponding license names or terms of use. We use pretrained model checkpoints only for inference-time evaluation and do not redistribute model checkpoints or third-party baseline code. The supplementary package includes small processed prompt/evaluation subsets derived from public datasets; the original dataset licenses and terms of use apply to these files. For each baseline implementation, we preserve the original license notice where applicable and cite the corresponding paper. The supplementary README lists the exact repository URL, commit hash or version, and license file used for each baseline and software dependency. Guidelines: 45 • The answer [N/A] means that the paper does not use existing assets. • The authors should cite the original paper that produced the code package or dataset. • The authors should state which version of the asset is used and, if possible, include a URL. • The name of the license (e.g., CC-BY 4.0) should be included for each asset. • For scraped data from a particular source (e.g., website), the copyright and terms of service of that source should be provided. • If assets are released, the license, copyright information, and terms of use in the package should be provided. For popular datasets, paperswithcode.com/datasets 
+
+has curated licenses for some datasets. Their licensing guide can help determine the license of a dataset. • For existing datasets that are re-packaged, both the original license and the license of the derived asset (if it has changed) should be provided. • If this information is not available online, the authors are encouraged to reach out to the asset’s creators. 13. New assets 
+
+Question: Are new assets introduced in the paper well documented and is the documentation provided alongside the assets? Answer: [Yes]. Justification: The paper introduces an anonymized code package for CORE-BREW. The released materials include implementation scripts, configuration files, environment require-ments, processed prompt files derived from public corpora, and executable scripts for reproducing the main generation and detection experiments. The documentation is provided alongside the code in a README, which specifies the setup procedure, package require-ments, model download instructions, data preparation, example commands, output locations, and limitations of the release. No new model checkpoints or standalone benchmark datasets are introduced. Guidelines: • The answer [N/A] means that the paper does not release new assets. • Researchers should communicate the details of the dataset/code/model as part of their submissions via structured templates. This includes details about training, license, limitations, etc. • The paper should discuss whether and how consent was obtained from people whose asset is used. • At submission time, remember to anonymize your assets (if applicable). You can either create an anonymized URL or include an anonymized zip file. 14. Crowdsourcing and research with human subjects 
+
+Question: For crowdsourcing experiments and research with human subjects, does the paper include the full text of instructions given to participants and screenshots, if applicable, as well as details about compensation (if any)? Answer: [N/A]. Justification: The paper does not involve crowdsourcing, user studies, surveys, or research with human subjects. All experiments are conducted using public corpora, open-source language models, generated model outputs, and automated evaluation metrics. Guidelines: • The answer [N/A] means that the paper does not involve crowdsourcing nor research with human subjects. • Including this information in the supplemental material is fine, but if the main contribu-tion of the paper involves human subjects, then as much detail as possible should be included in the main paper. • According to the NeurIPS Code of Ethics, workers involved in data collection, curation, or other labor should be paid at least the minimum wage in the country of the data collector. 46 15. Institutional review board (IRB) approvals or equivalent for research with human subjects 
+
+Question: Does the paper describe potential risks incurred by study participants, whether such risks were disclosed to the subjects, and whether Institutional Review Board (IRB) approvals (or an equivalent approval/review based on the requirements of your country or institution) were obtained? Answer: [N/A]. Justification: The paper does not involve crowdsourcing, user studies, surveys, or research with human subjects. Therefore, IRB approval or an equivalent human-subjects review is not applicable. Guidelines: • The answer [N/A] means that the paper does not involve crowdsourcing nor research with human subjects. • Depending on the country in which research is conducted, IRB approval (or equivalent) may be required for any human subjects research. If you obtained IRB approval, you should clearly state this in the paper. • We recognize that the procedures for this may vary significantly between institutions and locations, and we expect authors to adhere to the NeurIPS Code of Ethics and the guidelines for their institution. • For initial submissions, do not include any information that would break anonymity (if applicable), such as the institution conducting the review. 16. Declaration of LLM usage 
+
+Question: Does the paper describe the usage of LLMs if it is an important, original, or non-standard component of the core methods in this research? Note that if the LLM is used only for writing, editing, or formatting purposes and does not impact the core methodology, scientific rigor, or originality of the research, declaration is not required. Answer: [Yes]. Justification: The paper uses LLMs as the target generation models for watermark embed-ding, attack evaluation, and detection. These experimental uses are described in Section 6, with model and generation details provided in Appendix E. In particular, the evaluated target models include OPT-1.3B and Mistral-7B. Separately, any additional LLM assistance, if used during paper preparation, was limited to proofreading, translation, and formatting, and did not affect the core methodology, experimental design, implementation, evaluation protocol, or scientific conclusions. Guidelines: • The answer [N/A] means that the core method development in this research does not involve LLMs as any important, original, or non-standard components. • Please refer to our LLM policy in the NeurIPS handbook for what should or should not be described. 47
