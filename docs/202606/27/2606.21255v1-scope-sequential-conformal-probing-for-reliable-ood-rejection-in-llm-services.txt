@@ -1,0 +1,671 @@
+Title: SCOPE: Sequential Conformal Probing for Reliable OOD Rejection in LLM Services
+
+URL Source: https://arxiv.org/pdf/2606.21255v1
+
+Published Time: Tue, 23 Jun 2026 00:43:54 GMT
+
+Number of Pages: 15
+
+Markdown Content:
+## SCOPE: Sequential Conformal Probing for Reliable OOD Rejection in LLM Services 
+
+Zhuoyun Li, Boxuan Wang, Changshun Wu, Xiaowei Huang, Yi Dong *
+
+School of Computer Science and Informatics, University of Liverpool, United Kingdom 
+
+{zhuoyun.li, boxuan.wang, changshun.wu, xiaowei.huang, yi.dong}@liverpool.ac.uk 
+
+Abstract 
+
+Rejecting inputs outside the defined in-distribution (IND) service scope is critical for large language model (LLM) services, where unsupported requests should be filtered before full generation. Existing out-of-distribution (OOD) detectors often rely on final out-puts or final-layer representations, leaving un-clear where service-boundary signals are most clearly encoded inside the model; they also lack a theoretical guarantee for held-out inputs. In this paper, we introduce SCOPE (Sequential 
+
+Conformal OOD Probing and Evaluation), a framework that selects a readable hidden layer, constructs a conformal gate with IND calibra-tion, and uses a supermartingale e-process to certify persistent service-boundary evidence. Experiments across multiple LLM backbones and six carefully designed boundary conditions show that SCOPE improves gate-level rejec-tion over standard final-layer detectors, while revealing how different OOD boundaries take different geometric forms in hidden space. 
+
+1 Introduction 
+
+Large language models (LLMs) are increasingly deployed as the front line of user-facing services, where deciding when not to answer is as important as generating a fluent response. Consider an en-terprise e-commerce assistant designed to handle order tracking and returns. If a user instead asks for medical advice, insurance-plan changes, or an-other request outside the supported service scope, the system should reject or reroute the input be-fore full generation, rather than spending compute on unsupported traffic and risking an unreliable re-sponse (Zhao et al., 2021; Dong et al., 2023; Jiang et al., 2025). OOD rejection is therefore a service-level reliability problem: an effective gate should be lightweight, operate before generation when pos-sible, and avoid unnecessarily dropping valid in-distribution (IND) requests. We study this problem 
+
+> *
+
+Corresponding Author: yi.dong@liverpool.ac.uk What foreign exchange                                                           
+
+> rate will I get?
+> How many times aday
+> should Itake this
+> medicine ?
+> What is the status of
+> my returned parce l?
+> Write apython script
+> to help me track
+> parcel info.
+> IND
+> OOD
+> Let me check the exchange rate
+> today…
+> Iwill help you search the
+> return process…
+> Bank LLM
+> Assistant
+> IND
+> OOD
+> E-commerce
+> LLM Assistant
+> Iwill help you search the
+> return process…
+> Let me check the exchange rate
+> today…
+> Input
+> Output
+> Example 1
+> Example 2
+> Here is the code for…
+> Maybe you should take…
+> SCOPE
+> SCOPE
+> Rejected before generation
+> Denied. Out of supported scope.
+> with  SCOPE
+> gate with  SCOPE
+> gate without  / without  /
+> Rejected before generation
+> Denied. Out of supported scope.
+> gate
+> gate
+
+Figure 1: Examples for Service-scope OOD rejection before generation. A task-specific LLM service should answer inputs within its IND scope and reject or route unsupported inputs before full generation. SCOPE pro-vides a reliable gate for pre-generation rejection. 
+
+for frozen LLM backbones, which are attractive in deployment because they offer cost-efficiency, controllability, and easy integration into existing service pipelines (Touvron et al., 2023; Yang et al., 2025; Li et al., 2026). Existing OOD detectors provide useful building blocks, but a deployment-time LLM rejection gate requires more than an offline score. Current ap-proaches generally follow three paradigms. Output-based methods score the final probability distribu-tion or use generation consistency to estimate un-certainty (Hendrycks and Gimpel, 2017; Liu et al., 2020; Kuhn et al., 2023; Farquhar et al., 2024). Representation-based methods use distance or den-sity estimates in hidden states, often at the final layer (Lee et al., 2018). Calibration-oriented meth-ods provide post-hoc thresholds or conformal guar-antees for a chosen score (Lei et al., 2018; Novello et al., 2024; Gupta et al., 2025). These compo-nents leave three gaps for LLM service gates. First, final-output and final-layer methods assume that the relevant OOD signal is best exposed at the end of the model, although domain, intent, and rewrite-induced shifts may appear at different depths and become entangled near the output layer (Alain and Bengio, 2017; Gurnee and Tegmark, 2024). Sec-1
+
+> arXiv:2606.21255v1 [cs.CL] 19 Jun 2026
+
+ond, consistency-based uncertainty often requires multiple generations, which is poorly matched to a lightweight pre-generation gate. Third, calibration fixes an operating threshold, but does not by itself test whether calibrated rejections persist as valid evidence on a held-out stream. To address these gaps, we introduce SCOPE 
+
+(Sequential Conformal OOD Probing and 
+
+Evaluation), a representation-relative framework for service-boundary certification. It searches across transformer layers on disjoint development data and selects the layer where the service-boundary signal is most readable. It then fits a lightweight linear readout at the selected layer and calibrates its rejection threshold using only IND calibration data. We call this main instantiation the 
+
+Conformal Linear Gate (CLG), which provides an explicit finite-sample budget on IND false rejections while leaving the LLM frozen. Finally, SCOPE constructs a nonnegative supermartingale e-process on top of the conformalized rejection decisions (Shafer et al., 2011; Howard et al., 2020; Grünwald, 2024). This turns repeated calibrated rejections into anytime-valid evidence that the fixed gate exposes a persistent service-boundary signal on a held-out stream. We evaluate SCOPE across multiple LLM back-bones and six IND/OOD service-boundary con-ditions, ranging from far-OOD transfer to near-domain shifts, fine-grained intent boundaries, para-phrase stress, and same-distribution null streams. In summary, our main contributions are threefold: 
+
+First , we formulate OOD rejection for LLM ser-vices as a representation-relative service-boundary certification problem, testing whether a frozen model exposes a stable and readable boundary signal at a selected layer. Second , we intro-duce a framework SCOPE to build calibrated and anytime-valid OOD rejection gates. Its main in-stantiation, the Conformal Linear Gate (CLG), pro-vides a lightweight front-end without modifying the LLM. Third , we conduct a multi-model, multi-boundary evaluation showing that SCOPE gives better behavior than standard detectors, while re-vealing how different OOD boundaries correspond to different selected-layer signal geometries. 
+
+2 Related Work 
+
+2.1 OOD Detection and Probing for LLMs 
+
+Reliable rejection for LLM services draws on work on uncertainty, abstention, OOD detection, and rep-resentation probing. Language models can often report whether they know an answer, motivating abstention-style handling of unknown or unsup-ported queries (Kadavath et al., 2022). Related studies examine semantic uncertainty, calibrated “I don’t know” behavior, truthfulness, and halluci-nation detection in generation (Kuhn et al., 2023; Farquhar et al., 2024; Deng et al., 2024; Bayat et al., 2024; Jiang et al., 2024; Ahdritz et al., 2024; Wang et al., 2023). More direct OOD work evalu-ates LLM-based representations and lightweight detectors for near-OOD intent recognition and broader LLM OOD detection settings (Sali and Toraman, 2025; Liu et al., 2024), while multi-modal work explores OOD detection through LLM-generated class descriptions or uncertainty over vision-language representations (Dai et al., 2023; Li et al., 2024). These studies provide important reliability signals, but LLM service deployment also requires a lightweight pre-generation gate that decides whether an input is supported by the in-tended IND service scope. A parallel line of work uses probing to inspect what information is avail-able in neural representations. Early work mea-sures layerwise linear separability in neural net-works (Alain and Bengio, 2017). Recent LLM studies show that truthfulness, correctness, uncer-tainty, spatial-temporal structure, and other seman-tic attributes can often be recovered with simple linear readouts (Azaria and Mitchell, 2023; Marks and Tegmark, 2024; Park et al., 2024; Gurnee and Tegmark, 2024; Bouchaud and Ramaciotti, 2025; Bao et al., 2025; Cencerrado et al., 2026; Deng et al., 2024; Ahdritz et al., 2024). SCOPE uses this probing perspective for distributional support : it searches across transformer layers of a frozen LLM for the representation where an IND/OOD service boundary is most readable, then turns the selected readout into a calibrated rejection gate with sequen-tial evidence accumulation. 
+
+2.2 Calibration and Sequential Testing 
+
+Conformal prediction provides distribution-free cal-ibration with finite-sample validity under exchange-ability (Lei et al., 2018). Split conformal methods are well suited to service rejection because they convert any fixed real-valued score into an accep-tance or rejection rule using held-out IND calibra-tion data, giving an explicit budget on IND false rejections without heuristic threshold tuning. Re-cent work further studies conditional or subgroup validity and practical nonconformity scores within 2Step 1: Select readable representation Step 2: Build IND -calibrated gate Step 3: Certify stream evidence                                             
+
+> IND
+> OOD
+> Inp ut
+> LLM
+> Transformer layers ℓ
+> …
+> Hidden states 𝑧 !𝑥 𝑧 "𝑥 𝑧 #𝑥 …
+> Readouts 𝑆 !𝑥 𝑆 "𝑥 𝑆 #𝑥 …
+> Development AUROC 𝜌 ℓ
+> Selected layer ℓ⋆for service IND
+> Calibration IND
+> 𝜏
+> Accept as IN D
+> Dev
+> Sℓ⋆𝑥
+> Conformal
+> threshold 𝜏
+> Held -out traffic stream 𝒯 ={𝑥 &}&'!
+> Accept as IND Reject as OOD
+> Evidence accumulation 𝐸 &
+> 1/𝛼 𝐻 !
+> "
+> 𝑇 (
+> Binary Rejection 𝑅 &
+> 𝑡
+> Certificate ?
+> Development and calibration time Held -out stream time
+
+Figure 2: Overview of SCOPE. The framework first selects a readable hidden layer from frozen LLM representa-tions, then calibrates the selected score into an IND-controlled rejection gate, and finally accumulates the held-out rejection stream with an e-process to obtain an anytime-valid service-boundary certificate. 
+
+conformal pipelines (Gibbs et al., 2025; Kato et al., 2023). In SCOPE, conformal calibration serves as the operating interface for a frozen selected-layer OOD score. Our stream-level certificate is re-lated to test martingales, e-values, e-processes, and nonnegative supermartingales for anytime-valid in-ference (Shafer et al., 2011; Howard et al., 2020; Grünwald, 2024). These tools provide evidence measures that remain valid under optional stop-ping and continuous monitoring, which matches deployed services where traffic arrives sequentially. SCOPE connects this sequential testing view to representation-level LLM probing: a layerwise readout provides the score, IND-only conformal calibration fixes the rejection threshold, and a su-permartingale e-process tests whether the fixed gate rejects a held-out stream persistently above the IND-calibrated baseline. 
+
+3 Method 
+
+SCOPE turns LLM representations into a service-level OOD gate in three steps as Figure 2. It first selects a hidden layer where the service boundary is readable, then calibrates the selected score into an IND-controlled rule, and finally uses an e-process to certify whether the resulting rejection stream carries persistent service-boundary evidence. 
+
+3.1 Selecting a Readable Representation 
+
+We consider a frozen LLM fθ used as the backbone of a deployed service. For an input x, let     
+
+> zℓ(x) := Zfθ
+> ℓ(x)∈Rd
+
+denote the last-token hidden representation at trans-former layer ℓ. Each example has a service-side domain label D ∈ { 0, 1}, where D = 0 denotes in-distribution (IND) traffic and D = 1 denotes out-of-distribution (OOD) traffic. The certificate is defined for a fixed gate, spec-ified by the frozen model, the selected layer, the scalar score rule, the conformal threshold, and the e-process parameter. In this view, boundary separa-bility is model-induced: the same IND/OOD split may be clearly exposed by one backbone and only weakly exposed by another. We keep the data roles separated throughout. The IND data are split into Id, Ic, and Ie, used for development, conformal calibration, and held-out IND evaluation, respectively. The development IND split Id supplies the IND side for both read-out fitting and layer selection. A representative development OOD source is split into Or and Os,used for readout fitting and layer selection. The final held-out OOD or null stream is denoted by 
+
+T . The layer, score rule, conformal threshold, and e-process parameter are fixed before T is read. The method only requires a scalar OOD score 
+
+S(x) fixed before calibration and stream evalua-tion. We use a linear hidden-state readout as the main score module. This gives a direct certification interface: when a low-capacity readout supports a certificate, the service-boundary signal is accessi-ble from the frozen representation. The readout is also inexpensive, works on cached hidden states, and leaves the LLM unchanged. 3Let m index the score family. In our main con-struction, m ∈ { lin , dir }, corresponding to a full linear readout and a one-dimensional directional readout. For each layer ℓ, we fit a layerwise score 
+
+Sℓ,m using Id and Or.
+
+Linear readout. For layer ℓ, let wℓ ∈ Rd and 
+
+bℓ ∈ R be the weight vector and bias of a logistic readout fitted on Id and Or. With σ(·) denoting the logistic sigmoid, the layerwise linear OOD score is    
+
+> Sℓ, lin (x) = σ
+> 
+> w⊤
+> ℓzℓ(x) + bℓ
+> 
+> .
+
+Larger values indicate that the layer-ℓ representa-tion of x is more OOD-like under the fitted readout. 
+
+Directional readout. As a lower-capacity com-panion, we also define a rank-one directional score. Let μIND  
+
+> ℓ
+
+and μOOD  
+
+> ℓ
+
+be the mean representations of Id and Or at layer ℓ. The directional score is      
+
+> Sℓ, dir (x) = gℓ
+> 
+> d⊤
+> ℓ(zℓ(x)−μIND
+> ℓ)
+> 
+> ,
+
+where dℓ = ( μOOD       
+
+> ℓ−μIND
+> ℓ)/(∥μOOD
+> ℓ−μIND
+> ℓ∥2)
+
+, and 
+
+gℓ is a monotone map fitted on development data so that larger values indicate stronger OOD evidence. 
+
+Layer selection. For each score family m, we choose the layer by development AUROC:      
+
+> ρℓ,m = AUROC( Sℓ,m ;Id,Os),ℓ⋆m= arg max
+> ℓ∈{ 1,...,L }
+> ρℓ,m ,
+
+where L is the number of transformer layers and 
+
+Os is the held-out development OOD split. After this step, the selected pair (ℓ⋆m, S ℓ⋆m,m ) is frozen. When the score family is clear from context, we write ℓ⋆ and S.
+
+3.2 Building an IND-Calibrated Rejection Gate 
+
+Given the fixed score S, we calibrate the rejec-tion threshold using an IND-only calibration set 
+
+CIND = {xcal  
+
+> i
+
+}Mi=1 ⊂ I c. For a target IND false rejection budget ε ∈ (0 , 1) , we set τ to the standard split-conformal (1 − ε)-quantile of the calibration scores {S(xcal  
+
+> i
+
+)}Mi=1 . The gate is    
+
+> ϕ(x) = 1{S(x)> τ },
+
+where ϕ(x) = 1 means that the input is rejected. Under exchangeability between CIND and future IND traffic, the IND false rejection probability         
+
+> Px∼IND
+>  S(x)> τ ≤ε+1
+> M+ 1 .
+
+We write       
+
+> ¯ε:= ε+1
+> M+ 1 .
+
+This quantity is the finite-sample IND rejection baseline used by the sequential test. OOD rejection is evaluated as power on held-out streams. We call the selected-layer linear version of this calibrated gate the Conformal Linear Gate (CLG). The directional version is the Conformal Direc-tional Gate (CDG). 
+
+3.3 Certifying Service-Boundary Evidence 
+
+The calibrated gate maps a held-out stream T =
+
+{xt}t≥1 into binary rejections Rt = 1{S(xt) >τ }. We test if these rejections occur persistently above the IND baseline. The operational null is            
+
+> HG
+> 0:qt:= PH0(Rt= 1 | F t−1)≤¯ε, for all t,
+
+where Ft−1 is the history before observing xt.This null states that the fixed gate rejects the stream no more often than the IND-calibrated baseline. Before reading T , we fix an alternative rejection rate p1 ∈ (¯ ε, 1) , which may be chosen as a de-sign constant or from development data, but is not updated on the held-out stream. Given p1, define           
+
+> et=
+> p1
+> ¯ε
+> Rt
+> 1−p1
+> 1−¯ε
+> 1−Rt
+> , E t=
+> tY
+> i=1
+> ei,E0= 1 .
+
+Under HG 
+
+> 0
+
+, because qt ≤ ¯ε and p1 > ¯ε,            
+
+> EH0[et| F t−1] = qt
+> p1
+> ¯ε+ (1 −qt) 1−p1
+> 1−¯ε≤1.
+
+Therefore, (Et)t≥0 is a nonnegative supermartin-gale under HG 
+
+> 0
+
+. For significance level α, define           
+
+> Tα= inf {t≥1 : Et≥1/α },PH0
+> 
+> sup
+> t≥1
+> Et≥1
+> α
+> 
+> ≤α,
+
+where the probability bound follows from Ville’s inequality. Thus, after the gate and p1 are fixed, the probability of falsely certifying service-boundary signal is at most α, even under sequential inspec-tion. Crossing 1/α certifies that the fixed selected-layer gate rejects above the IND-calibrated base-line, and Tα records the number of stream samples needed to reach this evidence level. If the thresh-old is not crossed within the evaluation budget, the stream provides insufficient evidence for this fixed model, layer, and score rule. 
+
+4 Experiment 
+
+We evaluate whether the proposed conformalized selected-layer gate can serve as a reliable OOD 4rejection front-end for frozen LLM services. The experiments are organized around three questions. 
+
+RQ1 : Does the proposed gate outperform stan-dard final-output or final-layer OOD detectors un-der a controlled protocol? RQ2 : Under which IND/OOD service boundaries does the calibrated gate produce stable sequential evidence? RQ3 :Why do different boundary definitions lead to dif-ferent rejection behavior? 
+
+4.1 Experimental Setup Models. We use LL AMA2-7B (Touvron et al., 2023) as the controlled backbone for the main de-tector comparison, so that the model, data split, and evaluation protocol are fixed while only the OOD detector varies. For the cross-model study, we further evaluate Q WEN 2.5-1.5B, Q WEN 2.5-7B, Q WEN 2.5-14B (Yang et al., 2025), M ISTRAL -7B (Jiang et al., 2023), OLM O-2-7B (Team OLMo et al., 2025), and F ALCON -7B (Almazrouei et al., 2023). All LLMs are frozen and used in inference-only mode; only lightweight detectors on cached hidden representations are trained. 
+
+IND domains and service boundaries. We use four IND domains: SST-2 (Socher et al., 2013; Wang et al., 2018) for sentiment, 20 Newsgroups (Lang, 1995) for topic classification, and CLINC150 (Larson et al., 2019) and Bank-ing77 (Casanueva et al., 2020) for intent classifica-tion. The evaluation covers six service-boundary conditions: P1 uses SST-2 as IND, RTE (Dagan et al., 2006; Wang et al., 2018) as development OOD, and WMT14 De-En (Bojar et al., 2014) as held-out far-OOD; P2 uses 20 Newsgroups as IND, TREC (Li and Roth, 2002) as development OOD, and MNLI (Williams et al., 2018) as held-out cross-task OOD; P3 uses CLINC150 Travel as IND and CLINC150 Banking as near-domain OOD; P4 uses a fixed Banking77 intent split with 38 IND intents and 39 OOD intents; P5 uses the same Banking77 IND side as P4 but evaluates 500 intent-preserving paraphrases generated by Q WEN 2.5-14B; and P6 is a same-distribution null stream, using disjoint held-out SST-2 examples. Thus, P1–P3 cover broad or moderate OOD transfer, P4 tests a fine-grained in-tent boundary, P5 tests rewrite-induced shift under preserved intent, and P6 checks false certification on IND traffic. For ease of reference, Appendix D summarizes P1–P6 in a compact table. 
+
+Splits and layer selection. For each model– boundary configuration, we run five random seeds. The semantic boundary definition is fixed across seeds; the seed only affects the internal split and stream order. For each seed, the IND pool is split into 70% probe-training data, 10% conformal-calibration data, and 20% held-out IND test data. The representative OOD source is split into 70% probe-training data and 30% held-out development data. Layerwise probes are trained on the probe-training splits, the best layer ℓ⋆ is selected by de-velopment AUROC, and this layer is frozen before held-out stream evaluation. The test OOD or null stream is never used for probe fitting, conformal calibration, layer selection, threshold tuning, or e-process parameter selection. 
+
+Metrics. We report AUROC and FPR@95 for offline OOD ranking. After conformal calibration, we report empirical IND false rejection and OOD-TPR@ τ , which measure the calibrated operating point and held-out OOD rejection rate. For the e-process, certificate rate records the fraction of shuf-fled held-out streams crossing 1/α , and Tα records the stopping time when certification succeeds. For each seed, we run 20 shuffled streams using the fixed held-out decisions; shuffling changes only arrival order and does not alter training, calibration, layer selection, or test data. 
+
+4.2 Controlled Detector Comparison and Gate Validation 
+
+This section answers RQ1 : whether the proposed selected-layer conformal gate gives a stronger service-level operating point than standard OOD detectors. We use LL AMA2-7B as a controlled backbone and keep the model, split, and evaluation protocol fixed across all methods. This isolates the detector design: a useful gate should rank OOD examples highly while maintaining low IND false rejection at high OOD recall. Table 1 shows that selected-layer CLG is the strongest detector in this controlled comparison. It achieves near-perfect AUROC on SST2, CLINC-Banking, and CLINC-Travel, remains substantially stronger on the harder Banking77 split, and gives the lowest FPR@95 across all five settings. This matters for deployment because a score with good average ranking is not sufficient if high OOD recall requires rejecting many valid IND examples. Ma-halanobis performs well on far-OOD pairs but be-comes unstable on intent-level settings, while MSP and energy vary sharply across domains. CLG 5Method Metric SST2 20NG Clinc Bank Clinc Travel Banking77                                                                               
+
+> Maha AUROC ↑0.9991 0.9997 0.7985 0.8609 0.6713 FPR@95 ↓0.0048 0.0018 0.9633 0.7450 0.8263 Cosine AUROC ↑0.9957 0.8657 0.5335 0.6358 0.4180 FPR@95 ↓0.0277 0.7031 0.9567 0.9650 0.9974 MSP AUROC ↑0.6355 0.7993 0.8895 0.9115 0.4684 FPR@95 ↓0.9373 0.6684 0.5000 0.4100 0.9699 Energy AUROC ↑0.5603 0.7073 0.8874 0.9200 0.4180 FPR@95 ↓0.9812 0.6983 0.5600 0.4850 0.9974 CDG AUROC ↑0.9973 0.9767 0.8039 0.8092 0.7004 FPR@95 ↓0.0283 0.0260 0.5796 0.6593 0.8055
+> CLG (ours) AUROC ↑1.0000 0.9858 0.9999 1.0000 0.9582
+> FPR@95 ↓0.0000 0.0000 0.0000 0.0000 0.1816
+
+Table 1: Controlled detector comparison on main backbone. All methods use the same data splits and evaluation protocol. CLG gives the strongest overall gate-level operating point. 
+
+therefore provides the most stable default operat-ing point. The comparison between CDG and CLG further clarifies the role of readout capacity. CDG performs well in easier settings, indicating that the selected layer often contains a simple OOD-sensitive direction. However, it drops on tighter intent boundaries, where a one-dimensional direc-tion is not expressive enough. CLG keeps the same lightweight selected-layer design but learns a su-pervised linear boundary, giving a stronger readout without modifying the frozen LLM. Figure 3 shows the same gate after confor-mal calibration. The score is converted into bi-nary rejection decisions and accumulated by the e-process. Far-OOD traffic accumulates evidence rapidly, near-OOD traffic grows more gradually, and the IND-only stream stays below the certifi-cation threshold. Thus, the certificate is driven by repeated IND-calibrated rejections rather than by an uncalibrated confidence score. Together, Table 1 and Figure 3 answer RQ1. CLG improves the detector operating point over standard baselines, fixes the rejection threshold through IND-side conformal calibration, and con-verts persistent OOD rejections into sequential evi-dence. We therefore use CLG as the default gate in the cross-model boundary audit. 
+
+4.3 Cross-Model Service-Boundary Certification 
+
+This section answers RQ2 : under which IND/OOD service boundaries the calibrated gate produces stable sequential evidence. We apply the same selected-layer CLG across seven frozen LLM back-bones and six boundary conditions. For each model–boundary pair, the layer, score, conformal 0 200 400 600 800 1000    
+
+> Stream position t
+> 0
+> 100
+> 200
+> 300
+> 400
+> 500
+> 600
+> 700
+> Sequential evidence log E_t
+> Selected-layer probe: sequential OOD evidence
+> IND stream
+> Near-OOD stream
+> Far-OOD stream
+> Reject when log E_t ≥ log(1/α)
+> 0200 400 600
+> −5
+> 0
+
+Figure 3: Sequential evidence from the selected-layer gate. After conformal calibration, CLG produces bi-nary rejection decisions that are accumulated by the e-process. Far-OOD streams cross the anytime-valid threshold quickly, near-OOD streams accumulate evi-dence more gradually, and the IND-only stream stays below the threshold. P1                                         
+
+> far
+> P3 P2
+> transfer domain
+> P4
+> intent
+> P5
+> para
+> P6
+> null
+> LLaMA2
+> 7B
+> Qwen2.5
+> 1.5B
+> Qwen2.5
+> 7B
+> Qwen2.5
+> 14B
+> Mistral
+> 7B
+> OLMo-2
+> 7B
+> Falcon
+> 7B
+> 1.00 ●0.77 ●0.98 ●0.47 ×0.42 ×0.51 ×
+> 1.00 ●0.92 ●0.97 ●0.45 ×0.52 ×0.50 ×
+> 1.00 ●0.77 ●1.00 ●0.44 ×0.68 ◐0.50 ×
+> 1.00 ●0.63 ◐0.97 ●0.44 ×0.77 ●0.50 ×
+> 1.00 ●0.89 ●0.99 ●0.46 ×0.83 ●0.49 ×
+> 1.00 ●0.72 ◐0.99 ●0.46 ×0.90 ●0.50 ×
+> 1.00 ●0.95 ●0.99 ●0.47 ×0.68 ◐0.51 ×
+> Cross-model OOD behavior: discrimination and certification
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0 AUROC
+> Certificate rate: ● ≥0.8 ◐ 0.2-0.8 × <0.2
+
+Figure 4: Cross-model service-boundary certification. 
+
+Each cell reports CLG on one backbone and one bound-ary. Color shows AUROC; markers show e-process certificate rate over shuffled held-out streams. 
+
+threshold, and e-process parameters are fixed be-fore the held-out stream is evaluated. Thus, the heatmap does not merely report offline OOD rank-ing; it tests whether a development-selected gate continues to produce calibrated rejection evidence on unseen traffic. Figure 4 shows a clear hierarchy of service boundaries. We mark certificate rate ≥ 0.8 as reli-able, 0.2–0.8 as partial, and < 0.2 as weak certifi-cation. These markers summarize stability across random splits and stream orders; the anytime-valid decision for each individual stream is still deter-mined by whether the e-process crosses 1/α .The strongest certification appears on broad and moderate OOD shifts. P1 is the clearest far-OOD transfer case: all seven backbones obtain near-perfect AUROC and reliable certificate rates. This shows that when the service boundary is broad, the selected intermediate layer exposes a strong OOD signal that survives both IND-only confor-6mal calibration and sequential testing. P3 is more informative because CLINC150 Banking is closer to CLINC150 Travel than the far-OOD tasks in P1. Most backbones still achieve high AUROC and reli-able certification, showing that the gate can certify domain-level shifts within a related intent bench-mark rather than only trivial dataset mismatch. P2 tests whether the selected layer transfers be-yond the representative development OOD source. Here the gate is selected using TREC and evaluated on MNLI. The generally high AUROC indicates that the selected-layer score transfers to the held-out OOD task, while the variation in certificate rate shows why AUROC alone is not enough. A score may rank OOD examples above IND examples on average, but certification requires the held-out stream to cross the IND-calibrated threshold re-peatedly enough to accumulate e-process evidence. Thus, P2 highlights the added value of evaluating calibrated rejection and sequential evidence in ad-dition to offline ranking. P4 and P5 define tighter service boundaries. P4 is a fixed Banking77 intent-level split, where IND and OOD examples are semantically close cus-tomer intents from the same benchmark. Across models, both AUROC and certificate rate are much lower than in P1–P3, indicating that this bound-ary is substantially finer than far-OOD or domain-level transfer. P5 is different: the inputs preserve the original Banking77 intent but are rewritten as paraphrases. Several backbones show moderate AUROC or partial certification, suggesting that rewrite-induced distribution shift is visible in some selected-layer representations. Because P5 pre-serves intent, its interpretation depends on the ser-vice definition; we analyze this boundary effect more directly in Sec. 4.4. P6 is the same-distribution null stream. It uses held-out SST-2 examples that are disjoint from probe training, layer selection, and conformal cali-bration. AUROC stays near chance and certificate rates remain low across backbones. This check supports the validity of the certificates observed in P1–P3: the e-process is not triggered by repeated thresholding itself, but by persistent departures from the IND-calibrated rejection baseline. Overall, Figure 4 answers RQ2 by showing that CLG produces stable sequential evidence on broad far-OOD and domain-level shifts, transfers non-trivially from development OOD to held-out OOD tasks, and remains controlled on same-distribution traffic. The contrast between P4 and P5 further −20 0 20 40 60 80    
+
+> PC1
+> −50
+> −25
+> 0
+> 25
+> 50
+> 75
+> PC2
+> Separated representation
+> far-OOD example
+> IND
+> OOD
+> −40 −20 020
+> PC1
+> −20
+> 0
+> 20
+> PC2
+> Overlapping representation
+> hard OOD example
+> IND
+> OOD
+> PCA geometry of hidden-state OOD separation
+
+Figure 5: Selected-layer representation geometry. 
+
+PCA projections illustrate separable and overlapping IND/OOD hidden-state patterns at the selected layer. 
+
+shows that service-boundary definition is not a sec-ondary detail: fine-grained intent splits and intent-preserving rewrites induce different hidden-state signals. This motivates the readout-geometry anal-ysis in Sec. 4.4. 
+
+4.4 Geometry of Selected-Layer OOD Signals 
+
+This section answers RQ3 : why different boundary definitions lead to different rejection behavior. The cross-model audit uses CLG as the primary gate because it gives the strongest controlled operating point in Sec. 4.2. Here, additional readouts are used for analysis rather than post-hoc model selection: we keep the selected layer fixed and vary only the score family, so that each readout probes a different geometry of the same hidden representation. The readouts expose complementary signal types. LogReg tests whether the held-out bound-ary aligns with the linear OOD direction learned from the representative development OOD source. Mahalanobis tests whether OOD examples move away from the IND covariance ellipsoid. PCA tests whether they leave the low-dimensional mani-fold occupied by IND representations. KNN tests whether they fall outside the local neighborhood structure of IND examples. The three metrics cap-ture different stages of the gate: AUROC measures offline ranking, OOD-TPR@ τ measures rejection under the IND-calibrated conformal threshold, and certificate rate measures whether calibrated rejec-tions persist strongly enough to form sequential evidence. Figure 5 gives a qualitative view. Broad OOD settings show clearer IND/OOD separation at the selected layer, while tight intent-level settings re-main heavily overlapping. This visual pattern matches the certification gap observed in Sec. 4.3. Table 2 separates the boundary effects into three regimes. First, P1 and P3 are representation-strong regimes: several readouts achieve high AUROC, high OOD-TPR@ τ , and high certificate rate, show-7Readout P1 far P2 transfer P3 domain AUROC TPR Cert. AUROC TPR Cert. AUROC TPR Cert.                                                                                                                                                                                                
+
+> LogReg 1.00 (±0.00) 1.00 (±0.00) 1.00 (±0.00) 0.75 (±0.19) 0.40 (±0.26) 0.85 (±0.25) 0.98 (±0.01) 0.94 (±0.03) 1.00 (±0.00) Maha 1.00 (±0.00) 1.00 (±0.00) 1.00 (±0.00) 0.84 (±0.02) 0.00 (±0.00) 0.00 (±0.00) 0.99 (±0.01) 0.92 (±0.09) 1.00 (±0.00) PCA 1.00 (±0.00) 1.00 (±0.00) 1.00 (±0.00) 0.81 (±0.04) 0.00 (±0.00) 0.00 (±0.00) 0.99 (±0.01) 0.89 (±0.14) 1.00 (±0.00) KNN 0.99 (±0.01) 0.98 (±0.04) 1.00 (±0.00) 0.80 (±0.05) 0.00 (±0.00) 0.00 (±0.00) 0.94 (±0.05) 0.67 (±0.19) 0.85 (±0.14) MC-drop 0.83 (±0.24) 0.81 (±0.26) 0.80 (±0.27) 0.74 (±0.18) 0.32 (±0.25) 0.76 (±0.41) 0.78 (±0.04) 0.37 (±0.09) 1.00 (±0.00)
+> Readout P4 intent P5 paraphrase P6 null AUROC TPR Cert. AUROC TPR Cert. AUROC TPR Cert.
+> LogReg 0.45 (±0.01) 0.04 (±0.01) 0.01 (±0.01) 0.60 (±0.04) 0.13 (±0.04) 0.40 (±0.17) 0.50 (±0.01) 0.06 (±0.01) 0.02 (±0.02) Maha 0.70 (±0.01) 0.18 (±0.04) 0.76 (±0.11) 1.00 (±0.00) 1.00 (±0.00) 1.00 (±0.00) 0.50 (±0.01) 0.05 (±0.01) 0.01 (±0.01) PCA 0.62 (±0.01) 0.12 (±0.03) 0.41 (±0.33) 0.98 (±0.01) 0.89 (±0.04) 1.00 (±0.00) 0.50 (±0.01) 0.05 (±0.01) 0.00 (±0.01) KNN 0.60 (±0.01) 0.09 (±0.02) 0.20 (±0.22) 0.95 (±0.01) 0.73 (±0.10) 1.00 (±0.00) 0.50 (±0.01) 0.05 (±0.01) 0.01 (±0.01) MC-drop 0.46 (±0.01) 0.04 (±0.01) 0.01 (±0.01) 0.58 (±0.04) 0.14 (±0.04) 0.43 (±0.23) 0.49 (±0.04) 0.06 (±0.01) 0.01 (±0.02)
+
+Table 2: Selected-layer readout geometry. All readouts use the same selected hidden layer and the same conformal/e-process pipeline. Each cell reports AUROC / OOD-TPR@ τ / certificate rate as mean ±seed-std. Larger values indicate stronger rejection evidence for P1–P4. For P5, high rejection reflects sensitivity to rewrite-induced distribution shift; for P6, chance-level AUROC and low certification are expected. 
+
+ing that the selected layer contains a stable OOD signal that is not tied to a particular score family. Second, P2 shows why calibrated rejection is stricter than offline ranking. Mahalanobis, PCA, and KNN obtain reasonable AUROC, but their OOD-TPR@ τ and certificate rates collapse under the IND-calibrated threshold. LogReg and MC-dropout retain stronger sequential evidence because their scores more often cross the conformal thresh-old on the held-out MNLI stream. Thus, transfer to a new OOD source depends not only on ranking quality, but also on persistent calibrated rejection. Third, P4 and P5 explain why boundary defini-tion matters. P4 is a fine-grained Banking77 intent split. Distance-based readouts recover some signal, with Mahalanobis reaching 0.70 AUROC and 0.76 certificate rate, but OOD-TPR@ τ remains much lower than in P1 and P3. This indicates a tight in-tent boundary: the selected representation contains partial distance-based evidence, but high-recall re-jection under an IND-calibrated threshold is harder than for broader domain shifts. P5 has a different geometry. The paraphrases pre-serve the original Banking77 intent but change sur-face form. Mahalanobis, PCA, and KNN reveal a strong rewrite-induced distribution shift, with near-perfect AUROC and certificate rate. This means the selected layer encodes the paraphrase shift, but the signal is better read as distance, manifold, or neigh-borhood deviation than as the linear OOD readout learned from the representative development OOD source. The weaker LogReg rejection on P5 is therefore different from the weak rejection on P4: P4 changes the intent boundary itself, whereas P5 preserves the service intent while altering the input realization. Thus, P5 is not simply a harder ver-sion of P4; it decouples intent-level service support from representation-level distribution shift. Finally, P6 confirms that changing the read-out does not create artificial evidence on same-distribution traffic. All score families remain near chance AUROC with near-zero certification. Overall, this analysis shows that SCOPE does more than report a single OOD score: it shows which service boundaries produce readable selected-layer evidence and what geometric form that evidence takes. 
+
+5 Conclusion 
+
+In this paper, we argue that OOD rejection for LLM services should be treated not merely as an offline scoring problem, but as a calibrated service-boundary gating problem. Across multiple LLMs and boundary conditions, SCOPE improves gate-level reliability over standard final-output and final-layer detectors, and reveals how different OOD boundaries are encoded in hidden space. Beyond rejection performance, this representation-level view provides a lightweight interpretability lens for understanding where service-boundary infor-mation appears inside frozen LLMs. More broadly, SCOPE offers a statistical layer for building LLM services that can reject, route, or escalate unsup-ported traffic before full generation, and can be extended to multimodal and tool-augmented sys-tems under non-stationary real-world traffic. 8Limitations 
+
+SCOPE is representation-relative: it certifies per-sistent rejection evidence for a fixed frozen model, selected layer, score rule, and conformal threshold, rather than proving that an IND/OOD boundary is intrinsically separable in input space. Its power depends on whether the selected representation and readout expose the relevant service-boundary sig-nal, and on how representative the development OOD source is for the held-out boundary. The statistical guarantees also rely on standard calibration and sequential-testing assumptions. The conformal threshold controls IND false rejection under exchangeability between calibration and fu-ture IND traffic, while the e-process is valid for a fixed gate and fixed p1 under the operational null that rejection probability is bounded by the IND-calibrated baseline. Our experiments use offline held-out streams with shuffled arrival orders; real service traffic may be non-stationary, adaptive, or affected by routing feedback. Future work should study SCOPE in online deployments, multimodal services, and tool-augmented agent systems. 
+
+References 
+
+Gustaf Ahdritz, Tian Qin, Nikhil Vyas, Boaz Barak, and Benjamin L. Edelman. 2024. Distinguishing the knowable from the unknowable with language models. In Proceedings of the 41st International Conference on Machine Learning , volume 235, pages 503–549. Guillaume Alain and Yoshua Bengio. 2017. Understand-ing intermediate layers using linear classifier probes. In Proceedings of the 5th International Conference on Learning Representations, Workshop Track .Ebtesam Almazrouei, Hamza Alobeidli, Abdulaziz Al-shamsi, Alessandro Cappelli, Ruxandra Cojocaru, Mérouane Debbah, Étienne Goffinet, Daniel Hesslow, Julien Launay, Quentin Malartic, Daniele Mazzotta, Badreddine Noune, Baptiste Pannier, and Guilherme Penedo. 2023. The falcon series of open language models. Preprint , arXiv:2311.16867. Amos Azaria and Tom Mitchell. 2023. The internal state of an LLM knows when it’s lying. In Find-ings of the Association for Computational Linguis-tics: EMNLP 2023 , pages 967–976. Yuntai Bao, Xuhong Zhang, Tianyu Du, Xinkui Zhao, Zhengwen Feng, Hao Peng, and Jianwei Yin. 2025. Probing the geometry of truth: Consistency and gen-eralization of truth directions in LLMs across logical transformations and question answering tasks. In 
+
+Findings of the Association for Computational Lin-guistics: ACL 2025 , pages 682–700. Farima Fatahi Bayat, Xin Liu, H. V. Jagadish, and Lu Wang. 2024. Enhanced language model truthful-ness with learnable intervention and uncertainty ex-pression. In Findings of the Association for Compu-tational Linguistics: ACL 2024 , pages 12388–12400. Ondˇ rej Bojar, Christian Buck, Christian Federmann, Barry Haddow, Philipp Koehn, Johannes Leveling, Christof Monz, Pavel Pecina, Matt Post, Hervé Saint-Amand, Radu Soricut, Lucia Specia, and Aleš Tam-chyna. 2014. Findings of the 2014 workshop on statistical machine translation. In Proceedings of the Ninth Workshop on Statistical Machine Translation ,pages 12–58, Baltimore, Maryland, USA. Associa-tion for Computational Linguistics. Paul Bouchaud and Pedro Ramaciotti. 2025. Lin-ear socio-demographic representations emerge in large language models from indirect cues. Preprint ,arXiv:2512.10065. Iñigo Casanueva, Tadas Temˇ cinas, Daniela Gerz, Matthew Henderson, and Ivan Vuli´ c. 2020. Efficient intent detection with dual sentence encoders. In Pro-ceedings of the 2nd Workshop on Natural Language Processing for Conversational AI , pages 38–45, On-line. Association for Computational Linguistics. Iván Vicente Moreno Cencerrado, Arnau Padrés Masde-mont, Anton Gonzalvez Hawthorne, David Demitri Africa, and Lorenzo Pacchiardi. 2026. No answer needed: Predicting LLM answer accuracy from question-only linear probes. In ICLR 2026 Work-shop on Principled Design for Trustworthy AI - Inter-pretability, Robustness, and Safety across Modalities .Ido Dagan, Oren Glickman, and Bernardo Magnini. 2006. The PASCAL recognising textual entailment challenge. In Machine Learning Challenges: Evalu-ating Predictive Uncertainty, Visual Object Classifi-cation, and Recognising Textual Entailment , volume 3944 of Lecture Notes in Computer Science , pages 177–190. Springer. Yi Dai, Hao Lang, Kaisheng Zeng, Fei Huang, and Yongbin Li. 2023. Exploring large language mod-els for multi-modal out-of-distribution detection. In 
+
+Findings of the Association for Computational Lin-guistics: EMNLP 2023 , pages 5292–5305. Yang Deng, Yong Zhao, Moxin Li, See-Kiong Ng, and Tat-Seng Chua. 2024. Don’t just say “ I don’t know”! self-aligning large language models for responding to unknown questions with explanations. In Proceed-ings of the 2024 Conference on Empirical Methods in Natural Language Processing .Yi Dong, Wei Huang, Vibhav Bharti, Victoria Cox, Alec Banks, Sen Wang, Xingyu Zhao, Sven Schewe, and Xiaowei Huang. 2023. Reliability assessment and safety arguments for machine learning components in system assurance. ACM transactions on embedded computing systems , 22(3):1–48. Sebastian Farquhar, Jannik Kossen, Lorenz Kuhn, and Yarin Gal. 2024. Detecting hallucinations in large 
+
+9language models using semantic entropy. Nature ,630(8017):625–630. Isaac Gibbs, John J Cherian, and Emmanuel J Candès. 2025. Conformal prediction with conditional guaran-tees. Journal of the Royal Statistical Society Series B: Statistical Methodology , 87(4):1100–1126. Peter D Grünwald. 2024. Beyond neyman–pearson: E-values enable hypothesis testing with a data-driven alpha. Proceedings of the National Academy of Sci-ences , 121(39):e2302098121. Ayush Gupta, Ramneet Kaur, Anirban Roy, Adam D. Cobb, Rama Chellappa, and Susmit Jha. 2025. Pol-ysemantic dropout: Conformal OOD detection for specialized llms. In Proceedings of the 2025 Con-ference on Empirical Methods in Natural Language Processing , pages 11757–11770. Wes Gurnee and Max Tegmark. 2024. Language mod-els represent space and time. In The Twelfth Interna-tional Conference on Learning Representations .Dan Hendrycks and Kevin Gimpel. 2017. A baseline for detecting misclassified and out-of-distribution exam-ples in neural networks. In International Conference on Learning Representations .Steven Howard, Aaditya Ramdas, Jon McAuliffe, and Jagmohan Sekhon. 2020. Time-uniform Chernoff bounds via nonnegative supermartingales. Probabil-ity Surveys , 17:257–317. Albert Q. Jiang, Alexandre Sablayrolles, Arthur Men-sch, Chris Bamford, Devendra Singh Chaplot, Diego de las Casas, Florian Bressand, Gianna Lengyel, Guil-laume Lample, Lucile Saulnier, and 1 others. 2023. Mistral 7b. Preprint , arXiv:2310.06825. Che Jiang, Biqing Qi, Xiangyu Hong, Dayuan Fu, Yang Cheng, Fandong Meng, Mo Yu, Bowen Zhou, and Jie Zhou. 2024. On large language models’ halluci-nation with regard to known facts. In Proceedings of the 2024 Conference of the North American Chap-ter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Pa-pers) , pages 1041–1053. Zhihan Jiang, Rui Ren, Guangba Yu, Yulun Wu, Wen-wei Gu, Yichen Li, Yujie Huang, Cong Feng, Zengyin Yang, Yongqiang Yang, and Michael R. Lyu. 2025. Llmprism: Black-box performance diagnosis for pro-duction llm training platforms. In 2025 55th Annual IEEE/IFIP International Conference on Dependable Systems and Networks - Supplemental Volume (DSN-S) , pages 1–7. Saurav Kadavath, Tom Conerly, Amanda Askell, Tom Henighan, Dawn Drain, Ethan Perez, Nicholas Schiefer, Zac Hatfield-Dodds, Nova DasSarma, Eli Tran-Johnson, Scott Johnston, Sheer El-Showk, Andy Jones, Nelson Elhage, Tristan Hume, Anna Chen, Yuntao Bai, Sam Bowman, Stanislav Fort, and 17 others. 2022. Language models (mostly) know what they know. Preprint , arXiv:2207.05221. Yuko Kato, David M.J. Tax, and Marco Loog. 2023. A review of nonconformity measures for conformal pre-diction in regression. In Proceedings of the Twelfth Symposium on Conformal and Probabilistic Predic-tion with Applications , volume 204, pages 369–383. Lorenz Kuhn, Yarin Gal, and Sebastian Farquhar. 2023. Semantic uncertainty: Linguistic invariances for un-certainty estimation in natural language generation. In The Eleventh International Conference on Learn-ing Representations .Ken Lang. 1995. Newsweeder: Learning to filter net-news. In Machine Learning Proceedings 1995 , pages 331–339. Elsevier. Stefan Larson, Anish Mahendran, Joseph J. Peper, Christopher Clarke, Andrew Lee, Parker Hill, Jonathan K. Kummerfeld, Kevin Leach, Michael A. Laurenzano, Lingjia Tang, and Jason Mars. 2019. An evaluation dataset for intent classification and out-of-scope prediction. In Proceedings of the 2019 Confer-ence on Empirical Methods in Natural Language Pro-cessing and the 9th International Joint Conference on Natural Language Processing , pages 1311–1316, Hong Kong, China. Association for Computational Linguistics. Kimin Lee, Kibok Lee, Honglak Lee, and Jinwoo Shin. 2018. A simple unified framework for detecting out-of-distribution samples and adversarial attacks. In 
+
+Advances in Neural Information Processing Systems ,volume 31. Jing Lei, Max G’Sell, Alessandro Rinaldo, Ryan J. Tib-shirani, and Larry Wasserman. 2018. Distribution-free predictive inference for regression. Journal of the American Statistical Association , 113(523):1094– 1111. Qing Li, Jiahui Geng, Chenyang Lyu, Derui Zhu, Maxim Panov, and Fakhri Karray. 2024. Reference-free hallucination detection for large vision-language models. In Findings of the Association for Computa-tional Linguistics: EMNLP 2024 , pages 4542–4551. Xin Li and Dan Roth. 2002. Learning question clas-sifiers. In COLING 2002: The 19th International Conference on Computational Linguistics .Zhuoyun Li, Boxuan Wang, Jinwei Hu, Xiaowei Huang, and Yi Dong. 2026. Fragileflow: Spectral control of correct-but-fragile predictions for foundation model robustness. arXiv preprint arXiv:2605.08896 .Bo Liu, Li-Ming Zhan, Zexin Lu, Yujie Feng, Lei Xue, and Xiao-Ming Wu. 2024. How good are LLMs at out-of-distribution detection? In Proceedings of the 2024 Joint International Conference on Computa-tional Linguistics, Language Resources and Evalua-tion , pages 8211–8222. Weitang Liu, Xiaoyun Wang, John Owens, and Yixuan Li. 2020. Energy-based out-of-distribution detection. In Advances in Neural Information Processing Sys-tems , volume 33, pages 21464–21475. 
+
+10 Samuel Marks and Max Tegmark. 2024. The geometry of truth: Emergent linear structure in large language model representations of true/false datasets. In First Conference on Language Modeling .Paul Novello, Joseba Dalmau, and Léo Andeol. 2024. Out-of-distribution detection should use conformal prediction (and vice-versa?). Preprint ,arXiv:2403.11532. Kiho Park, Yo Joong Choe, and Victor Veitch. 2024. The linear representation hypothesis and the geome-try of large language models. In Proceedings of the 41st International Conference on Machine Learning ,volume 235, pages 39643–39666. Yusuf Sali and Sıtkı Can Toraman. 2025. Navigating the unknown: Intent classification and out-of-distribution detection using large language models. In Findings of the Association for Computational Linguistics: EMNLP 2025 , pages 14652–14664, Suzhou, China. Association for Computational Linguistics. Glenn Shafer, Alexander Shen, Nikolai Vereshchagin, and Vladimir Vovk. 2011. Test martingales, Bayes factors and p-values. Statistical Science , pages 84– 101. Richard Socher, Alex Perelygin, Jean Wu, Jason Chuang, Christopher D. Manning, Andrew Ng, and Christopher Potts. 2013. Recursive deep models for semantic compositionality over a sentiment treebank. In Proceedings of the 2013 Conference on Empiri-cal Methods in Natural Language Processing , pages 1631–1642, Seattle, Washington, USA. Association for Computational Linguistics. Team OLMo, Pete Walsh, Luca Soldaini, Dirk Groen-eveld, Kyle Lo, Shane Arora, Akshita Bhagia, Yuling Gu, Shengyi Huang, Matt Jordan, Nathan Lambert, and 1 others. 2025. 2 olmo 2 furious. Preprint ,arXiv:2501.00656. Hugo Touvron, Louis Martin, Kevin Stone, Peter Al-bert, Amjad Almahairi, Yasmine Babaei, Nikolay Bashlykov, Soumya Batra, Prajjwal Bhargava, Shruti Bhosale, Dan Bikel, Lukas Blecher, Cristian Canton Ferrer, Moya Chen, Guillem Cucurull, David Esiobu, Jude Fernandes, Jeremy Fu, Wenyin Fu, and 49 oth-ers. 2023. Llama 2: Open foundation and fine-tuned chat models. Preprint , arXiv:2307.09288. Alex Wang, Amanpreet Singh, Julian Michael, Felix Hill, Omer Levy, and Samuel R. Bowman. 2018. GLUE: A multi-task benchmark and analysis plat-form for natural language understanding. In Proceed-ings of the 2018 EMNLP Workshop BlackboxNLP: Analyzing and Interpreting Neural Networks for NLP ,pages 353–355, Brussels, Belgium. Association for Computational Linguistics. Xiaohua Wang, Yuliang Yan, Longtao Huang, Xiaoqing Zheng, and Xuanjing Huang. 2023. Hallucination detection for generative large language models by Bayesian sequential estimation. In Proceedings of the 2023 Conference on Empirical Methods in Natu-ral Language Processing , pages 15361–15371, Sin-gapore. Association for Computational Linguistics. Adina Williams, Nikita Nangia, and Samuel Bowman. 2018. A broad-coverage challenge corpus for sen-tence understanding through inference. In Proceed-ings of the 2018 Conference of the North American Chapter of the Association for Computational Lin-guistics: Human Language Technologies, Volume 1 ,pages 1112–1122, New Orleans, Louisiana. Associa-tion for Computational Linguistics. An Yang, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chengyuan Li, Dayi-heng Liu, Fei Huang, Haoran Wei, Huan Lin, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang, Ji-axi Yang, Jingren Zhou, Junyang Lin, Kai Dang, and 23 others. 2025. Qwen2.5 technical report. Preprint ,arXiv:2412.15115. Xingyu Zhao, Wei Huang, Sven Schewe, Yi Dong, and Xiaowei Huang. 2021. Detecting operational adver-sarial examples for reliable deep learning. In 2021 51st Annual IEEE/IFIP International Conference on Dependable Systems and Networks-Supplemental Vol-ume (DSN-S) , pages 5–6. IEEE. 
+
+11 A Scaling Across Model Sizes 
+
+We further examine whether the selected-layer be-havior changes systematically with model size. This analysis is complementary to the cross-model audit in the main text. We repeat the CLG evalua-tion on the Q WEN 2.5 instruction-tuned family with 1.5B, 7B, and 14B parameters. For each model, we evaluate three representative IND/OOD pairs: a far-OOD pair (SST-2 →TREC), a near-intent pair (Banking77 →Banking77-OOD), and a cross-task pair (20 Newsgroups →MNLI). For each pair and model, we select the best layer ℓ⋆ using develop-ment AUROC and then record the CLG AUROC, the certification stopping time Tα, and the relative selected depth ℓ⋆/L .Figure 6 provides two useful checks. First, AUROC generally improves and Tα decreases as model size increases, suggesting that larger backbones tend to encode more readable service-boundary signals. Second, the relative depth of the selected layer remains qualitatively stable across the Q WEN 2.5 family for the same boundary type. This supports the use of a one-time layer-selection step and reinforces the main claim that OOD evi-dence is representation-dependent rather than nec-essarily concentrated at the final layer. 
+
+B Component Ablations 
+
+B.1 Effect of conformal calibration 
+
+We next study how the conformal false-rejection budget ϵ affects the operating point of the gate. The underlying CLG scores are fixed; only the confor-mal threshold τ changes with ϵ. Thus, AUROC remains unchanged, while OOD-TPR@ τ and cer-tificate rate vary because the rejection rule becomes stricter or looser. Figure 7 shows the expected calibration trade-off. A smaller ϵ makes the gate more conservative: it protects IND traffic more strongly but rejects fewer OOD examples, which slows or prevents e-process certification. A larger ϵ makes the gate more permissive and increases OOD certificates, but it uses more of the allowed IND false-rejection budget. This analysis strengthens the deployment interpretation of SCOPE: ϵ is not a post-hoc ROC threshold, but an explicit operating budget chosen before stream evaluation. Table 3 evaluates the calibration layer of the gate. A high AUROC score is useful only if it can be con-verted into an operating point with controlled false rejections on IND inputs. The conformal threshold      
+
+> Figure 6: Scaling behavior of CLG across the QWEN 2.5 family. Left: best-layer AUROC and certi-fication stopping time Tαacross model sizes for repre-sentative IND/OOD pairs. Right: relative depth of the selected layer ℓ⋆/L . Larger models generally produce stronger OOD separation and faster certification, while the relative location of the selected layer remains quali-tatively stable within the model family.
+
+keeps empirical IND false rejection close to the target budget while maintaining high OOD-TPR across the evaluated settings. By contrast, ROC-tuned thresholds may look attractive on a develop-ment split, but they do not provide finite-sample IND-side control. In several cases, they reduce IND-FPR by sacrificing OOD recall. This distinction is central to SCOPE. The goal is not only to find a threshold that works on one validation set, but to obtain a rejection rule whose IND-side error is explicitly calibrated before held-out stream evaluation. The e-process then operates on this fixed conformalized rejection rule. 
+
+B.2 Sensitivity to p1, and α
+
+The e-process parameters p1 and α control the evi-dence accumulation after τ is fixed. The parame-ter p1 is the alternative rejection-rate bet: smaller values are more sensitive to weak but persistent deviations, while larger values reward stronger re-jection streams and can cross faster when the shift is obvious. The significance level α sets the evi-dence threshold 1/α ; larger α lowers the crossing 12 0.01 0.02 0.05 0.10 0.20         
+
+> conformal epsilon
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> OOD-TPR @ tau
+> 0.01 0.02 0.05 0.10 0.20
+> conformal epsilon
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> OOD certificate rate
+> 0.01 0.02 0.05 0.10 0.20
+> conformal epsilon
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Null certificate rate
+> P1 far
+> P2 transfer
+> P3 domain
+> P4 intent
+> P5 paraphrase
+> P6 null
+
+Sensitivity to CP threshold: same scores, different tau Figure 7: Sensitivity to the conformal threshold. Smaller ϵ gives a stricter threshold, reducing IND false rejections but also lowering OOD-TPR and certificate rate. Larger ϵ increases OOD rejection and certification by spending more IND false-rejection budget. The main experiments use ϵ = 0 .05 as a balanced operating point. P1 P2 P3 P4 P5 P6      
+
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> IND false rejection
+> CP tau
+> fixed 0.5
+> P1 P2 P3 P4 P5 P6
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> OOD rejection
+> Conformal calibration stabilizes the operating point
+
+Figure 8: Conformal calibration stabilizes the operating point. A fixed raw threshold can be overly conservative because probe score scales vary across pairs and models. The conformal threshold adapts the same score family to a target IND false rejection budget. 
+
+IND Dataset Conformal ROC-tuned IND_FPR OOD_TPR IND_FPR OOD_TPR 20NG 0.0450 1.0000 0.0000 0.9340 SST2 0.0400 1.0000 0.0000 0.9540 Clinc-Banking 0.0857 1.0000 0.0000 0.9429 Clinc-Travel 0.0111 1.0000 0.0000 0.9407 Banking77 0.0142 0.9446 0.0142 0.9486 
+
+Table 3: Conformal calibration versus ROC-tuned thresholding. The conformal threshold keeps IND false rejections close to the target level while preserving high OOD recall. ROC-tuned thresholds can reduce IND-FPR on the validation split, but they do not provide finite-sample IND-side control and may sacrifice OOD-TPR. 
+
+threshold and increases the certificate rate, while smaller α asks for stronger evidence. Across these sweeps, P1 and P3 remain stable, P4 remains diffi-cult, and P6 stays low under the default setting. We therefore use ϵ = 0 .05 , p1 = 0 .30 , and α = 0 .01 
+
+as a balanced default in the main experiments. 0.10 0.15 0.20 0.25 0.30 0.35 0.40 0.45 0.50      
+
+> p1
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> certificate rate
+> Vary p1 (epsilon=0.05, alpha=0.01)
+> 10 310 210 1
+> alpha
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Vary alpha (epsilon=0.05, p1=0.30)
+> P1
+> P2
+> P3
+> P4
+> P5
+> P6
+
+Figure 9: Sensitivity to the e-process parameters. Vary-ing p1 changes the alternative rejection-rate bet, and varying α changes the evidence threshold 1/α . The default (p1, α ) = (0 .30 , 0.01) gives a stable balance between sensitivity and null safety. 
+
+C Additional Readout and Geometry Analysis 
+
+C.1 Additional readout analysis for P4 and P5 
+
+Figure 10 gives a closer view of the two boundary-sensitive cases discussed in Sec. 4.4. All vari-ants use the same selected layer and the same conformal/e-process protocol. The only change is the readout family, which lets us examine what type of hidden-state shift is present. For P4, the Banking77 intent-near split, chang-ing the score family improves offline ranking only moderately and yields limited OOD-TPR at the con-formal threshold. This supports the interpretation that P4 is a genuinely fine-grained service bound-ary: the selected representation contains some distance-based evidence, but IND and OOD intents remain closely entangled under an IND-calibrated operating point. For P5, the paraphrase stress test, the behavior is different. The paraphrased inputs preserve the original intent but introduce a systematic rewrite-induced shift. Distance-based readouts and mean-pooling variants recover strong evidence, showing that the selected layer encodes this shift even when 13 last-logreg           
+
+> knn
+> mahal
+> pca
+> 0.0
+> 0.5
+> 1.0
+> P4: B77 intent-near
+> 0.46
+> 0.60
+> 0.72
+> 0.63
+> AUROC
+> last-logreg
+> knn
+> mahal
+> pca
+> 0.05 0.09
+> 0.18 0.13
+> OOD-TPR @ tau
+> last-logreg
+> knn
+> mahal
+> pca
+> 0.02 0.04
+> 0.86
+> 0.59
+> certify rate
+> last-logreg
+> knn
+> mahal
+> pca
+> mean-logreg
+> 0.0
+> 0.5
+> 1.0
+> P5: B77 paraphrase
+> 0.43
+> 0.92 0.99 0.98 0.96
+> last-logreg
+> knn
+> mahal
+> pca
+> mean-logreg
+> 0.03
+> 0.42
+> 1.00 0.97
+> 0.81
+> last-logreg
+> knn
+> mahal
+> pca
+> mean-logreg
+> 0.00
+> 1.00 1.00 1.00 1.00
+> P4/P5 failure diagnosis: weak last-token probes can mean different things
+> readout-sensiti ve rewrite shift hard / weakly separable
+
+Figure 10: Additional readout analysis for P4 and P5. P4 remains a fine-grained intent boundary: alter-native readouts improve ranking and certification only partially, and calibrated OOD-TPR remains limited. P5 shows a different pattern: paraphrase-induced shifts are strongly visible to distance-based, manifold-based, and pooled readouts, indicating that the selected layer en-codes rewrite-induced distribution shift even when the default last-token linear gate is less sensitive. 
+
+the default last-token linear readout is less sensitive to it. Thus, P5 is best interpreted as a boundary-definition and readout-geometry case rather than a standard unsupported-intent OOD benchmark. The comparison between P4 and P5 shows that similar LogReg behavior can arise from different boundary semantics. For P4, weak LogReg rejec-tion reflects the fine-grained nature of the Bank-ing77 intent split. For P5, the paraphrases preserve the original service intent, so weak LogReg rejec-tion is consistent with the gate not treating intent-preserving rewrites as unsupported intents. The strong Mahalanobis, PCA, and KNN results nev-ertheless show that the selected layer encodes a rewrite-induced distribution shift. This supports our view that service-boundary definitions deter-mine not only detection difficulty, but also which hidden-state geometry is relevant. 
+
+C.2 Additional PCA geometry 
+
+We include additional PCA projections to visual-ize how selected-layer representations differ across easy and tight OOD boundaries. Each plot shows the first two principal components of last-token embeddings at the selected layer. The PCA views are not used for model selection or threshold tuning. They serve only as qualita-tive support for the readout analysis in Sec. 4.4. When IND and OOD examples are visibly sepa-rated, multiple readouts tend to produce high OOD-TPR and strong certificates. When the two groups remain entangled, high-recall rejection under an IND-calibrated threshold becomes more demand-ing. 
+
+Figure 11: Additional PCA examples of selected-layer IND/OOD geometry. Broad OOD boundaries show clearer separation in the selected representation, while tight near-intent boundaries remain more entan-gled. These examples complement the main geometry analysis by illustrating why calibrated rejection is eas-ier for broad service shifts than for fine-grained intent splits. 
+
+C.3 Directional gate e-process 
+
+We also examine the e-process behavior of the low-capacity directional variant. The directional gate reads a one-dimensional OOD direction from the selected representation, while CLG uses a full lin-ear boundary. This comparison illustrates why read-out capacity matters even when the layer is fixed. 0 200 400 600 800 1000    
+
+> Stream position t
+> 0
+> 100
+> 200
+> 300
+> 400
+> 500
+> 600
+> 700
+> Sequential evidence log E_t
+> Direction probe: weak evidence is not certified
+> IND stream
+> Near-OOD stream
+> Far-OOD stream
+> Reject when log E_t ≥ log(1/α)
+> 0200 400 600
+> −10
+> −5
+> 0
+
+Figure 12: E-process trace for the conformal direc-tional gate. The directional gate accumulates strong ev-idence on broad far-OOD streams, but produces weaker evidence on tighter near-OOD streams. This supports the use of CLG as the main gate: a one-dimensional direction can capture coarse shifts, while a richer linear boundary is more effective for finer service-boundary signals. 
+
+Figure 12 shows that the directional variant can certify broad OOD shifts but is less effective on tighter boundaries. This is consistent with the main controlled comparison: selected layers often contain OOD-sensitive directions, but fine-grained boundaries require a richer readout. The result strengthens the motivation for CLG as the default instantiation of SCOPE. 14 Boundary IND domain Dev OOD source Held-out stream Boundary type P1 SST-2 RTE WMT14 De-En far-OOD transfer P2 20 Newsgroups TREC MNLI cross-task OOD transfer P3 CLINC150 Travel CLINC150 near split CLINC150 Banking near-domain intent shift P4 Banking77, 38 IND intents Banking77 OOD-side training split Banking77, 39 held-out intents fine-grained intent boundary P5 Banking77, same IND side as P4 20 Newsgroups 500 Banking77 paraphrases intent-preserving rewrite shift P6 SST-2 first 5k examples RTE SST-2 held-out second 5k examples same-distribution null stream 
+
+Table 4: Service-boundary conditions used in the evaluation. The development OOD source is used for readout fitting and layer selection, while the held-out stream is used only for evaluation. 
+
+D Service-Boundary Construction 
+
+Table 4 summarizes the P1–P6 service-boundary conditions used in Secs. 4.3 and 4.4. These settings are described in Sec. 4.1, but we repeat them here to make the paper easier to follow. 
+
+E Compute resources 
+
+All experiments are conducted in Python ® on a machine equipped with an AMD EPYC ® 7452 32-Core Processor, 128GB of RAM, and one A100 GPU with 40GB of VRAM. 
+
+F Deployment Overhead 
+
+To assess deployment efficiency, we measure the online latency overhead introduced by the selected-layer gate relative to the base model forward pass. All methods are evaluated on the same hardware with the same batch size and input length. The one-time cost of layer selection is excluded from online latency because it is performed before deployment and amortized across future requests. Method Latency Overhead Offline Cost Base model only 9.6 ms 0.0 % None MSP 9.7 ms 0.6 % None Energy 9.7 ms 0.9 % None Mahalanobis 10.0 ms 3.6 % Precomputed stats Cosine 9.8 ms 1.4 % Precomputed stats    
+
+> CLG 9.8 ms 1.5 % One-time layer search
+
+Table 5: Deployment-time efficiency comparison. 
+
+Table 5 shows that CLG adds only a small on-line overhead over the base forward pass. Its latency is comparable to simple representation-based scores such as cosine distance and lower than Mahalanobis scoring, while providing IND-side conformal calibration and e-process certifica-tion. This supports the intended use of SCOPE as a lightweight front-end gate rather than a replace-ment for the underlying LLM. 15

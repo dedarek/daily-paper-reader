@@ -6,75 +6,55 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-26
-- 运行时间：2026-06-26 06:25:48 UTC
+- 最新运行日期：2026-06-27
+- 运行时间：2026-06-27 05:54:11 UTC
 - 运行状态：成功
-- 本次总论文数：17
-- 精读区：6
-- 速读区：11
+- 本次总论文数：11
+- 精读区：4
+- 速读区：7
 
 ### 今日简报（AI）
-今日精选2篇高分精读，聚焦LLM-Agent长期记忆防投毒与隐私保护RAG多智能体重写，另有11篇速读覆盖对抗安全、越狱检测与政策对齐。
-
-最值得关注方向：LLM-Agent的记忆安全加固（非篡改、源绑定）与RAG隐私保护（语义重写不损上下文精度）。
-
-建议普通读者优先精读这两篇9.0论文，快速掌握前沿对抗投毒与隐私保真技术，并留意速读中Yuvion VL的多模态安全思路。
-- 详情：[/202606/26/README](/202606/26/README)
+今日收录11篇论文，聚焦LLM Agent安全与隐私保护，其中两篇9分精读分别提出开源Agent框架AOHP和统一对抗LLM生成威胁的防线。  
+最值得关注的两个方向：OS级Agent交互的高效安全设计（AOHP），以及针对LLM生成内容意图与危害的验证防御。  
+建议普通读者优先阅读AOHP以了解个人化安全交互框架，同时关注RAG系统安全综述以防范数据泄露风险。
+- 详情：[/202606/27/README](/202606/27/README)
 
 ### 精读区论文标签
-1. [Securing LLM-Agent Long-Term Memory Against Poisoning: Non-Malleable, Origin-Bound Authority with Machine-Checked Guarantees](/202606/26/2606.24322v1-securing-llm-agent-long-term-memory-against-poisoning-non-malleable-origin-bound-authority-with-machine-checked-guarantees)  
+1. [AOHP: An Open-Source OS-Level Agent Harness for Personalized, Efficient and Secure Interaction](/202606/27/2606.23449v1-aohp-an-open-source-os-level-agent-harness-for-personalized-efficient-and-secure-interaction)  
    标签：评分：9.0/10、query:llm-security
-   evidence：针对LLM智能体记忆投毒，提出不可伪造的来源绑定权限机制以保护长期记忆
-2. [Privacy-Preserving RAG via Multi-Agent Semantic Rewriting: Achieving Confidentiality Without Compromising Contextual Fidelity](/202606/26/2606.24623v1-privacy-preserving-rag-via-multi-agent-semantic-rewriting-achieving-confidentiality-without-compromising-contextual-fidelity)  
+   evidence：面向安全自主智能体交互的操作系统级智能体框架
+2. [Verifying Intent and Harm: A Unified Defense Against LLM-Generated Threats](/202606/27/2606.26377v1-verifying-intent-and-harm-a-unified-defense-against-llm-generated-threats)  
    标签：评分：9.0/10、query:llm-security
-   evidence：多智能体语义重写实现内容安全
-3. [The Unfireable Safety Kernel: Execution-Time AI Alignment for AI Agents and Other Escapable AI Systems](/202606/26/2606.26057v1-the-unfireable-safety-kernel-execution-time-ai-alignment-for-ai-agents-and-other-escapable-ai-systems)  
+   evidence：通过联合评估提示意图与响应危害来防御LLM生成威胁
+3. [Adaptive Evaluation of Out-of-Band Defenses Against Prompt Injection in LLM Agents](/202606/27/2606.26479v1-adaptive-evaluation-of-out-of-band-defenses-against-prompt-injection-in-llm-agents)  
    标签：评分：9.0/10、query:llm-security
-   evidence：LLM智能体的运行时安全内核
-4. [Scalable Hierarchical Attention Transformers for Multi-Turn Jailbreak Detection in Long Conversations](/202606/26/2606.21082v1-scalable-hierarchical-attention-transformers-for-multi-turn-jailbreak-detection-in-long-conversations)  
+   evidence：针对LLM代理中提示注入的带外防御
+4. [Toward Open Weight Models Without Risks: Separating Public and Private Capabilities in LLMs](/202606/27/2606.21638v1-toward-open-weight-models-without-risks-separating-public-and-private-capabilities-in-llms)  
    标签：评分：8.0/10、query:llm-security
-   evidence：多轮越狱检测作为对抗提示缓解
-5. [AutoSpec: Safety Rule Evolution for LLM Agents via Inductive Logic Programming](/202606/26/2606.24245v1-autospec-safety-rule-evolution-for-llm-agents-via-inductive-logic-programming)  
-   标签：评分：8.0/10、query:llm-security
-   evidence：自主智能体安全机制，自动安全规则演化
-6. [AutoSpec: Safety Rule Evolution for LLM Agents via Inductive Logic Programming](/202606/26/2606.24245v2-autospec-safety-rule-evolution-for-llm-agents-via-inductive-logic-programming)  
-   标签：评分：8.0/10、query:llm-security
-   evidence：LLM智能体安全规则演化
+   evidence：提出分层语言模型，通过分离公共和私有能力来控制内容安全
 
 ### 速读区论文标签
-1. [Yuvion VL: A Multimodal Foundation Model for Adversarial Content and AI Safety](/202606/26/2606.25034v1-yuvion-vl-a-multimodal-foundation-model-for-adversarial-content-and-ai-safety)  
-   标签：评分：8.0/10、query:llm-security
-   evidence：LLM输出内容安全过滤器，多模态对抗安全
-2. [What Intermediate Layers Know: Detecting Jailbreaks from Entropy Dynamics](/202606/26/2606.25182v1-what-intermediate-layers-know-detecting-jailbreaks-from-entropy-dynamics)  
-   标签：评分：8.0/10、query:llm-security
-   evidence：通过跨层熵动力学检测越狱攻击；对抗性提示缓解
-3. [PolicyAlign: Direct Policy-Based Safety Alignment for Large Language Models](/202606/26/2606.25442v1-policyalign-direct-policy-based-safety-alignment-for-large-language-models)  
-   标签：评分：8.0/10、query:llm-security
-   evidence：基于策略的安全对齐用于LLM输出安全
-4. [A Red Teaming Framework for Large Language Models: A Case Study on Faithfulness Evaluation](/202606/26/2606.25476v1-a-red-teaming-framework-for-large-language-models-a-case-study-on-faithfulness-evaluation)  
-   标签：评分：8.0/10、query:llm-security
-   evidence：生成对抗提示的红队框架，用于提示注入攻击
-5. [A Survey of Toxicity Detection and Mitigation Strategies for Multilingual Language Models](/202606/26/2606.25380v1-a-survey-of-toxicity-detection-and-mitigation-strategies-for-multilingual-language-models)  
+1. [OTTER: A Red-Teaming System for Toxicity-Evading Jailbreak Prompt Optimization](/202606/27/2606.21077v1-otter-a-red-teaming-system-for-toxicity-evading-jailbreak-prompt-optimization)  
    标签：评分：7.0/10、query:llm-security
-   evidence：关于多语言LLM毒性检测与缓解的综述，涵盖内容安全过滤和缓解策略
-6. [Tracing Target Answers in Poisoned Retrieval Corpora via Token Influence Attribution](/202606/26/2606.25721v1-tracing-target-answers-in-poisoned-retrieval-corpora-via-token-influence-attribution)  
+   evidence：针对内容安全过滤器的逃避毒性越狱提示优化
+2. [Governance Decay: How Context Compaction Silently Erases Safety Constraints in Long-Horizon LLM Agents](/202606/27/2606.22528v1-governance-decay-how-context-compaction-silently-erases-safety-constraints-in-long-horizon-llm-agents)  
    标签：评分：7.0/10、query:llm-security
-   evidence：通过token影响归因检测RAG语料投毒
-7. [Do Encoders Suffice? A Systematic Comparison of Encoder and Decoder Safety Judges for LLM Adversarial Evaluation](/202606/26/2606.25782v1-do-encoders-suffice-a-systematic-comparison-of-encoder-and-decoder-safety-judges-for-llm-adversarial-evaluation)  
+   evidence：上下文压缩导致LLM代理安全约束失效
+3. [Security and Privacy in Retrieval-Augmented Generation: Architectures, Threats, Defenses, and Future Directions for Building Trustworthy Systems](/202606/27/2606.25533v1-security-and-privacy-in-retrieval-augmented-generation-architectures-threats-defenses-and-future-directions-for-building-trustworthy-systems)  
    标签：评分：7.0/10、query:llm-security
-   evidence：比较编码器与解码器安全评判器用于有害LLM输出检测
-8. [Toward Open Weight Models Without Risks: Separating Public and Private Capabilities in LLMs](/202606/26/2606.21638v1-toward-open-weight-models-without-risks-separating-public-and-private-capabilities-in-llms)  
+   evidence：综述RAG安全与隐私，涵盖针对提示注入等威胁的防御
+4. [RAS: Measuring LLM Safety Through Refusal Alignment](/202606/27/2606.25750v1-ras-measuring-llm-safety-through-refusal-alignment)  
+   标签：评分：7.0/10、query:llm-security
+   evidence：从内部表征测量拒绝对齐的白盒安全评估方法
+5. [SCOPE: Sequential Conformal Probing for Reliable OOD Rejection in LLM Services](/202606/27/2606.21255v1-scope-sequential-conformal-probing-for-reliable-ood-rejection-in-llm-services)  
    标签：评分：6.0/10、query:llm-security
-   evidence：大语言模型能力控制以提升安全性
-9. [Can LLMs Reliably Self-Report Adversarial Prefills, and How?](/202606/26/2606.23671v1-can-llms-reliably-self-report-adversarial-prefills-and-how)  
+   evidence：SCOPE为LLM服务提供可靠的OOD拒绝，利用保形预测过滤范围外输入
+6. [Governed Shared Memory for Multi-Agent LLM Systems](/202606/27/2606.24535v1-governed-shared-memory-for-multi-agent-llm-systems)  
    标签：评分：6.0/10、query:llm-security
-   evidence：研究LLM内省能力以检测对抗性预填充攻击
-10. [CORE-BREW: LLR-Based Soft Decoding for Robust Multi-Bit LLM Watermarking](/202606/26/2606.24163v1-core-brew-llr-based-soft-decoding-for-robust-multi-bit-llm-watermarking)  
+   evidence：针对多智能体系统的内存泄漏治理原语
+7. [Detect, Unlearn, Restore: Defending Text Summarization Models Against Data Poisoning](/202606/27/2606.26036v1-detect-unlearn-restore-defending-text-summarization-models-against-data-poisoning)  
    标签：评分：6.0/10、query:llm-security
-   evidence：LLM输出溯源的水印方法
-11. [Security and Privacy in Retrieval-Augmented Generation: Architectures, Threats, Defenses, and Future Directions for Building Trustworthy Systems](/202606/26/2606.25533v1-security-and-privacy-in-retrieval-augmented-generation-architectures-threats-defenses-and-future-directions-for-building-trustworthy-systems)  
-   标签：评分：6.0/10、query:llm-security
-   evidence：全面综述RAG中的威胁与防御，为内容安全和输入验证提供见解
+   evidence：防御数据投毒，这是一种针对LLM的对抗性攻击
 
 
 <div class="dpr-home-promo-card">

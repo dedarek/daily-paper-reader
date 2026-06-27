@@ -1,0 +1,393 @@
+Title: RAS: Measuring LLM Safety Through Refusal Alignment
+
+URL Source: https://arxiv.org/pdf/2606.25750v1
+
+Published Time: Thu, 25 Jun 2026 00:56:44 GMT
+
+Number of Pages: 11
+
+Markdown Content:
+# RAS: Measuring LLM Safety Through Refusal Alignment 
+
+Chang-Chieh Huang ∗, Yan-Lun Chen ∗, Chia-Mu Yu ∗ and Wei-Bin Lee ♠∗ National Yang Ming Chiao Tung University  
+
+> ♠
+
+Hon Hai Research Institute 
+
+Abstract 
+
+Safety evaluation of large language models (LLMs) is commonly performed by querying models with unsafe or jailbreak prompts and judging whether their outputs violate a safety policy. Although useful, output-level evalu-ation is expensive, sensitive to judge choice, and tied to fixed question banks. We propose 
+
+SafeVec , a white-box evaluation procedure that measures safety from internal represen-tations rather than generated outputs. Given a safety-aligned reference model, SafeVec 
+
+extracts refusal directions and scores a tar-get model according to how strongly its hid-den states align with these directions under unsafe and jailbreak prompts. The result-ing metric, RAS (Refusal Alignment Score), maps representation-level refusal alignment to a calibrated 0–100 safety score. Across 
+
+Llama , Gemma , and Qwen families, RAS sep-arates aligned models from uncensored and abliterated variants, correlates with output-level attack success rate, and is substantially faster than judge-based evaluation. These results sug-gest that refusal alignment provides an efficient signal for white-box LLM safety evaluation. 
+
+1 Introduction 
+
+Safety evaluation has become a central step in the development and deployment of large language models (LLMs). A typical evaluation pipeline probes a model with unsafe instructions, jail-break prompts, or red-team attacks, then measures whether the model produces harmful content using human annotation, rule-based filters, or LLM-as-a-judge classifiers. This broad output- or response-level paradigm appears in safety knowledge and be-havioral benchmarks such as SafetyBench (Zhang et al., 2024), and in harmful-compliance or jail-break evaluations such as HarmBench (Mazeika et al., 2024), JailbreakBench (Chao et al., 2024), and StrongREJECT (Souly et al., 2024). More re-cently, standardized evaluation methodologies have also been proposed to improve reproducibility and comparability across testing environments (Yeh et al., 2026). Despite differences in implemen-tation, these approaches share a common character-istic: they evaluate safety through model outputs. Output-level evaluation has several limitations. First, it is expensive: each prompt requires genera-tion and often a second judge model. Second, the result depends on decoding parameters, refusal tem-plates, and judge behavior. Third, benchmarks can become stale as models are trained against known question banks. Finally, output-level safety is a late-stage behavioral signal: it measures whether a model ultimately refuses or complies, but does not reveal whether the model internally recognizes a request as unsafe or enters a refusal-related state during processing. This paper asks whether safety can be evaluated earlier, at the representation level. Recent work has shown that LLMs encode high-level concepts and behaviors in internal activation spaces (Burns et al., 2022; Zou et al., 2023a; Li et al., 2023; Gurnee and Tegmark, 2024). In particular, refusal behav-ior has been shown to be mediated by directions in hidden activation space, and manipulating such directions can increase or suppress refusal (Arditi et al., 2024; Turner et al., 2024). These findings suggest a simple hypothesis: when a safety-aligned model processes a harmful request, its hidden states move along a refusal-related direction; when this representation-level refusal signal is weakened, un-safe compliance becomes more likely. We build on this hypothesis and propose 
+
+SafeVec , a white-box procedure for measuring representation-level refusal alignment. Given a safety-aligned reference model, SafeVec extracts layer-wise refusal directions by contrasting hidden states induced by safe and unsafe prompts. It then selects a stable layer window where unsafe prompts exhibit alignment with the refusal direction and where calibration models with different safety lev-
+
+> arXiv:2606.25750v1 [cs.CR] 24 Jun 2026
+
+els show consistent separation. For a target model from the same model family, SafeVec computes the cosine similarity between its hidden states and the refusal direction under unsafe and jailbreak prompts. These similarities are calibrated into RAS 
+
+(Refusal Alignment Score), a 0–100 safety score. Conceptually, RAS complements existing output-level evaluations. Traditional output-level evaluations measure whether a model behaves safely through its generated outputs, whereas RAS measures whether the model internally aligns with a refusal representation when processing unsafe inputs. Thus, RAS is not intended to replace behav-ioral evaluation frameworks; rather, it provides a representation-level safety metric that can be used for comparison of safety-aligned model variants. We evaluate RAS on three major model fami-lies: Llama , Gemma , and Qwen . The results support four findings. First, safe and unsafe models ex-hibit clear separation in refusal-direction alignment under both unsafe and jailbreak prompts. Second, RAS correlates strongly with output-level safety be-havior, as models with high RAS generally exhibit low attack success rates (ASR). Third, this relation-ship remains consistent across different model fam-ilies after architecture-specific calibration. Fourth, RAS is substantially more efficient than judge-based evaluation because it requires only forward passes and does not rely on long-form generation or external judges. Our contributions are summarized as follows: • We propose SafeVec , a white-box representation-level safety evaluation procedure based on refusal alignment. • We introduce RAS, a calibrated 0–100 Refusal Alignment Score for measuring LLM safety from hidden representations. • We demonstrate that RAS reliably distin-guishes safety-aligned, uncensored, and ablit-erated models across Llama , Gemma , and Qwen 
+
+families. 
+
+2 Related Work 
+
+LLM safety evaluation. Most LLM safety eval-uations are output-based. Early work studies toxic, biased, or untruthful generations using datasets such as RealToxicityPrompts, StereoSet, BBQ, and TruthfulQA (Gehman et al., 2020; Nadeem et al., 2021; Parrish et al., 2022; Lin et al., 2022). More recent benchmarks evaluate whether models refuse harmful requests, including SafetyBench (Zhang et al., 2024), HarmBench (Mazeika et al., 2024), JailbreakBench (Chao et al., 2024), and Stron-gREJECT (Souly et al., 2024). Beyond public benchmarks, Yeh et al. (2026) study laboratory-auditable evaluation based on validated question banks. These approaches measure safety through generated outputs, whereas our goal is to estimate safety from internal representations before genera-tion. 
+
+Red teaming and jailbreak attacks. Prior work studies how safety-aligned models can be induced to comply with harmful requests through adversar-ial prompting and jailbreak attacks (Ganguli et al., 2022; Perez et al., 2022; Chao et al., 2023; Zou et al., 2023b). Other work analyzes failure modes of safety alignment under distribution shifts and adversarial inputs (Wei et al., 2023). Unlike these output-level evaluations, RAS measures whether refusal-related representations remain active under unsafe and jailbreak prompts. 
+
+Alignment and refusal. Instruction tuning and RLHF have substantially improved LLM safety (Ouyang et al., 2022; Bai et al., 2022), but align-ment can also introduce behaviors such as syco-phancy and brittle refusal boundaries (Sharma et al., 2023). Recent work shows that refusal is encoded and can be manipulated in activation space (Arditi et al., 2024). Rather than steering model behav-ior, we use refusal alignment as a safety evaluation signal. 
+
+3 Proposed Method 
+
+3.1 System Model 
+
+We consider a white-box safety evaluation setting. The evaluator has access to the target model’s hid-den states, including residual-stream activations at each decoder layer. This setting applies to open-weight models and internal model audits, but not to closed APIs that expose only generated text. Let 
+
+Mtarget denote the model to be evaluated. The eval-uator is given three prompt sets: a safe prompt set 
+
+S, an unsafe prompt set U, and a jailbreak prompt set J . Safe prompts are benign user requests. Un-safe prompts directly ask for harmful or policy-violating content. Jailbreak prompts contain un-safe intents wrapped in adversarial or role-playing instructions. For each architecture family a, we assume access to a safety-aligned reference model Mref ,a and a small calibration set Ca containing models with different safety levels, such as aligned, uncensored, and abliterated variants. The refer-ence model defines the refusal direction, while cal-ibration models define how raw cosine similarities should be mapped into a comparable RAS scale. RAS is not a black-box benchmark. It does not re-place output-level evaluation for closed proprietary systems. Instead, it is designed as a fast white-box metric for open-weight model auditing, post-training comparison, and safety regression testing. 
+
+3.2 SafeVec 
+
+SafeVec consists of five stages: refusal direc-tion extraction, layer window selection, calibration model scoring, RAS calibration, and target model scoring. 
+
+Stage 1: Refusal direction extraction. For each layer l, we feed safe and unsafe prompts into the reference model and extract the last-token residual-stream activation: 
+
+href  
+
+> l
+
+(x).
+
+We compute the mean safe and unsafe activations: 
+
+μsafe  
+
+> l
+
+= 1
+
+|S| 
+
+X
+
+> s∈S
+
+href  
+
+> l
+
+(s), μ unsafe  
+
+> l
+
+= 1
+
+|U| 
+
+X
+
+> u∈U
+
+href  
+
+> l
+
+(u).
+
+The layer-wise refusal direction is: 
+
+rl = μunsafe  
+
+> l
+
+− μsafe  
+
+> l
+
+, ˆrl = rl
+
+∥rl∥2 + ϵ .
+
+Here, ϵ is a small constant used to avoid division by zero. Intuitively, ˆrl captures how the reference model’s representation shifts when it processes un-safe rather than safe requests. 
+
+Stage 2: Layer window selection. Not all layers are equally informative. Early layers may mostly encode lexical or syntactic information, while the final layers can be affected by readout effects near the language modeling head. We therefore select a continuous layer window W . For each layer, we compute the reference model’s safe and unsafe cosine means: 
+
+msafe  
+
+> l
+
+= 1
+
+|S| 
+
+X
+
+> s∈S
+
+cos( href  
+
+> l
+
+(s), ˆrl),munsafe  
+
+> l
+
+= 1
+
+|U| 
+
+X
+
+> u∈U
+
+cos( href  
+
+> l
+
+(u), ˆrl).
+
+We also compute the safe suppression score and separation gap: 
+
+ql = −msafe  
+
+> l
+
+, gl = munsafe  
+
+> l
+
+− msafe  
+
+> l
+
+.
+
+We prefer a consecutive layer window, where the separation gap is sufficiently large and stable, and where the unsafe cosine mean together with the safe suppression score reflects a consistent align-ment pattern with the refusal direction. We further validate the window using calibration models: safer models should have higher refusal alignment un-der unsafe and jailbreak prompts, while unsafe or abliterated models should have lower alignment. 
+
+Stage 3: Calibration model scoring. Given W ,we first score each calibration model by measur-ing its average refusal alignment on unsafe and jailbreak prompts:           
+
+> UnsafeScore( M) = 1
+> |W||U|
+> X
+> l∈W
+> X
+> u∈U
+> cos( hMl(u),ˆrl),
+> JailbreakScore( M) = 1
+> |W||J |
+> X
+> l∈W
+> X
+> j∈J
+> cos( hMl(j),ˆrl).
+
+The unsafe score measures whether the model in-ternally moves toward refusal on direct harmful requests. The jailbreak score measures whether this refusal alignment persists under simple adver-sarial framing. These raw calibration scores are used to estimate the family-specific RAS calibra-tion parameters. 
+
+Stage 4: RAS calibration. Raw cosine similari-ties are not directly comparable across model fami-lies. We therefore calibrate RAS within each archi-tecture family using the calibration models. For a model M , define the combined score:          
+
+> s(M) = wu·UnsafeScore( M) + wj·JailbreakScore( M),
+
+where wu = wj = 0 .5 in our experiments. For architecture a, let Mref ,a be the reference model and let sref ,a = s(Mref ,a ). The refusal drop of model M is: 
+
+d(M ) = sref ,a − s(M ).
+
+We define the high-risk calibration subset as cali-bration models with positive refusal drop and ASR above a threshold τ :
+
+Ha = {M ∈ C a : d(M ) > 0, ASR( M ) ≥ τ }.
+
+In our experiments, we set τ = 0 .8. The bad-anchor scale ba is estimated as the median refusal drop within this subset: 
+
+ba = median M ∈H a d(M ).If Ha is empty, we instead estimate ba using the upper quantile of all positive refusal drops in the calibration set: 
+
+ba = Qq({d(M ) : M ∈ C a, d (M ) > 0}),
+
+where q = 0 .9 in our experiments. In practice, we prefer calibration sets with at least two high-risk models so that the bad-anchor scale is estimated more stably. We then normalize the refusal drop as: 
+
+˜d(M ) = d(M )
+
+ba
+
+.
+
+To account for family-specific severity, we define the ASR increase relative to the reference model as: 
+
+∆ASR( M ) = ASR( M ) − ASR( Mref ,a ).
+
+We keep calibration models with positive normal-ized refusal drop and positive ASR increase: 
+
+Va = {M ∈ C a : ˜d(M ) > 0, ∆ASR( M ) > 0}.
+
+For each M ∈ V a, we compute the severity ratio: 
+
+ρ(M ) = ∆ASR( M )˜d(M ) .
+
+The architecture-specific severity slope is defined as: 
+
+αa = median M ∈V a ρ(M ).
+
+We define the global severity slope as: 
+
+αglobal = median a(αa).
+
+The architecture severity multiplier is then com-puted as: 
+
+γa = 1 + λ
+
+ αa
+
+αglobal 
+
+− 1
+
+
+
+,
+
+where λ = 0 .5 is a shrink coefficient controlling the strength of cross-architecture severity correc-tion. This multiplier controls how strongly nor-malized refusal drops are penalized for each ar-chitecture. If αa > α global , then a given normal-ized refusal drop is associated with a larger ASR increase for architecture a, so γa > 1 applies a stronger RAS penalty. Conversely, if αa < α global ,the same refusal drop is associated with a smaller ASR increase, so γa < 1 applies a weaker penalty. The aligned drop is: 
+
+daligned (M ) = γa ˜d(M ).
+
+Finally, RAS maps the aligned drop to a 0–100 scale: 
+
+RAS( M ) = 100 1 + exp( β(daligned (M ) − c)) ,
+
+where c = 0 .75 is the sigmoid center and β =5.0 controls the sigmoid steepness. A larger RAS indicates stronger refusal alignment and therefore higher estimated safety. 
+
+Stage 5: Target model scoring. With the family-specific calibration fixed, we score each target model using the same unsafe and jailbreak cosine-similarity computation from Stage 3. The resulting combined score s(M ) is then mapped through the RAS calibration from Stage 4 to obtain the final target-model RAS. 
+
+4 Evaluation 
+
+We answer four research questions: 
+
+RQ1: Can SafeVec identify representation-level safety differences between safe/unsafe LLMs? 
+
+RQ2: Does RAS correlate with output-level safety behavior? 
+
+RQ3: Does RAS generalize across different LLM families? 
+
+RQ4: Is RAS more efficient than output-based safety evaluation? 
+
+4.1 Experimental Setting Model families. We consider three open-weight model families: Llama-3.1-8B , Gemma-3-4B , and 
+
+Qwen2.5-7B . For each family, we use the official instruction-tuned release as the safety-aligned ref-erence anchor. Specifically, the reference mod-els are meta-llama/Llama-3.1-8B-Instruct for Llama, google/gemma-3-4b-it for Gemma, and 
+
+Qwen/Qwen2.5-7B-Instruct for Qwen. These models are standard aligned releases within their respective families and therefore provide suitable anchors for estimating family-specific refusal di-rections. Each architecture family includes reference, cal-ibration, and target models. The reference model defines the refusal direction, the calibration models estimate the raw-score range and RAS calibration, and the target models perform final RAS evalu-ation. The calibration set includes models with different safety levels, such as aligned, uncensored, and abliterated variants. Prompts. We use three prompt sets for SafeVec :safe prompts, unsafe prompts, and jailbreak prompts. Safe prompts contain benign user re-quests, unsafe prompts directly ask for harmful con-tent, and jailbreak prompts wrap unsafe requests with adversarial instructions. The same prompt sets are used throughout the SafeVec pipeline for refusal-direction extraction, calibration scoring, and target scoring. All prompts are formatted us-ing the model-specific chat template before being fed to the model. We extract last-token residual-stream activations at each decoder layer. Output-level ASR is evaluated separately using HEx-PHI prompts, as described in Appendix A.1. 
+
+Layer windows. The selected layer windows are family-specific. For Llama , we use layers 22–30. For Gemma , we use layers 27–29. For Qwen , we use layers 22–26. These windows are chosen using the stability and separation criteria described in Section 3.2. 
+
+Output-level reference metric. We compare RAS with output-level attack success rate (ASR). We report 100 × (1 − ASR) so that larger values in-dicate safer output behavior, matching the direction and scale of RAS. 
+
+Hardware. All experiments were run on a server equipped with one NVIDIA H100 PCIe GPU with 80GB memory, two AMD EPYC 7313 16-core CPUs, and 256GB of RAM. 
+
+4.2 Experimental Results RQ1: Representation-level separation. Fig-ures 1, 5, and 6 show the layer-wise behavior of unsafe cosine mean, safe suppression score, and separation gap for the reference models. For Llama 
+
+and Qwen , the gap becomes larger and more stable in middle-to-late layers. Gemma shows a sharper architecture-specific pattern, motivating a narrower selected window. These observations support the use of family-specific layer windows rather than scoring all layers. Figures 2, 3, and 7–10 compare cosine similarity between model hidden states and the refusal direc-tion under unsafe and jailbreak prompts. Across all three families, safer models show higher refusal alignment, while unsafe or abliterated models show lower alignment. This pattern is especially clear in the selected layer windows, where green curves for safe models remain consistently above red curves for unsafe models.      
+
+> Figure 1: Layer-wise analysis for Llama .
+> Figure 2: Cosine similarity between Llama models and the refusal direction on unsafe prompts.
+> Figure 3: Cosine similarity between Llama models and the refusal direction on jailbreak prompts.
+
+RQ2: Correlation with output-level safety. Ta-bles 1, 3, and 4 report raw unsafe scores, jailbreak scores, and ASR for the reference and calibration models. Across the calibration sets, safety-aligned models generally have lower ASR, while uncen-sored or abliterated variants show higher ASR. Their raw SafeVec scores follow the same trend, suggesting that representation-level refusal align-ment already reflects broad differences in output-level safety before calibration. After applying the family-specific RAS calibration, Figures 4, 11, and 12 show a similar pattern on the target models: safer models receive higher RAS, whereas unsafe or abliterated variants receive lower scores. Thus, RAS preserves the safety-related trend observed in the raw scores while avoiding response generation. We also observe a few calibration-set ex-ceptions. For example, in the Gemma family, 
+
+Viesar/gemma-3-4b-opus-reasoning-distill 
+
+has lower raw refusal-alignment scores than the Llama model Unsafe score Jailbreak score ASR                         
+
+> meta-llama/Llama-3.1-8B-Instruct 0.283 0.193 0.106 vicgalle/Configurable-Llama-3.1-8B-Instruct 0.165 0.046 0.127 nvidia/Llama-3.1-Nemotron-Nano-8B-v1 0.074 0.047 0.281 ValiantLabs/Llama3.1-8B-Fireplace2 0.088 0.010 0.358 Rupesh2/Llama-3.1-8B-Uncensored -0.074 -0.131 0.633 mlabonne/Meta-Llama-3.1-8B-Instruct-abliterated -0.155 -0.181 0.933 aifeifei798/DarkIdol-Llama-3.1-8B-Instruct-1.2-Uncensored -0.115 -0.165 0.936 Orenguteng/Llama-3.1-8B-Lexi-Uncensored-V2 0.064 -0.057 0.939
+
+Table 1: Raw SafeVec scores and ASR for Llama reference and calibration models. 
+
+Figure 4: RAS and 100 × (1 − ASR) for Llama .
+
+official google/gemma-3-4b-it reference model, but also achieves a lower ASR. This suggests that some models may improve output-level safety through mechanisms not fully captured by a single reference refusal direction. We still use 
+
+google/gemma-3-4b-it as the reference model because it is the official safety-aligned instruction model and provides a clean family-specific anchor. Therefore, RAS should be interpreted as a refusal-alignment metric that tracks ASR trends at the family level, rather than as a strict per-model ranking identical to ASR. 
+
+RQ3: Generalization across model families. 
+
+The three evaluated families differ in architecture, layer count, representation scale, and safety tuning. Nevertheless, the same SafeVec procedure applies to all of them: extract a family-specific refusal direction, select a stable layer window, compute unsafe and jailbreak alignment, and calibrate RAS. Raw scores are not directly comparable across fam-ilies, but calibrated RAS consistently ranks aligned models above unsafe variants. This shows refusal alignment is not a single-family artifact, though family-specific calibration remains necessary. 
+
+RQ4: Efficiency. Table 2 compares RAS scor-ing time with judge-based scoring time. During target scoring, RAS requires only forward passes through the target model, while judge-based evalu-ation requires response generation and additional judgment. On average, RAS is 216.88 × faster in our setting.                
+
+> Model RAS time (s) Judge time (s) Speedup
+> Llama-3.1-8B-Instruct 14.13 572.47 40.52 ×
+> Gemma -3-4b-it 13.29 6309.68 474.85 ×
+> Qwen 2.5-7B-Instruct 14.97 2025.26 135.25 ×
+> Average 14.13 2969.14 210.13 ×
+
+Table 2: RAS versus judge-based scoring time. 
+
+4.3 Discussion 
+
+RAS should be interpreted as a representation-level safety metric rather than a complete replacement for behavioral evaluation. A high RAS means that the target model’s hidden states remain aligned with the reference refusal direction under unsafe and jailbreak prompts. This is useful for fast white-box auditing, but it does not prove that the model will refuse every harmful request. Conversely, a low RAS indicates weak refusal alignment and po-tential safety risk, but output-level confirmation may still be needed in high-stakes deployment. The metric is also architecture-aware. Because activa-tion scales and refusal geometry differ across fam-ilies, raw cosine scores require calibration. This is why SafeVec separates the scoring procedure from the final RAS mapping. In practice, a model provider can calibrate RAS once for a family and then use it for rapid regression testing across fine-tuned variants. 
+
+5 Conclusion 
+
+We introduced SafeVec , a white-box method for measuring LLM safety via refusal alignment. 
+
+SafeVec extracts refusal directions from a safety-aligned reference model and scores target models by the alignment of their hidden states under unsafe and jailbreak prompts. The resulting RAS provides a calibrated 0–100 safety score. Across different models, RAS distinguishes safe and unsafe vari-ants, correlates with ASR, and is much faster than judge-based evaluation. These findings suggest re-fusal alignment is an efficient representation-level signal for LLM safety assessment. Limitations 
+
+RAS requires white-box access to hidden states and therefore cannot be directly applied to closed APIs. It is also calibrated within model families, so cross-family comparison depends on the qual-ity of calibration models. Finally, RAS measures alignment with a reference refusal direction; if fu-ture models implement safety through substantially different internal mechanisms, the refusal direc-tion may need to be re-estimated or extended to a multi-directional representation. 
+
+Ethics Statement 
+
+This work aims to improve LLM safety evaluation by providing a faster white-box metric for detecting weakened refusal behavior. The method does not in-troduce new jailbreak attacks or optimize prompts for harmful compliance; it measures internal re-fusal alignment using existing unsafe and jailbreak prompt sets. Since low RAS scores may reveal vulnerable models, results should be reported re-sponsibly, especially for deployed systems. We recommend using RAS as part of a broader au-dit pipeline that also includes behavioral testing, human review, and deployment-specific risk assess-ment. 
+
+References 
+
+Andy Arditi, Oscar Obeso, Aaquib Syed, Daniel Paleka, Nina Panickssery, Wes Gurnee, and Neel Nanda. 2024. Refusal in language models is mediated by a single direction. In Advances in Neural Informa-tion Processing Systems .Yuntao Bai, Saurav Kadavath, Sandipan Kundu, Amanda Askell, Jackson Kernion, Andy Jones, Anna Chen, Anna Goldie, Azalia Mirhoseini, Cameron McKinnon, Carol Chen, Catherine Olsson, Christo-pher Olah, Danny Hernandez, Dawn Drain, Deep Ganguli, Dustin Li, Eli Tran-Johnson, Ethan Perez, Jamie Kerr, Jared Mueller, Jeffrey Ladish, Joshua Landau, Kamal Ndousse, Kamil ˙e Lukosuite, Liane Lovitt, Michael Sellitto, Nelson Elhage, Nicholas Schiefer, Noemí Mercado, Nova DasSarma, Robert Lasenby, Robin Larson, Sam Ringer, Scott John-ston, Shauna Kravec, Sheer El Showk, Stanislav Fort, Tamera Lanham, Timothy Telleen-Lawton, Tom Con-erly, Tom Henighan, Tristan Hume, Samuel R. Bow-man, Zac Hatfield-Dodds, Ben Mann, Dario Amodei, Nicholas Joseph, Sam McCandlish, Tom Brown, and Jared Kaplan. 2022. Constitutional ai: Harmlessness from ai feedback. Collin Burns, Haotian Ye, Dan Klein, and Jacob Stein-hardt. 2022. Discovering latent knowledge in lan-guage models without supervision. Patrick Chao, Edoardo Debenedetti, Alexander Robey, Maksym Andriushchenko, Francesco Croce, Vikash Sehwag, Edgar Dobriban, Nicolas Flammarion, George J. Pappas, Florian Tramer, Hamed Hassani, and Eric Wong. 2024. Jailbreakbench: An open ro-bustness benchmark for jailbreaking large language models. In Advances in Neural Information Process-ing Systems .Patrick Chao, Alexander Robey, Edgar Dobriban, Hamed Hassani, George J. Pappas, and Eric Wong. 2023. Jailbreaking black box large language models in twenty queries. Deep Ganguli, Liane Lovitt, Jackson Kernion, Amanda Askell, Yuntao Bai, Saurav Kadavath, Ben Mann, Ethan Perez, Nicholas Schiefer, Kamal Ndousse, Andy Jones, Sam Bowman, Anna Chen, Tom Con-erly, Nova DasSarma, Dawn Drain, Nelson Elhage, Sheer El-Showk, Stanislav Fort, Zac Hatfield-Dodds, Tom Henighan, Danny Hernandez, Tristan Hume, Josh Jacobson, Scott Johnston, Shauna Kravec, Catherine Olsson, Sam Ringer, Eli Tran-Johnson, Dario Amodei, Tom Brown, Nicholas Joseph, Sam McCandlish, Chris Olah, Jared Kaplan, and Jack Clark. 2022. Red teaming language models to re-duce harms: Methods, scaling behaviors, and lessons learned. Samuel Gehman, Suchin Gururangan, Maarten Sap, Yejin Choi, and Noah A. Smith. 2020. Realtoxic-ityprompts: Evaluating neural toxic degeneration in language models. In Findings of the Association for Computational Linguistics: EMNLP 2020 .Wes Gurnee and Max Tegmark. 2024. Language models represent space and time. In International Confer-ence on Learning Representations .Kenneth Li, Oam Patel, Fernanda Viégas, Hanspeter Pfister, and Martin Wattenberg. 2023. Inference-time intervention: Eliciting truthful answers from a lan-guage model. Stephanie Lin, Jacob Hilton, and Owain Evans. 2022. Truthfulqa: Measuring how models mimic human falsehoods. In Proceedings of the 60th Annual Meet-ing of the Association for Computational Linguistics .Mantas Mazeika, Long Phan, Xuwang Yin, Andy Zou, Zifan Wang, Norman Mu, Elham Sakhaee, Nathaniel Li, Steven Basart, Bo Li, David Forsyth, and Dan Hendrycks. 2024. Harmbench: A standardized eval-uation framework for automated red teaming and robust refusal. In Proceedings of the 41st Interna-tional Conference on Machine Learning , volume 235 of Proceedings of Machine Learning Research , pages 35181–35224. Moin Nadeem, Anna Bethke, and Siva Reddy. 2021. Stereoset: Measuring stereotypical bias in pretrained language models. In Proceedings of the 59th Annual Meeting of the Association for Computational Lin-guistics and the 11th International Joint Conference on Natural Language Processing .Long Ouyang, Jeffrey Wu, Xu Jiang, Diogo Almeida, Carroll L. Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, John Schulman, Jacob Hilton, Fraser Kelton, Luke Miller, Maddie Simens, Amanda Askell, Peter Welin-der, Paul Christiano, Jan Leike, and Ryan Lowe. 2022. Training language models to follow instructions with human feedback. In Advances in Neural Information Processing Systems .Alicia Parrish, Angelica Chen, Nikita Nangia, Vishakh Padmakumar, Jason Phang, Jana Thompson, Phu Mon Htut, and Samuel R. Bowman. 2022. Bbq: A hand-built bias benchmark for question answering. In Findings of the Association for Computational Linguistics: ACL 2022 .Ethan Perez, Saffron Huang, Francis Song, Trevor Cai, Roman Ring, John Aslanides, Amelia Glaese, Nat McAleese, and Geoffrey Irving. 2022. Red teaming language models with language models. In Proceed-ings of the 2022 Conference on Empirical Methods in Natural Language Processing .Xiangyu Qi, Yi Zeng, Tinghao Xie, Pin-Yu Chen, Ruoxi Jia, Prateek Mittal, and Peter Henderson. 2024. Fine-tuning aligned language models compromises safety, even when users do not intend to! In The Twelfth In-ternational Conference on Learning Representations .Mrinank Sharma, Meg Tong, Tomasz Korbak, David Duvenaud, Amanda Askell, Samuel R. Bowman, Newton Cheng, Esin Durmus, Zac Hatfield-Dodds, Scott R. Johnston, Shauna Kravec, Timothy Maxwell, Sam McCandlish, Kamal Ndousse, Oliver Rausch, Nicholas Schiefer, Da Yan, Miranda Zhang, and Ethan Perez. 2023. Towards understanding syco-phancy in language models. Alexandra Souly, Qingyuan Lu, Dillon Bowen, Tu Trinh, Elvis Hsieh, Sana Pandey, Pieter Abbeel, Justin Svegliato, Scott Emmons, Olivia Watkins, and Sam Toyer. 2024. A strongreject for empty jail-breaks. Alex Turner, Lisa Thiergart, Gavin Leech, David Udell, Juan J. Vazquez, Ulisse Mini, and Monte MacDi-armid. 2024. Activation addition: Steering language models without optimization. Alexander Wei, Nika Haghtalab, and Jacob Steinhardt. 2023. Jailbroken: How does llm safety training fail? Tinghao Xie, Xiangyu Qi, Yi Zeng, Yangsibo Huang, Udari Sehwag, Kaixuan Huang, Luxi He, Boyi Wei, Dacheng Li, Ying Sheng, et al. 2025. Sorry-bench: Systematically evaluating large language model safety refusal. In International Conference on Learning Representations , volume 2025, pages 59937–59973. Tsu-Yi Yeh, Po-Yu Hsieh, Cheng-Chuan Huang, Pang-Chieh Wang, Tzy-Shiah Wang, and Yu-Tai Li. 2026. Testing method for language model evaluation: A case study on a localized question bank. In 2026 IEEE Conference on Artificial Intelligence (CAI) ,pages 217–224. IEEE. Zhexin Zhang, Leqi Lei, Lindong Wu, Rui Sun, Yongkang Huang, Chong Long, Xiao Liu, Xuanyu Lei, Jie Tang, and Minlie Huang. 2024. Safetybench: Evaluating the safety of large language models. In 
+
+Proceedings of the 62nd Annual Meeting of the Asso-ciation for Computational Linguistics .Andy Zou, Long Phan, Sarah Chen, James Campbell, Phillip Guo, Richard Ren, Alexander Pan, Xuwang Yin, Mantas Mazeika, Ann-Kathrin Dombrowski, Shashwat Goel, Nathaniel Li, Michael J. Byun, Zifan Wang, Alex Mallen, Steven Basart, Sanmi Koyejo, Dawn Song, Matt Fredrikson, J. Zico Kolter, and Dan Hendrycks. 2023a. Representation engineering: A top-down approach to ai transparency. Andy Zou, Zifan Wang, Nicholas Carlini, Milad Nasr, J. Zico Kolter, and Matt Fredrikson. 2023b. Univer-sal and transferable adversarial attacks on aligned language models. 
+
+A Appendix 
+
+A.1 ASR Evaluation Prompts and Judge 
+
+For output-level ASR evaluation, we use the HEx-PHI harmful prompt set, which contains unsafe instructions grouped into 11 prohibited-use cate-gories. These prompts are used only for output-level ASR evaluation and are not used for SafeVec 
+
+refusal-direction extraction, calibration scoring, or target scoring. SafeVec instead uses the safe, un-safe, and jailbreak prompt sets described in the experimental setting. For each HEx-PHI prompt (Qi et al., 2024), we generate a response from the evaluated model us-ing greedy decoding with a maximum of 512 new tokens. We then use the SORRY-Bench (Xie et al., 2025) fine-tuned Mistral-7B judge model to de-termine whether the response complies with the unsafe request. The judge outputs 1 if the response directly assists with or satisfies the unsafe request, and 0 if the response refuses or does not directly satisfy the request. ASR is computed as the average judge score over all HEx-PHI evaluation prompts. 
+
+LLM-as-a-judge prompt. The following prompt is used to evaluate whether the model response complies with the unsafe user request. 
+
+Prompt: LLM-as-a-judge 
+
+> You are a helpful assistant. Your goal is to judge if the following model response -[Output 1] Complies with the user request, i.e., containing content that can directly assist with or resolve the request.
+
+-[Output 0] Doesn 't comply with the user request; e.g., directly declining the user request or merely providing relevant content that cannot directly resolve the request. Output only the score. User Request: "{question}" Model Response: "{answer}" A.2 Supplementary Figures 
+
+Figure 5: Layer-wise analysis for Gemma . Figure 6: Layer-wise analysis for Qwen .
+
+Figure 7: Cosine similarity between Gemma models and the refusal direction on unsafe prompts. 
+
+Figure 8: Cosine similarity between Gemma models and the refusal direction on jailbreak prompts. 
+
+Figure 9: Cosine similarity between Qwen models and the refusal direction on unsafe prompts. 
+
+Figure 10: Cosine similarity between Qwen models and the refusal direction on jailbreak prompts. 
+
+Figure 11: RAS and 100 × (1 − ASR) for Gemma target models. 
+
+Figure 12: RAS and 100 × (1 − ASR) for Qwen target models. A.3 Supplementary Tables 
+
+Gemma model Unsafe score Jailbreak score ASR 
+
+google/gemma-3-4b-it 0.037 -0.019 0.230 Viesar/gemma-3-4b-opus-reasoning-distill -0.026 -0.043 0.076 ZySec-AI/gemma-3-4b-document-writer 0.022 -0.028 0.339 mlabonne/gemma-3-4b-it-abliterated -0.044 -0.089 0.758 YanLabs/gemma-3-4b-it-abliterated-normpreserve -0.090 -0.114 0.961 DavidAU/gemma-3-4b-it-heretic-uncensored-abliterated-Extreme -0.153 -0.170 0.979 
+
+Table 3: Raw SafeVec scores and ASR for Gemma reference and calibration models. 
+
+Qwen model Unsafe score Jailbreak score ASR 
+
+Qwen/Qwen2.5-7B-Instruct 0.295 0.188 0.236 XiaoyuWen/MAGIC-Qwen2.5-7B-Instruct 0.329 0.273 0.139 shisa-ai/shisa-v2-qwen2.5-7b 0.196 0.070 0.415 huihui-ai/Qwen2.5-7B-Instruct-abliterated-v3 -0.052 -0.127 0.933 Orion-zhen/Qwen2.5-7B-Instruct-Uncensored 0.049 -0.038 0.976 Goekdeniz-Guelmez/Josiefied-Qwen2.5-7B-Instruct-abliterated-v2 -0.272 -0.270 0.987 
+
+Table 4: Raw SafeVec scores and ASR for Qwen reference and calibration models.
