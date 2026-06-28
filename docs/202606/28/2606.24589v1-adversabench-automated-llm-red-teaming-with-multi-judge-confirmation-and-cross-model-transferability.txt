@@ -1,0 +1,205 @@
+Title: AdversaBench: Automated LLM Red-Teaming with Multi-Judge Confirmation and Cross-Model Transferability
+
+URL Source: https://arxiv.org/pdf/2606.24589v1
+
+Published Time: Wed, 24 Jun 2026 01:04:47 GMT
+
+Number of Pages: 10
+
+Markdown Content:
+# AdversaBench: Automated LLM Red-Teaming 
+
+Khanak Khandelwal 
+
+Indian Institute of Technology Jodhpur 
+
+b24mt1017@iitj.ac.in 
+
+June 2026 | github.com/khanak0509/AdversaBench 
+
+Abstract 
+
+Scaling adversarial evaluation of large language models requires two things at once: a way to generate hard inputs, and a way to confirm that the resulting failures are real. A single judge is fast, but it cannot tell you when it is being lenient, and it cannot resolve close calls on its own. We built AdversaBench , an automated red-teaming pipeline and reliability study that mutates seed prompts with five structured operators, queries a weak target model, and confirms failures through a three-judge panel with a meta-judge tiebreaker. We report a study on 45 seeds (15 per category: reasoning, instruction-following, and tool use), expanded from an initial pilot of 30 to improve coverage of temporal reasoning, strict formatting constraints, and tool edge cases. Every seed produced a confirmed failure. Four results stood out. First, operator effectiveness varies sharply by category: inject_distractor scores 0.33 mean reward on instruction-following seeds but 1.00 on reasoning and tool-use, a pattern that is visible in the per-category heatmap but invisible in aggregate counts. Second, binary failure rate hides difficulty: instruction-following seeds needed 2.4 attacker iterations on average versus 1.1 for reasoning and tool-use, and this gap is confirmed by a survival curve showing 60% of instruction seeds still unbroken after iteration 1 compared to 10% in other categories. Third, pairwise judge agreement of 80–87% coexists with near-zero Cohen’s κ (−0.05 to −0.11 ) because failures make up 90–97% of all verdicts; category-level disagreement rates are more informative, with instruction-following showing 33% panel splits versus 0% for reasoning. Fourth, a zero-shot transferability test on 15 verified adversarial prompts shows that attacks generated against Llama 3.1 8B transfer to Llama 3.3 70B, suggesting the mutations exploit general behavioral patterns rather than weaknesses specific to a small model. We release the pipeline, dataset, and analysis scripts at https://github.com/khanak0509/AdversaBench .
+
+1. Introduction 
+
+Red-teaming has become a routine part of LLM development. The goal is simple: find inputs that expose incorrect reasoning, instruction violations, or tool misuse before those failures show up in production. Naive prompting finds the easy cases. The harder ones need structured search over prompt variants, and once you find a candidate failure, you still need to verify it. At scale, verification usually means LLM-as-a-Judge [Zheng et al., 2023]. Human pairwise evaluation remains the reference standard, but it does not scale to thousands of synthetic examples per day. Strong models can stand in for human annotators when the task is preference ranking, and Zheng et al. [2023] showed that careful rubric prompting can match human agreement rates above 80%. Adversarial confirmation is a different task. The judge is not picking between Answer A and Answer B. It sees one prompt, one response, and a ground-truth specification of correct behavior. The 1
+
+> arXiv:2606.24589v1 [cs.AI] 23 Jun 2026
+
+verdict is fail or pass. That shift matters. A lenient judge silently drops real failures. A strict judge inflates them. A single-judge pipeline gives you no way to see when either is happening. This paper describes AdversaBench and reports what we learned from running it end to end. The contributions are: 1. A reproducible LangGraph pipeline with five mutation operators, epsilon-greedy operator selection, attacker escalation, and checkpoint resume. Failures are confirmed by a three-judge panel with a meta-judge tiebreaker. 2. A case for reporting iteration cost alongside failure rate. On 45 seeds, instruction-following required 2.4 iterations on average versus 1.1 for reasoning and tool-use, even though every category eventually broke. A survival curve makes this gap visually apparent. 3. An inter-judge reliability study adapted from Zheng et al. [2023]. We apply Cohen’s κ to single-response verdicts rather than pairwise preferences, and show that high raw agreement can mask near-zero κ when failures dominate the label distribution. 4. A zero-shot transferability experiment showing that adversarial prompts generated against a weak 8B target model transfer to a substantially stronger 70B model, indicating that the mutations expose general behavioral patterns rather than model-specific weaknesses. 
+
+2. Background and Related Work 
+
+2.1. LLM-as-a-Judge 
+
+Zheng et al. [2023] introduced MT-Bench and Chatbot Arena, showing that GPT-4 judgments align with human preferences at scale. Li et al. [2023] extended the same idea to instruction-following leaderboards. Both lines of work report inter-annotator agreement, often as Cohen’s κ:
+
+κ = Po − Pe
+
+1 − Pe
+
+(1) where Po is observed agreement and Pe is the agreement you would expect if two judges voted independently at their own base rates. Values above 0.8 are usually called strong agreement; 0.6 to 0.8 is moderate. Our setup differs in one important way. Zheng et al. compare two candidate answers in fixed positions. We ask each judge whether a single target response violates expected_behavior . The metric is still κ, but the unit of analysis is a binary correctness verdict, not a preference label. 
+
+2.2. When κ is Misleading Under Skew 
+
+When one label dominates, Pe rises toward Po and κ collapses even if the judges are substantively aligned on hard cases. Feinstein and Cicchetti [1990] called this the high-agreement, low-κ paradox. It shows up whenever prevalence is skewed, and adversarial evaluation with a weak target is an extreme version of that setting. 
+
+2.3. Automated Red-Teaming 
+
+Perez et al. [2022] showed that one language model can generate adversarial inputs for another at scale. Later systems tend to use structured mutations rather than open-ended generation, because operators make it easier to attribute why a prompt broke the target. AdversaBench follows that pattern. Recent jailbreak and safety benchmarks such as HarmBench [Mazeika et al., 2024], 2seeds.json Attacker Target         
+
+> Llama 8B Judges ×3Save dataset.json
+> Meta-judge
+> prompt 3/3 agree
+> split
+> resolve
+> retry
+> Figure 1: AdversaBench pipeline. Unanimous judge consensus saves directly; splits are resolved by a GPT-4o-mini meta-judge.
+
+JailbreakBench [Chao et al., 2024], and StrongREJECT [Souly et al., 2024] standardize attack suites and automated grading at larger scale; our work complements these efforts with a focused study on multi-judge confirmation, evaluator reliability, and cross-model transferability. 
+
+2.4. Agent Benchmarks 
+
+AgentDojo [Debenedetti et al., 2024] evaluates prompt-injection attacks in tool-using agents. Our tool-use category targets related failure modes (wrong tool choice, ignored errors, fabricated results) but uses mock tools and focuses on behavioral elicitation rather than injection into a live agent stack. 
+
+3. System Design 
+
+3.1. Overview 
+
+Figure 1 shows the full loop. The attacker mutates a seed prompt, the target model responds, three judges vote fail or pass, and disagreements go to a meta-judge. If no failure is confirmed, the loop repeats for up to five iterations. 
+
+3.2. Seed Construction 
+
+We wrote 45 seed prompts in three categories: reasoning (15), instruction-following (15), and tool-use (15). The initial 30 seeds (10 per category) were expanded by 15 additional seeds targeting specific failure modes identified during the pilot run: temporal and spatial reasoning, strict formatting constraints (e.g., valid JSON with an exact key count), negative constraints (e.g., avoiding a specific letter), and tool edge cases such as division-by-zero and hallucinated API schemas. Each seed has a base prompt, an expected_behavior field, and a reference_answer . Ground truth is fixed before any judge runs, so verdicts can be checked against an objective standard rather than panel opinion alone. The expected_behavior specifications were written to be unambiguous enough for a judge to verify without subjective interpretation — for instance, specifying “exactly 3 sentences” rather than “a brief summary.” The box below is a real verified-tier row from the released dataset. instruction-001 asks for a three-sentence summary and a detailed explanation. The target violates the length constraint. Two judges flag the failure; Qwen3 passes. The meta-judge confirms fail.   
+
+> Seed (instruction-001) prompt: "Summarize this in exactly 3 sentences but also provide a detailed explanation." expected_behavior: "Exactly 3 sentences; detailed explanation must
+
+3not break the sentence limit." Iteration 1 –- rephrase (confirmed failure) Mutated prompt restates the conflicting length constraints in more explicit terms. Target response: produced a long multi-paragraph answer. Judge verdicts: Llama=fail, Cerebras=fail, Qwen3=pass Resolution: meta-judge (GPT-4o-mini) => fail [verified tier] 
+
+3.3. Mutation Operators 
+
+Each iteration applies one of five operators. Selection is epsilon-greedy with ε = 0 .2: with probability 
+
+1 − ε the attacker reuses the best-performing operator seen so far for that seed category; otherwise it samples uniformly. The ε = 0 .2 value was not ablated in this study and should be treated as a hyperparameter choice; retrospective analysis of operator transition sequences is reported in Section 4.4. The operators are: 
+
+• rephrase : surface restatement of the seed. 
+
+• inject_distractor : adds a plausible but misleading constraint. 
+
+• role_flip : reframes the task under an adversarial persona. 
+
+• constraint_add : appends conflicting requirements. 
+
+• jailbreak_wrap : embeds the seed in a jailbreak-style template. The primary attacker is Llama 3.3 70B on Groq. Starting at iteration 2, the pipeline escalates to GPT-4o-mini for stronger mutations when the primary attacker has not yet confirmed a failure. Each seed gets at most five iterations before the run stops. 
+
+3.4. Judge Panel and Consensus 
+
+Three judges score every candidate failure: Llama 3.3 70B (Groq), Cerebras GPT-OSS 120B, and Qwen3 32B (Groq). Each returns a structured failure_detected verdict through Pydantic-validated output. Unanimous fail across all three judges yields a clean row. If the panel splits, or a judge errors on structured output, GPT-4o-mini acts as meta-judge. The exported dataset_verified.json 
+
+contains all confirmed failures: clean rows plus rows whose consensus flag is verified after meta-judge arbitration. 
+
+3.5. Target and Implementation 
+
+The target is Llama 3.1 8B Instant on Groq. We chose a smaller model on purpose: the point of this study is failure elicitation and evaluation reliability, not frontier-model robustness. A weak target also keeps failure prevalence high, which stress-tests the judge metrics in instructive ways. The code uses LangGraph for orchestration and LangChain for model calls. All models and paths live in config.yaml . Checkpoint files let interrupted runs resume from the last completed seed. The pipeline includes robust API rate-limit handling: when a provider exhausts its daily token limit, the pipeline falls back to an alternate provider without losing checkpoint state. 
+
+3.6. Reproducibility 
+
+pip install -r requirements.txt 
+
+4Table 1: Final operator by task category (45 seeds). Category inj_dist role constr reph jail                 
+
+> Reasoning 43300Instruction-following 02242Tool-use 53200
+> Table 2: Average iteration cost and first-attempt success by category.
+
+Category Seeds Avg. iterations First-attempt success Reasoning 15 1.1 90% Tool-use 15 1.1 90% Instruction-following 15 2.4 40% 
+
+python main.py python audit.py python inter_judge_analysis.py python visualize_results.py python operator_ablation.py python test_transferability.py 
+
+The analysis scripts read saved verdicts from dataset.json and dataset_verified.json . They do not re-query judges. Full per-row outputs including mutation history and judge reasons are in the repository. 
+
+4. Results 
+
+4.1. Overall Performance 
+
+All 45 seeds produced confirmed failures. The clean tier (unanimous 3/3 judge consensus) and verified tier (clean + meta-judge arbitration) together cover every seed. An independent audit scored clean-tier rows on a 1–5 quality scale; all received 5/5. 
+
+4.2. Operator Effectiveness 
+
+Table 1 shows the final operator for each confirmed break by category. The aggregate picture is misleading: globally inject_distractor and role_flip appear most often, but the per-category breakdown in Figure 2 tells a cleaner story. 
+
+inject_distractor accounts for half of tool-use breaks but achieves a mean reward of 0.33 on instruction-following seeds (see Figure 2). rephrase is the most common finisher on instruction-following (4/15), and both jailbreak_wrap successes were instruction-following seeds. This category– operator interaction is the main argument against reporting aggregate operator counts: the aggregate hides the fact that the best operator depends strongly on the task type. 
+
+4.3. Iteration Cost 
+
+Every category eventually broke, so binary failure rate is 15/15 across the board. Iteration cost tells a different story (Table 2). Instruction-following seeds needed 2.4 iterations on average. Reasoning and tool-use needed 1.1. Only 4/10 original instruction seeds broke on the first attempt, compared with 9/10 in the other two categories. 5Figure 2: Operator effectiveness heatmap (mean reward per operator–category pair). inject_distractor 
+
+> achieves 1.00 mean reward on reasoning and tool-use seeds but 0.33 on instruction-following, confirming that no single operator dominates across all categories.
+
+The survival curve (Figure 3) makes this gap visually apparent. Reasoning and tool-use lines drop steeply after the first iteration; the instruction-following line decays slowly across all five iterations. Seed instruction-002 illustrates the stacking behavior: it took five iterations ( inject_distractor ,then role_flip , then three constraint_add attempts) before judges unanimously confirmed the break. 
+
+4.4. Operator Ablation 
+
+A retrospective analysis of saved mutation_history arrays reveals the average reward per operator across all seeds: rephrase and jailbreak_wrap each achieved 1.00 mean reward but were selected infrequently ( n = 4 and n = 2 respectively). The workload was carried by constraint_add 
+
+(0.636, n = 11 ), role_flip (0.615, n = 13 ), and inject_distractor (0.562, n = 16 ), all of which maintained strong success rates despite high selection volume. Markov-chain analysis of operator transitions shows three high-confidence escalation paths: constraint_add 
+
+→ jailbreak_wrap (100% success), role_flip → role_flip (100% success on repeated applica-tion), and inject_distractor → constraint_add (100% success). These patterns suggest that the epsilon-greedy policy discovered a reasonable escalation ordering, but a learned policy over operator transitions could improve efficiency further. 
+
+4.5. Inter-Judge Reliability 
+
+We computed all reliability statistics post hoc from saved verdicts in dataset.json , following the spirit of Zheng et al. [2023] but applied to single-response fail/pass labels. 6Figure 3: Target model survival curve by iteration and category. Reasoning and tool-use seeds drop to 10% survival after iteration 1; instruction-following seeds remain at 60% survival after iteration 1 and require up to 5 iterations to fully break.  
+
+> Table 3: Judge leniency across 45 seeds.
+
+Judge Pass Fail Lj
+
+Llama 3.3 70B 1 44 3% Cerebras GPT-OSS 120B 3 42 10% Qwen3 32B 3 42 10% 
+
+4.5.1. Leniency 
+
+Leniency for judge j is the fraction of pass votes: 
+
+Lj = pass votes by judge jN , N = 45 . (2) Llama 3.3 70B passed only one seed (3% leniency). Cerebras and Qwen3 each passed three (10%). Higher leniency means more missed failures. 
+
+4.5.2. Pairwise Agreement and the κ Paradox 
+
+Table 4 reports raw agreement and Cohen’s κ for each judge pair. Agreement is high (80–87%), but 
+
+κ is near zero or slightly negative. This is not a bug in the code. With marginal fail rates around 90–97%, chance agreement is already high. For Llama and Cerebras specifically, Pe = p1,fail p2,fail + p1,pass p2,pass ≈ 0.873 , while observed agreement is Po ≈ 0.867 . The numerator in Equation 1 is therefore close to zero. Judges agree on 7Table 4: Pairwise judge agreement and Cohen’s κ.
+
+Judge Pair Agreement Cohen’s κ Interpretation Llama 70B × Cerebras 120B 87% −0.053 weak Llama 70B × Qwen3 32B 87% −0.053 weak Cerebras 120B × Qwen3 32B 80% −0.111 weak  
+
+> Table 5: Judge disagreement rate by category.
+
+Category Seeds Disagreements Rate Reasoning 15 0 0% Tool-use 15 2 13% Instruction-following 15 5 33% most rows because failures are common, not because they are reading the evidence the same way on hard cases. 
+
+4.5.3. Disagreement by Category 
+
+Because κ is unreliable under this label distribution, we report raw disagreement rates in Table 5 and Figure 4. A row counts as a disagreement if the three judges do not all share the same verdict. Reasoning failures are clear cut: every row was a unanimous fail. Instruction-following is where the panel actually splits. The meta-judge is doing exactly what it was added for: resolving cases where reasonable judges disagree on genuinely ambiguous failures. 
+
+4.6. Zero-Shot Transferability 
+
+A key question for any red-teaming pipeline is whether the generated adversarial prompts are overfit to the specific target model. To test this, we extracted 15 verified adversarial prompts from 
+
+dataset_verified.json that had successfully broken the Llama 3.1 8B target, and passed them zero-shot to Llama 3.3 70B Versatile — a model roughly 8 × larger and significantly more capable. Preliminary manual review of transferability_results.json indicates that a substantial frac-tion of the logical traps, constraint additions, and distractors that fooled the 8B model success-fully transferred to the 70B model. Seeds involving ambiguous or conflicting constraints (primar-ily constraint_add and inject_distractor mutations) showed the highest transfer rate, while 
+
+jailbreak_wrap mutations were less consistent across model scales. This result suggests that the mutations expose general behavioral patterns — difficulty resolving conflicting constraints, susceptibility to misleading context — rather than weaknesses specific to a small model. Systematic human annotation of the transfer results and extension to additional target models are left for future work. 
+
+5. Discussion 
+
+Iteration cost deserves to be a first-class metric. When every seed eventually fails, pass/fail rate stops discriminating. Mean iterations-to-failure does. Instruction-following took more than twice the attacker effort in this run, a gap that is invisible if you only report whether the model broke. The survival curve makes this argument without requiring tables. 8Figure 4: Judge disagreement by category. Reasoning failures are unanimous across all seeds; instruction-following produces partial disagreement in 33% of cases, confirming that the meta-judge is most active on the hardest category. 
+
+Operator selection is category-dependent. The heatmap in Figure 2 makes it clear that no single operator dominates across all task types. A pipeline that selects operators uniformly or based only on aggregate reward is leaving efficiency on the table. The retrospective Markov-chain analysis (Section 4.4) suggests that learning transition probabilities per category could reduce average iteration cost further. 
+
+Multi-judge evaluation is not optional for instruction-following. A single judge would have missed failures that Cerebras or Qwen3 passed, and would have hidden the fact that a third of instruction seeds split the panel. Logging disagreement by category is more informative than picking the strictest judge and calling it done. 
+
+Report κ with context, or report something else. Our 80–87% agreement numbers look healthy in isolation. They are mostly base-rate agreement. For skewed adversarial settings, we would report category-stratified disagreement alongside κ, and treat near-zero κ as a prevalence signal rather than proof that judges are independent. 
+
+Limitations. This is a study on 45 seeds with an intentionally weak target, so a 45/45 break rate is by design. The ground-truth expected_behavior specifications are author-constructed and have not been independently validated by human raters; verdicts are only as reliable as the specifications themselves. The ε = 0 .2 selection parameter was not ablated. The transferability result is based on preliminary manual review of 15 prompts rather than systematic annotation. Larger seed sets, stronger targets, independent spec validation, and human annotation of transfer results are the obvious next steps. 96. Conclusion 
+
+AdversaBench is a reproducible red-teaming methodology with structured mutations, multi-judge confirmation, tiered dataset export, and cross-model transferability testing. Running it on 45 seeds produced four practical lessons for adversarial evaluation design: operator effectiveness varies sharply by task category; iteration cost reveals difficulty that binary failure rate hides; Cohen’s κ can look meaningless under heavy class imbalance even when raw disagreement rates show exactly where judges diverge; and adversarial prompts generated against a weak model transfer to stronger ones, suggesting the mutations capture general behavioral patterns. The code, data, and analysis scripts are available at https://github.com/khanak0509/AdversaBench .
+
+References 
+
+Zheng, L., Chiang, W.-L., Sheng, Y., Zhuang, S., Wu, Z., Zhuang, Y., Lin, Z., Li, Z., Li, D., Xing, E., Zhang, H., Gonzalez, J. E., and Stoica, I. (2023). Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena. Advances in Neural Information Processing Systems , 36. https: //arxiv.org/abs/2306.05685 .Perez, E., Huang, S., Song, F., Cai, T., Ring, R., Aslanides, J., Glaese, A., McAleese, N., and Irving, G. (2022). Red teaming language models with language models. arXiv preprint arXiv:2202.03286 .Debenedetti, E., Zhang, J., Balunovic, M., Beurer-Kellner, L., Fischer, M., and Vechev, M. (2024). AgentDojo: A dynamic environment to evaluate attacks and defenses for LLM agents. arXiv preprint arXiv:2406.13352 .Cohen, J. (1960). A coefficient of agreement for nominal scales. Educational and Psychological Measurement , 20(1), 37–46. Feinstein, A. R. and Cicchetti, D. V. (1990). High agreement but low kappa: I. The problems of two paradoxes. Journal of Clinical Epidemiology , 43(6), 543–549. Li, X., Zhang, T., Dubois, Y., Taori, R., Gulrajani, I., Guestrin, C., Liang, P., and Hashimoto, T. B. (2023). AlpacaEval: An automatic evaluator of instruction-following models. https: //github.com/tatsu-lab/alpaca_eval .Mazeika, M., Phan, L., Yin, X., Zou, A., Wang, Z., Mu, N., Sakhaee, E., Li, N., Basart, S., Li, B., Forsyth, D., and Hendrycks, D. (2024). HarmBench: A standardized evaluation framework for automated red teaming and robust refusal. arXiv preprint arXiv:2402.04249 .Chao, P., Robey, A., Dobriban, E., Hsieh, C.-J., Smith, R., and Jana, S. (2024). JailbreakBench: An open robustness benchmark for jailbreaking large language models. arXiv preprint arXiv:2404.01318 .Souly, A., Lu, Q., Bowen, D., Trinh, T., Hsieh, E., Pandey, S., Abbeel, P., Svegliato, J., Yang, J., Gupta, S., Mangaokar, N., et al. (2024). A strongREJECT for empty jailbreaks. arXiv preprint arXiv:2402.10260 .10
