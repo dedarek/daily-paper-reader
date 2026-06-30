@@ -6,35 +6,32 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-29
-- 运行时间：2026-06-29 07:09:03 UTC
+- 最新运行日期：2026-06-30
+- 运行时间：2026-06-30 05:36:33 UTC
 - 运行状态：成功
-- 本次总论文数：5
-- 精读区：2
-- 速读区：3
+- 本次总论文数：4
+- 精读区：3
+- 速读区：1
 
 ### 今日简报（AI）
-今日推荐聚焦AI安全与对抗性防御，推出Yuvion系列高评分模型。最值得精读《Yuvion LLM》与《Yuvion VL》，分别从语言和多模态角度实现对抗性内容与AI安全检测。建议关注对抗性防御前沿，特别是多模态场景下的安全模型构建。
-- 详情：[/202606/29/README](/202606/29/README)
+今日精读聚焦多模态LLM安全护栏《SingGuard》，评分9.0，策略自适应与动态推理是亮点。建议深入关注其政策自适应机制，对理解AI安全防护前沿很有帮助。
+- 详情：[/202606/30/README](/202606/30/README)
 
 ### 精读区论文标签
-1. [Yuvion LLM: An Adversarially-Aware Large Language Model for Content And AI Safety](/202606/29/2606.27632v1-yuvion-llm-an-adversarially-aware-large-language-model-for-content-and-ai-safety)  
+1. [SingGuard: A Policy-Adaptive Multimodal LLM Guardrail with Dynamic Reasoning](/202606/30/2606.22873v1-singguard-a-policy-adaptive-multimodal-llm-guardrail-with-dynamic-reasoning)  
    标签：评分：9.0/10、query:llm-security
-   evidence：对抗感知的内容安全模型
-2. [Yuvion VL: A Multimodal Foundation Model for Adversarial Content and AI Safety](/202606/29/2606.25034v2-yuvion-vl-a-multimodal-foundation-model-for-adversarial-content-and-ai-safety)  
+   evidence：策略自适应的多模态护栏用于安全评估
+2. [SingGuard: A Policy-Adaptive Multimodal LLM Guardrail with Dynamic Reasoning](/202606/30/2606.22873v2-singguard-a-policy-adaptive-multimodal-llm-guardrail-with-dynamic-reasoning)  
+   标签：评分：9.0/10、query:llm-security
+   evidence：策略自适应的多模态LLM防护栏，用于输出安全评估
+3. [SingGuard: A Policy-Adaptive Multimodal LLM Guardrail with Dynamic Reasoning](/202606/30/2606.22873v3-singguard-a-policy-adaptive-multimodal-llm-guardrail-with-dynamic-reasoning)  
    标签：评分：8.0/10、query:llm-security
-   evidence：专为内容与AI安全构建的多模态大模型，具有对抗鲁棒性
+   evidence：策略自适应多模态护栏
 
 ### 速读区论文标签
-1. [MedGuards: Multi-Agent System for Reliable Medical Error Detection and Correction](/202606/29/2606.25651v2-medguards-multi-agent-system-for-reliable-medical-error-detection-and-correction)  
-   标签：评分：7.0/10、query:llm-security
-   evidence：MedGuards作为医疗安全护栏，采用多智能体系统进行错误检测与纠正
-2. [On the Inseparability of Instructions and Data in Shared-Embedding Sequence Models](/202606/29/2606.27567v1-on-the-inseparability-of-instructions-and-data-in-shared-embedding-sequence-models)  
-   标签：评分：7.0/10、query:llm-security
-   evidence：证明完全防御提示注入是不可能的
-3. [Adversarial Diffusion Across Modalities: A Fusion Survey of Attacks, Defenses, and Evaluation for Text, Vision, and Vision-Language Models](/202606/29/2606.26566v1-adversarial-diffusion-across-modalities-a-fusion-survey-of-attacks-defenses-and-evaluation-for-text-vision-and-vision-language-models)  
+1. [Adversarial Diffusion Across Modalities: A Fusion Survey of Attacks, Defenses, and Evaluation for Text, Vision, and Vision-Language Models](/202606/30/2606.26566v1-adversarial-diffusion-across-modalities-a-fusion-survey-of-attacks-defenses-and-evaluation-for-text-vision-and-vision-language-models)  
    标签：评分：6.0/10、query:llm-security
-   evidence：融合LLM攻击与防御的综述，含越狱和输入净化
+   evidence：涵盖扩散攻击与防御的跨模态综述
 
 
 <div class="dpr-home-promo-card">
