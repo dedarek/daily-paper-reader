@@ -1,0 +1,335 @@
+Title: Making Failure Safe: A Constrained, Verifiable Agent Framework for Open-Web Data Collection
+
+URL Source: https://arxiv.org/pdf/2607.00035v1
+
+Published Time: Thu, 02 Jul 2026 00:01:49 GMT
+
+Number of Pages: 15
+
+Markdown Content:
+# Making Failure Safe: A Constrained, Verifiable Agent Framework for Open-Web Data Collection 
+
+Bo Chen 
+
+Institute of Computing Technology, Chinese Academy of Sciences, Beijing, China 
+
+chenbo01@ict.ac.cn 
+
+Abstract. LLMs and agents can generate web scrapers from natural-language requirements, but direct generation remains unreliable because of dependency errors, broken selectors, schema mismatches, and het-erogeneous page structures. We propose a constrained, verifiable agent framework that shifts LLM output from free-form code to typed JSON collector configurations, combining a six-type collector taxonomy, tem-plate and utility-function constraints, static Airflow DAG execution, rule-based quality checking, and structured feedback correction. Experi-ments on 138 tasks show that the taxonomy supports description-based requirement typing, while confirming that stable instantiation requires completing source, field, and execution constraints beyond the initial de-scription. On 80 independently source-verified tasks, the framework runs with zero execution-stage LLM tokens and the lowest average wall-clock time, trading moderate one-shot quality for a reusable, deterministic, and verifiable execution path suited to repeated scheduled collection. These results position the framework as a reusable, low-cost, and verifiable ex-ecution path for repeated open-web data collection. 
+
+Keywords: Data collection framework · Agent · Constrained generation · Data quality validation 
+
+# 1 Introduction 
+
+Open-web data—publicly accessible information from news, government notices, e-commerce, and academic publications—drives growing demand for automated collection at scale. Traditional pipelines depend on manual effort: requirement analysis, site-structure inspection, scraper coding, and validation, suffering from long development cycles and low reusability. Recent LLM and agent advances offer a new path: understanding natural-language requirements, generating scraper code, and executing validation tasks. However, direct application proves unreliable. The core tension is between the 
+
+structural brittleness of heterogeneous web pages and the stochastic incon-sistency of LLM code generation. Without collector-type constraints, agents de-viate in task decomposition; LLM-generated scrapers may contain dependency errors, broken selectors, and inconsistent output schemas.  
+
+> arXiv:2607.00035v1 [cs.AI] 25 Jun 2026 2B. Chen
+
+To address this, we argue that the key is not to pursue perfect agent reason-ing, but to make the collection pipeline verifiable —so that every stage’s inputs and outputs can be checked, measured, and audited. We achieve this through three pillars: (1) typed modeling of collection tasks with explicit functional boundaries; (2) template and utility-function constraints that shift the agent from free-form code generation to configuration generation; and (3) small-sample validation and quality feedback before scale execution, forming a “generate– execute–check–fix” closed loop. Our contributions are: 1. A six-type collector taxonomy (search, list, detail, API, interactive, file) with explicit functional boundaries and composition rules. 2. A constrained agent framework organizing requirement understanding, instantiation, validation, quality checking, and feedback correction into a verifiable closed loop, generating JSON configurations under template, slot, and Schema constraints—not free-form code. 3. Multi-level experimental validation covering requirement-type classifi-cation, collector instantiation, quality–cost comparison against runtime LLM baselines on 80 verified tasks, feedback correction, and Airflow compatibility testing. The research is organized around three questions: RQ1: How to model collection requirements as typed tasks ; RQ2: How to instantiate col-lectors under constraints for validatable, reusable, schedulable con-figurations ; RQ3: How to intercept low-quality configurations before scale execution via validation and feedback . These are addressed through the framework design in Sections 3–5 and answered in Section 7. The framework embodies a design philosophy: controlled, explicit failure is preferable to uncontrolled, silent success —through type constraints, Schema validation, and rule-based quality gating, failures become auditable, traceable signals. 
+
+# 2 Related Work 
+
+2.1 Open-Web Data Collection 
+
+Traditional web data collection builds on Scrapy, BeautifulSoup, Selenium, and Playwright, orchestrated via workflow engines. The central challenge is website heterogeneity and volatility, which forces heavy manual effort [11,7]. A recent re-view of 91 papers [12] notes that 84% appeared in 2024–2025, trending from rule-based to semantic and agent-based methods. Tools such as ScrapeGraphAI [21] and Crawl4AI [5] leverage LLMs to generate scraper logic but introduce ex-ecution unpredictability. MacroBench [15] tests LLM web automation on 681 tasks: simple tasks achieve 91.7% success but complex multi-step workflows score 0.0%. Webscraper [9] uses multimodal LLMs with five-stage prompting for index-content architectures. AutoScraper [10] proposes progressive understanding with an executability metric. These works demonstrate rapid evolution toward agent-based scraping, but unconstrained code generation remains unreliable in complex scenarios. A Constrained, Verifiable Agent Framework for Open-Web Data Collection 3
+
+2.2 LLMs, Code Generation, and Constraints 
+
+LLMs show strong code generation capabilities [4,17,20], but directly gener-ated code suffers from API errors, dependency inconsistencies, and format mis-matches. Reflexion [22] and Self-Refine [16] use language-feedback-based reflec-tion, yet Yu et al. [26] show that LLMs often fail to identify errors in their own code, revealing clear boundaries to self-correction. In constrained genera-tion, PARSE [18] optimizes JSON schemas for LLM extraction with static and LLM guardrails, achieving up to 64.7% accuracy improvement. llm-scraper [13] uses Zod schemas to constrain Playwright DOM selector code. Both focus on single-layer constraints. Our framework introduces a four-tier nested constraint hierarchy (type → template → utility → validation) with collector-type and utility-function reuse constraints beyond schema-level restrictions. 
+
+2.3 Agents and Web Automation 
+
+The ReAct [25] paradigm interleaves reasoning and action for web tasks, eval-uated by benchmarks such as WebVoyager [8] and WebArena [27]. In collection practice, BardeenAgent [2] proposes Record-then-Replay: the LLM learns ex-traction patterns during recording, then a deterministic program replays with-out LLM calls, achieving 66.2% recall on WebLists at one-third the per-row cost. CyberScribe [6] combines LLMs, vision transformers, and reinforcement learning for dynamic multi-language collection. AutoData [14] uses eight spe-cialized agents with OHCache to reduce inter-agent token overhead, but its En-gineering Agent still generates free-form code without a collector type taxonomy or schedule-native quality gating. Unlike ReAct-style end-to-end browsing and BardeenAgent’s operation-sequence decoupling, we invoke the agent only dur-ing requirement understanding and collector instantiation, while execution runs through a static DAG, decoupling JSON configurations rather than browser op-eration sequences. 
+
+2.4 Constrained Generation and Quality Feedback 
+
+Data quality research emphasizes accuracy, completeness, consistency, and fit-ness for use [24,19]. In LLM-involved pipelines, quality issues also include selector errors, field-mapping errors, and execution anomalies. The AI Committee [23] uses four specialized agents for collaborative validation, achieving 78.7% com-pleteness and up to 100% precision. Berkane et al. [3] constrain LLM extrac-tion via Pydantic schemas with source-grounding verification and LLM-based anomaly detection, achieving +74.3 and +38.5 percentage point F1 improve-ments, though quality control still relies on LLM subjective judgment. In feedback correction, methods such as Reflexion [22] and Self-Refine [16] use intrinsic self-correction, while Agent-R [1] uses Monte Carlo Tree Search. However, LLMs often fail at self-error-detection [26]. Our approach differs fun-damentally: we employ rule-based quality checks as an external evaluator, con-vert quality reports into structured feedback constraints (not natural-language 4 B. Chen 
+
+reflections), use a failure blacklist for monotonic pruning, and have the agent regenerate under these constraints. This “external rule evaluation → structured constraints → blacklist pruning → constrained regeneration” paradigm also in-troduces original-page-archive comparison to distinguish source defect from 
+
+parse error .
+
+# 3 Problem Definition 
+
+Given a user’s initial task description d (natural language, possibly with partial structured information), the system must complete requirement understanding, collector type selection, instantiation, validation execution, scheduling, and qual-ity feedback. Let the full task representation be R = ( d, s, x, f, c, o ), where s is the target source identifier, x is source context from proactive probing, f is the field set, c
+
+denotes collection constraints, and o is the output format. Let M = ( C, P, V ) be the constrained configuration tuple, where C is the collector type or composi-tion, P contains runtime parameters, and V specifies validation thresholds. The system output is O = ( M, E, D, Q ), where E represents Airflow DAG execution, 
+
+D is collected data, and Q is the quality feedback report. Unlike unconstrained code generation, we formulate instantiation as template-constrained slot assignment. Let T be the template space and Θk the slot space of template Tk. The system must find θk ∈ Θk such that M = Instantiate( Tk, θ k)and Check( M) = True. 
+
+# 4 Collector Type Taxonomy 
+
+The taxonomy follows five principles: entry-point orientation, data-shape ori-entation, single responsibility, explicit boundaries, and scheduler composability. Common compositions include Search+Detail (keyword news), List+Detail+File (announcements), and Interactive+List+Detail (dynamic forms). 
+
+Search. Discovers candidate URLs by keyword from search entry points. Takes keywords and a time range, outputs result links and titles. Boundary: no content extraction. Typical scenario: site search. 
+
+List. Traverses paginated list pages to discover detail-page links. Takes a column URL and page range, outputs list items and detail links. Boundary: no deep content extraction. Typical scenario: news/announcement lists. 
+
+Detail. Extracts structured fields (title, body, author, timestamp) from a single detail page. Takes a detail-page URL. Boundary: no large-scale URL discovery. Typical scenario: news/announcement detail pages. 
+
+API. Calls public APIs and maps response fields. Takes an endpoint URL and request parameters, outputs structured records. Boundary: no browser interac-tion. Typical scenario: JSON REST APIs. 
+
+Interactive. Executes clicks, text input, and page actions on dynamically ren-dered pages. Takes a page URL and action sequence, outputs rendered data. A Constrained, Verifiable Agent Framework for Open-Web Data Collection 5
+
+Boundary: no bypassing authentication or CAPTCHAs. Typical scenario: dy-namically loaded pages. 
+
+File. Downloads and parses publicly accessible files (PDF, Excel). Takes a file URL, outputs file text and metadata. Boundary: no semantic judgment. Typical scenario: PDF/Excel attachments. 
+
+# 5 Constrained Agent Collection Framework 
+
+5.1 Overview 
+
+Our framework transforms unconstrained agent collection into a constrained closed loop through four constraint categories: (1) task-type constraint —the requirement understanding agent determines the collector type, preventing configuration generation without a clear collection pattern; (2) configuration-structure constraint —the instantiation agent is constrained by template slots and JSON Schema; (3) tool-reuse constraint —the framework reuses pre-built utility functions through templates rather than generating request, parse, or cleaning code directly; (4) execution-feedback constraint —every new con-figuration must pass small-sample validation and quality assessment before scale execution, with feedback triggering correction on failure. The framework consists of five modules: requirement understanding agent, collector instantiation agent, Airflow validation/scale execution, quality check, and feedback correction (Fig. 1).           
+
+> User initial task description d
+> Requirement Understanding Agent
+> Full task representation R
+> Collector Instantiation Agent
+> Config M(contains C, P, V )
+> Airflow Execution (validation stage)
+> Quality Check
+> Pass?
+> Airflow Execution (scale stage)
+> Results Dand Quality Report Q
+> Feedback Correction
+> Yes
+> No
+> Feedback constraints Γt
+
+Fig. 1. Constrained agent collection framework architecture 6 B. Chen 
+
+5.2 Requirement Understanding Agent 
+
+The requirement understanding agent takes the user’s initial description d and completes R = ( d, s, x, f, c, o ). For explicitly provided components, the agent writes them directly into slots; for missing components, it probes the target site (homepage, navigation, robots/sitemap, API docs, sample pages) to extract page titles, column structures, candidate URLs, DOM summaries, pagination clues, and sample records, compressed into source context x.Let Probe denote the probing function: 
+
+x = Probe( d), (s, f, c, o, κ ) = Φ(d, x ), R = ( d, s, x, f, c, o ), (1) where κ denotes the collector type or composition, and Φ decomposes into per-slot sub-mappings. The output is constrained to a fixed Schema with typed slots for task type, collector types, target sources, source context, required fields, constraints, output schema, validation config, and confidence. 
+
+5.3 Collector Instantiation Agent 
+
+The agent uses “reference coding + template slot-filling”: templates hard-code Airflow structure, utility-function skeletons, error handling, and persistence; the agent fills in URLs, selectors, API parameters, field mappings, and cleaning rules. In the first round, R drives template retrieval and slot filling; in correction rounds, the quality report Q is converted into feedback constraints fed alongside 
+
+R. The prompt context assembles: (1) System Prompt with collector type specs, Schema constraints, and compliance rules; (2) Few-Shot examples retrieved by type and task similarity; (3) the full task representation; (4) slot-filling instruc-tions. Let U be the utility function set and P the prompt context space. The prompt constructor Prompt : T × 2U → P yields pk = Prompt( Tk, U). The agent gener-ates slot assignments under joint constraints: 
+
+θ∗ 
+
+> k
+
+= LLM( R, p k), θ∗ 
+
+> k
+
+∈ Θk, M = Instantiate( Tk, θ ∗
+
+> k
+
+), Check( M) = True .
+
+(2) The agent outputs a Schema-compliant JSON configuration M (not executable code), which the generic collector operator reads and executes interpretatively. 
+
+5.4 Airflow Validation and Scale Execution 
+
+Validation and scale runs share the same core logic: a generic collector operator reads the JSON configuration and invokes pre-built utility functions. Validation runs use small-sample parameters (limited pages, output rows, forced original-page archiving) to shift errors to a low-cost pre-production stage; scale runs use production parameters. A static execution DAG with dynamic configuration interpretation prevents LLM-generated code from breaking Airflow’s Scheduler parsing. A Constrained, Verifiable Agent Framework for Open-Web Data Collection 7
+
+5.5 Quality Check Module 
+
+This module evaluates validation-run results using rule-based, deterministic checks (no LLM required). It scores five dimensions and computes a composite score: 
+
+S = wsSs + wcSc + wr Sr + waSa + weSe, (3) with default weights ( ws, w c, w r , w a, w e) = (0 .35 , 0.25 , 0.20 , 0.10 , 0.10), where P wi = 1. Structure receives the highest weight as valid schema fields are the prerequisite for downstream quality assessment. 
+
+Table 1. Five-dimension quality scoring rules Dim. Wt. Scoring Method Example 
+
+Ss (Structure) 0.35 Ratio of valid to expected fields 5 expected, 4 present: 
+
+Ss = 0 .80 
+
+Sc (Content) 0.25 Fraction of non-empty values exceeding per-field thresholds 3 fields, 2 non-empty: 
+
+Sc = 0 .67 
+
+Sr (Relevance) 0.20 Mean keyword-overlap similarity to target schema Target {price, model },collected {price }: Sr = 0 .50 
+
+Sa (Attachment) 0.10 Ratio of valid to expected attachments (default 1.0) 2 expected, both reachable: 
+
+Sa = 1 .00 
+
+Se (Execution) 0.10 No errors = 1.0, partial = 0.5, total failure = 0.0 One run, no errors: Se = 1 .00 
+
+The quality report Q contains per-dimension scores, composite score S, a pass/fail verdict, error tags, original-page comparison, execution metadata, and correction hints. The original-page comparison distinguishes source defect from 
+
+parse error .
+
+5.6 Feedback Correction Module 
+
+This module converts Q into feedback constraints Γt (slots to fix, prohibited hy-potheses, candidate correction directions). The corrected configuration is regen-erated by the instantiation agent under joint constraints and re-enters validation, forming a “generate–validate–assess–constrain–regenerate” closed loop. Let Mt be the failed configuration at round t, Ht the candidate correction set, and Et = ϕ(Qt) the error tag set. The system maintains a failure blacklist 
+
+Bt of proven-failed selectors, field paths, and hypotheses: 
+
+Γt = BuildFeedbackConstraint( Qt, h t, B t+1 ), ht ∈ H t \ Bt+1 . (4) The correction priority order is: parse error ≺ schema error ≺ runtime error ≺
+
+content noise ≺ low relevance . Algorithm 1 gives the core logic. 8 B. Chen 
+
+Algorithm 1: State-machine-based feedback correction 
+
+Input: Failed config Mt, quality report Qt, candidate corrections Ht,blacklist Bt
+
+Output: Feedback constraint Γt or human-review flag  
+
+> 1
+
+Et ← ϕ(Qt);  
+
+> 2
+
+if Et = ∅ then  
+
+> 3
+
+return No correction needed ; 
+
+> 4
+
+end  
+
+> 5
+
+e∗ ← SelectByPriority( Et);  
+
+> 6
+
+Bt+1 ← Bt ∪ FailedHypotheses( Mt, Q t);  
+
+> 7
+
+H′ ← { h ∈ H t | h / ∈ Bt+1 }; 
+
+> 8
+
+if H′ = ∅ then  
+
+> 9
+
+return Requires human review ; 
+
+> 10
+
+end  
+
+> 11
+
+ht ← SelectRepairHypothesis( e∗, H′);  
+
+> 12
+
+Γt ← BuildFeedbackConstraint( Qt, h t, B t+1 );  
+
+> 13
+
+return Γt;
+
+Γt does not change R or Tk; it acts as an additional constraint on the next round’s slot generation: θ∗ 
+
+> k,t +1
+
+= LLM( R, p k ⊕ Γt), with the requirement that selectors, field paths, and hypotheses in θ∗ 
+
+> k,t +1
+
+do not belong to Bt+1 .
+
+# 6 Experimental Design 
+
+We use a core set of 138 collection tasks for requirement-understanding and collector-instantiation experiments, with the 80 source-verified subset supporting real-source quality–cost comparison and framework validation. All LLM-based methods in the experiments use DeepSeek-V4-Flash as the underlying model; the framework itself is model-agnostic and can operate with any instruction-tuned LLM. 
+
+6.1 Experimental Datasets 
+
+No existing benchmark directly matches our task formulation. MacroBench [15] evaluates Selenium code generation, WebArena [27] evaluates web agent tasks, and WebLists [2] covers only list-page recall. We construct our own dataset by collecting public-data requirements from enterprise and public-sector scenar-ios, normalizing each into a description with expected fields, assigning collector types, and manually verifying a subset through browser/API access. The resulting 138-task dataset spans all six types: 31 search, 29 list, 15 detail, 35 API, 15 interactive, and 13 file tasks, with 80 source-verified tasks averaging 5.04 expected fields each (Table 2). To avoid injecting structured priors, the initial input is fixed to the description field; collector type and fields 
+
+serve only as evaluation ground truth. A Constrained, Verifiable Agent Framework for Open-Web Data Collection 9      
+
+> Table 2. Core dataset statistics Item Value Total collection tasks 138 Source-verified tasks 80 Search / List / Detail tasks 31 / 29 / 15 API / Interactive / File tasks 35 / 15 / 13 Avg. expected fields per task 5.04
+
+6.2 Requirement Type Classification Dataset : the 138-task core set, input fixed to description . Methods : rule-based keyword baseline vs. Ours. Metrics : type Exact Match, Macro-F1, Micro-F1. 
+
+6.3 Collector Instantiation 
+
+Three description-only methods on the 138-task set: (1) rule-template baseline 
+
+applies deterministic keyword rules to select a template; (2) unconstrained LLM generation freely generates configurations without type–template mapping or slot constraints; (3) Ours invokes the LLM under typed slot-filling, JSON config-uration shape, and Schema-oriented constraints. Metrics : average quality score (Section 5.5), pass rate ( S ≥ 0.60), collector-type match rate. 
+
+6.4 Quality–Cost-Oriented Real-Source Baseline Comparison 
+
+Four methods on all 80 source-verified tasks, each receiving the verified pub-lic URL and explicit field contract: (1) Schema-constrained LLM , HTTP client plus LLM extraction to JSON under the field contract; (2) Crawl4AI + LLM ,Crawl4AI preprocessing then the same extraction prompt; (3) ScrapeGraphAI ,its SmartScraperGraph graph for agent-based scraping; (4) Ours , JSON configs executed via the generic collector operator without runtime LLM calls. All base-lines use real public-source access and real LLM calls. Metrics : average quality score, pass rate, token count, wall-clock time. ScrapeGraphAI’s token count is a wrapper-level estimate. Framework reports zero execution-stage tokens. 
+
+6.5 Controlled Feedback Correction 
+
+For each of the 138 tasks, we construct an intentionally flawed initial configura-tion and compare with vs. without feedback correction. Metrics : average final quality score, average correction rounds, pass rate ( S ≥ 0.60). 10 B. Chen 
+
+6.6 Engineering Constraint Verification 
+
+Airflow compatibility is tested with a static execution DAG in Airflow 2.8.0 covering DAG syntax, configuration loading/Schema validation, trigger parame-terization, generic-operator execution, quality-report generation, and result per-sistence. 
+
+# 7 Experimental Results and Analysis 
+
+7.1 Requirement Type Classification            
+
+> Table 3. Requirement type classification results Method Type EM Type Macro-F1 Type Micro-F1 Rule-based keyword base-line 0.7101 0.7562 0.7420 Ours (description-only) 0.7101 0.7793 0.7525
+
+On 138 tasks with only natural-language descriptions, the rule-keyword base-line achieves 0.7101 Exact Match and 0.7562 Macro-F1; Ours provides limited improvement (Macro-F1 0.7793) 1, revealing an inference gap between natural-language semantics and the collector taxonomy. This gap suggests that description-only input is insufficient for reliable type identification and motivates the full 
+
+d → R expansion stage, where proactive probing supplies the structured priors (e.g., source URLs and page titles) needed for more accurate classification. Per-type F1 shows file (1.0000), interactive (0.8889), and search (0.8475) performing well; API (0.7527) falls in the moderate range; while detail (0.5200) and list (0.6667) are lower due to descriptions lacking direct type signals. 
+
+7.2 Collector Instantiation Results              
+
+> Table 4. Collector instantiation comparison using natural-language descriptions Method Avg. Quality Pass Rate Type Match Rule-template baseline (no LLM) 0.3184 0.0942 0.7536 Unconstrained LLM genera-tion 0.4876 0.5217 0.1884 Ours 0.5369 0.5507 0.8551
+> 1The identical Exact Match values (0.7101) occur because both methods misclassify the same set of ambiguous cases where the description lacks explicit type signals. A Constrained, Verifiable Agent Framework for Open-Web Data Collection 11
+
+Table 4 shows LLM-based generation substantially improves over the rule-template baseline (0.3184 vs. 0.4876–0.5369 average quality). The unconstrained LLM baseline reaches 0.5217 pass rate but only 0.1884 type-match rate, indicating free-form generation produces plausible fields without preserving type seman-tics. Ours achieves the best quality (0.5369), pass rate (0.5507), and type-match rate (0.8551), confirming that typed slot filling and Schema constraints improve taxonomy alignment. However, even Ours’s quality remains below fully speci-fied task levels, confirming the d → R stage must expand descriptions through probing, field confirmation, and constraint completion before stable execution. 
+
+7.3 Quality–Cost Trade-off on Real Sources                     
+
+> Table 5. Quality–cost trade-off on 80 independently source-verified tasks Method Avg. Quality Pass Rate Avg. Tokens Avg. Time (s) Schema-constrained LLM
+> 0.7051 0.8125 3411.86 14.257 Crawl4AI + LLM 0.6996 0.8000 4266.99 16.036 ScrapeGraphAI 0.2172 0.1750 123.55 *20.194 Ours 0.5631 0.5000 0.00 5.052
+> *Wrapper-level estimate, not directly comparable with API-reported token counts. Framework row reports execution-stage tokens after configuration materialization.
+
+Table 5 reports the quality–cost trade-off. Runtime LLM baselines achieve stronger one-shot quality: schema-constrained LLM reaches 0.7051 quality and 0.8125 pass rate; Crawl4AI + LLM reaches 0.6996 and 0.8000. Ours is lower (0.5631 quality, 0.5000 pass rate) but uses zero execution-stage LLM tokens and the low-est wall-clock time (5.052s vs. 14.257s–20.194s). This represents a quality–cost trade-off: runtime LLM extraction is preferable for one-shot quality, while Ours provides a lower-cost deterministic path for repeated scheduled collection, shift-ing LLM cost from every execution to a one-time configuration-generation step (separate from the execution-stage tokens reported in Table 5) that amortizes across repeated runs. 
+
+7.4 Controlled Feedback Correction Results          
+
+> Table 6. Controlled feedback correction results on injected configuration defects Setting Avg. Final Quality Pass Rate Avg. Rounds Without feedback 0.5087 0.0072 1.00 With feedback correction 0.9007 1.0000 1.99 12 B. Chen
+
+Feedback correction raises average final quality from 0.5087 to 0.9007 and pass rate from 0.0072 to 1.0000 (Table 6), verifying the repair mechanism under known, injected defects when valid correction candidates exist; it should not be interpreted as universal self-repair. 
+
+7.5 Engineering Verification and Answers to Research Questions 
+
+Engineering verification confirms: (1) all 138 Ours-generated configurations are grounded in shared templates and reusable utilities, yielding a reuse rate of 1.0000 (fraction of configurations that reuse shared template and utility com-ponents) vs. 0 for unconstrained generation; (2) on 80 source-verified tasks, the framework achieves 80.0% run success (fraction of tasks completing without run-time errors; distinct from the 50.0% pass rate where S ≥ 0.60), 0.5631 average quality, zero execution-stage LLM tokens, and 5.052s average wall-clock time, with error tags as gate signals; (3) the static execution DAG passes complete Airflow 2.8.0 testing. 
+
+RQ1 (Typed modeling): Structured type-identification reaches 0.7793 Macro-F1 (vs. 0.7562 baseline), supporting the taxonomy while showing descrip-tions alone are insufficient for ambiguous detail and list tasks—typed modeling requires source probing and field confirmation. 
+
+RQ2 (Constrained instantiation): Ours achieves highest average quality (0.5369), pass rate (0.5507), and type-match rate (0.8551), supporting typed slot filling and Schema constraints. The 80-task comparison confirms the quality–cost trade-off: runtime LLM baselines provide stronger one-shot quality, while Ours offers deterministic, reusable execution with zero execution-stage tokens and lowest runtime. 
+
+RQ3 (Validation and feedback): The controlled feedback experiment ver-ifies repair capability (quality 0.5087 → 0.9007, pass rate 0.0072 → 1.0000). The 80-task validation confirms deterministic operator execution on real sources with quality-gate diagnostics and Airflow-compatible validation/scale execution. 
+
+# 8 Discussion 
+
+8.1 Advantages 
+
+The core advantage is combining LLM-assisted configuration generation with explicit engineering constraints, producing typed, validated, schedulable collec-tor configurations instead of free-form code or per-execution LLM extraction. Table 7 compares representative systems. A Constrained, Verifiable Agent Framework for Open-Web Data Collection 13                                
+
+> Table 7. Comparison with representative related systems Work Main paradigm Constraints and reuse Quality and execution PARSE [18] Schema optimization for LLM extraction Schema-level output constraints Static and LLM guardrails; LLM used during extraction BardeenAgent [2] Record-then-Replay extraction Reuses recorded selec-tors and actions Deterministic replay; no quality-gate mod-ule AutoData [14] Multi-agent open-web collection Agent-generated pipeline/code with OHCache Testing/validation agents; still free-form code generation Berkane et al. [3] LLM-based collection pipeline Pydantic-schema-grounded extraction LLM-based quality control; no determin-istic feedback loop
+> Ours Typed configura-tion for scheduled collection Six-type taxonomy +type–template– utility constraints Rule-based quality checks, structured feedback, Airflow-compatible execu-tion
+
+8.2 Limitations and Compliance 
+
+Three limitations: (1) the 138-task experiments use constructed requirements rather than raw user requests; (2) the 80-task comparison lacks long-horizon repeated scheduling and significance tests; (3) the controlled feedback experi-ment tests known defect types, not universal self-repair. The approach remains sensitive to site structural changes, complex interactive pages, and authentica-tion boundaries. Current results should be interpreted as evidence for a reusable low-cost execution path under explicit constraints, not a general replacement for runtime LLM extraction. This work is restricted to compliant enterprise scenar-ios; the framework assumes publicly accessible data, respects access limits, does not bypass authentication, and preserves collection logs. 
+
+# 9 Conclusion 
+
+This paper proposed a constrained agent collection framework to address the unreliability of direct agent application in open-web data collection, built on a six-type collector taxonomy and a verifiable closed loop under four constraint categories. The framework shifts LLM generation from free-form code to JSON configuration under templates, slots, and Schema constraints. Experiments show that under the description-only setting, Ours reaches 0.5369 average quality, 0.5507 pass rate, and 0.8551 type-match rate, improving over unconstrained LLM generation in type-match rate and average quality. On 80 source-verified tasks, runtime LLM baselines achieve stronger one-shot quality 14 B. Chen 
+
+(0.7051, 0.8125 pass rate), while our framework reaches 0.5631 quality with zero execution-stage LLM tokens and lowest wall-clock time, confirming a lower-cost operating point for repeated scheduled collection. Future work will expand the real-task dataset and conduct large-scale Airflow scheduling experiments. 
+
+# References 
+
+1. Agent-r: Training language model agents to reflect via iterative self-training. arXiv preprint arXiv:2501.11425 (2025) 2. BardeenAgent: A record-then-replay paradigm for reliable web data extraction. arXiv preprint arXiv:2504.12682 (2025) 3. Berkane, T., Charpignon, M.L., Majumder, M.S.: LLM-based web data collection for research dataset creation. In: Findings of the Association for Computational Linguistics: EMNLP (2025) 4. Chen, M., Tworek, J., Jun, H., et al.: Evaluating large language models trained on code. arXiv preprint arXiv:2107.03374 (2021) 5. Crawl4AI: Open-source LLM-friendly web crawler & scraper. https://github. com/unclecode/crawl4ai (2024) 6. CyberScribe: Scalable autonomous web crawling with LLMs and vision transform-ers. In: IEEE CSITSS (2025) 7. Ferrara, E., De Meo, P., Fiumara, G., Baumgartner, R.: Web data extraction, ap-plications and techniques: A survey. Knowledge-Based Systems 70 , 301–323 (2014) 8. He, H., et al.: WebVoyager: Building an end-to-end web agent with large multi-modal models. In: Proceedings of ACL (2024) 9. Huang, J., Joung, S.: Webscraper: Leverage multimodal LLMs for index-content web scraping. arXiv preprint arXiv:2603.29161 (2026) 10. Huang, W., et al.: AutoScraper: A progressive understanding web agent for web scraper generation. In: Proceedings of EMNLP (2024) 11. Kushmerick, N., Weld, D.S., Doorenbos, R.B.: Wrapper induction for information extraction. In: International Joint Conference on Artificial Intelligence (1997) 12. Landeta-L´ opez, P., et al.: LLMs applied to web scraping and web crawling: A systematic review. Computing (2026) 13. llm-scraper: Schema-constrained LLM-based web scraping. https://github.com/ mishushakov/llm-scraper (2024) 14. Ma, T., Qian, Y., Zhang, Z., Wang, Z., Qian, X., Bai, F., Ding, Y., Luo, X., Zhang, S., Murugesan, K., Zhang, C., Ye, Y.: AutoData: A multi-agent system for open web data collection. In: Advances in Neural Information Processing Systems (NeurIPS) (2025) 15. MacroBench: A testbed for web automation via large language models. In: NeurIPS Workshop (2025) 16. Madaan, A., Tandon, N., Gupta, P., et al.: Self-refine: Iterative refinement with self-feedback. In: Advances in Neural Information Processing Systems (2023) 17. Nijkamp, E., Pang, B., Hayashi, H., et al.: CodeGen: An open large language model for code with multi-turn program synthesis. arXiv preprint arXiv:2203.13474 (2022) 18. PARSE: LLM-driven schema optimization for reliable entity extraction. In: EMNLP Industry Track (2025) 19. Pipino, L.L., Lee, Y.W., Wang, R.Y.: Data quality assessment. Communications of the ACM 45 (4), 211–218 (2002) A Constrained, Verifiable Agent Framework for Open-Web Data Collection 15 20. Roziere, B., Gehring, J., Gloeckle, F., et al.: Code Llama: Open foundation models for code. arXiv preprint arXiv:2308.12950 (2023) 21. ScrapeGraphAI: You only scrape once. https://github.com/ScrapeGraphAI/ Scrapegraph-ai (2024) 22. Shinn, N., Cassano, F., Gopinath, A., Narasimhan, K., Yao, S.: Reflexion: Language agents with verbal reinforcement learning. In: Advances in Neural Information Processing Systems (2023) 23. Vallabhaneni, S., et al.: The AI committee: A multi-agent framework for automated validation and remediation of web-sourced data. arXiv preprint arXiv:2512.21481 (2025) 24. Wang, R.Y., Strong, D.M.: Beyond accuracy: What data quality means to data consumers. Journal of Management Information Systems 12 (4), 5–33 (1996) 25. Yao, S., Zhao, J., Yu, D., Du, N., Shafran, I., Narasimhan, K., Cao, Y.: ReAct: Synergizing reasoning and acting in language models. In: International Conference on Learning Representations (2023) 26. Yu, Z., et al.: Fight fire with fire: How much can we trust ChatGPT on source code-related tasks? IEEE Transactions on Software Engineering (2024) 27. Zhou, S., et al.: WebArena: A realistic web environment for building autonomous agents. In: International Conference on Learning Representations (2024)

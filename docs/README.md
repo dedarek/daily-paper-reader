@@ -6,57 +6,55 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-01
-- 运行时间：2026-07-01 07:09:06 UTC
+- 最新运行日期：2026-07-02
+- 运行时间：2026-07-02 06:13:42 UTC
 - 运行状态：成功
 - 本次总论文数：11
 - 精读区：6
 - 速读区：5
 
 ### 今日简报（AI）
-今日LLM安全防线告急：多语言混淆注入与机器人控制攻击双双突破80%成功率。
-
-最值得关注的是《An Empirical Evaluation of Prompt Injection》揭示的10分核心威胁（跨语言攻击成功率超阈值），以及《RIPA》展示的9分高危场景（传感器向量注入可操控机器人行为）。
-
-建议普通读者优先关注输入过滤与行为白名单机制，切勿在未隔离的LLM应用中暴露敏感操作接口。
-- 详情：[/202607/01/README](/202607/01/README)
+今日精读聚焦安全对齐与有害监督防御，速读覆盖自主系统安全治理与LLM代理安全。  
+最值得关注HARC通过耦合有害性与拒绝方向实现鲁棒安全对齐，以及从良性样本中防御有害监督的研究。  
+建议优先精读这两篇论文以把握安全对齐前沿，速读部分可快速了解自主系统运行时治理框架。
+- 详情：[/202607/02/README](/202607/02/README)
 
 ### 精读区论文标签
-1. [An Empirical Evaluation of Prompt Injection Vulnerabilities in Large Language Models Across Multilingual and Obfuscated Attack Scenarios](/202607/01/2606.29602v1-an-empirical-evaluation-of-prompt-injection-vulnerabilities-in-large-language-models-across-multilingual-and-obfuscated-attack-scenarios)  
-   标签：评分：10.0/10、query:llm-security
-   evidence：跨多语言和混淆攻击的提示注入漏洞实证评估
-2. [RIPA: Sensory-Vector Prompt Injection Attacks on LLM-Controlled ROS 2 Robots](/202607/01/2606.28649v1-ripa-sensory-vector-prompt-injection-attacks-on-llm-controlled-ros-2-robots)  
+1. [HARC: Coupling Harmfulness and Refusal Directions for Robust Safety Alignment](/202607/02/2607.00572v1-harc-coupling-harmfulness-and-refusal-directions-for-robust-safety-alignment)  
    标签：评分：9.0/10、query:llm-security
-   evidence：对LLM控制机器人的提示注入攻击的系统研究
-3. [Linguistic Firewall: Geometry as Defense in Multi-Agent Systems Routing](/202607/01/2606.30555v1-linguistic-firewall-geometry-as-defense-in-multi-agent-systems-routing)  
-   标签：评分：9.0/10、query:llm-security
-   evidence：提出多智能体系统路由中的几何防御机制，防止恶意智能体，直接针对基于LLM的自主智能体安全
-4. [LLM agents security duality: a comprehensive survey of self-security and empowered cybersecurity](/202607/01/2606.28450v1-llm-agents-security-duality-a-comprehensive-survey-of-self-security-and-empowered-cybersecurity)  
+   evidence：通过耦合有害和拒绝方向提出鲁棒安全对齐方法
+2. [Defending Against Harmful Supervision Hidden in Benign Samples](/202607/02/2606.30263v1-defending-against-harmful-supervision-hidden-in-benign-samples)  
    标签：评分：8.0/10、query:llm-security
-   evidence：关于LLM智能体自身安全（包括提示注入防御）的综述
-5. [Capability Gates Are Not Authorization: Confused-Deputy Failures in LLM Agent Frameworks](/202607/01/2606.28679v1-capability-gates-are-not-authorization-confused-deputy-failures-in-llm-agent-frameworks)  
+   evidence：提出针对隐藏在良性样本中有害监督的防御方法，通过DR-SFT提升内容安全
+3. [Security--Fidelity Tradeoffs: The Hidden Cost of Prompt Injection Defense](/202607/02/2606.30783v1-security--fidelity-tradeoffs-the-hidden-cost-of-prompt-injection-defense)  
    标签：评分：8.0/10、query:llm-security
-   evidence：审计智能体框架并提出ScopeGate授权机制
-6. [Divergence-based Safety Measure for Large Language Models via Rational Inattention](/202607/01/2606.29081v1-divergence-based-safety-measure-for-large-language-models-via-rational-inattention)  
+   evidence：识别提示注入防御中的安全-保真度权衡
+4. [A Lifecycle and Application-Stack Survey of Large Language Model Vulnerabilities: Attacks, Risks, Defenses, and Open Problems](/202607/02/2606.31639v1-a-lifecycle-and-application-stack-survey-of-large-language-model-vulnerabilities-attacks-risks-defenses-and-open-problems)  
    标签：评分：8.0/10、query:llm-security
-   evidence：基于散度的安全度量以防御嵌入输入攻击
+   evidence：涵盖LLM漏洞、攻击、风险与防御的全面综述
+5. [Addressing Over-Refusal in LLMs with Competing Rewards](/202607/02/2606.31748v1-addressing-over-refusal-in-llms-with-competing-rewards)  
+   标签：评分：8.0/10、query:llm-security
+   evidence：通过竞争奖励处理安全-拒绝权衡，改进内容安全
+6. [Making Failure Safe: A Constrained, Verifiable Agent Framework for Open-Web Data Collection](/202607/02/2607.00035v1-making-failure-safe-a-constrained-verifiable-agent-framework-for-open-web-data-collection)  
+   标签：评分：8.0/10、query:llm-security
+   evidence：约束可验证智能体框架实现安全数据收集
 
 ### 速读区论文标签
-1. [Can LLMs Reliably Self-Report Adversarial Prefills, and How?](/202607/01/2606.23671v2-can-llms-reliably-self-report-adversarial-prefills-and-how)  
+1. [Managed Autonomy at Runtime: Gear-Based Safety and Governance for Single- and Multi-Agent Cyber-Physical Systems](/202607/02/2607.00334v1-managed-autonomy-at-runtime-gear-based-safety-and-governance-for-single--and-multi-agent-cyber-physical-systems)  
+   标签：评分：8.0/10、query:llm-security
+   evidence：基于齿轮的安全与治理机制，适用于LLM驱动的自主代理
+2. [LLM agents security duality: a comprehensive survey of self-security and empowered cybersecurity](/202607/02/2606.28450v1-llm-agents-security-duality-a-comprehensive-survey-of-self-security-and-empowered-cybersecurity)  
    标签：评分：7.0/10、query:llm-security
-   evidence：研究LLM对对抗性预填充攻击的自我报告能力，与提示注入防御相关
-2. [MedGuards: Multi-Agent System for Reliable Medical Error Detection and Correction](/202607/01/2606.25651v1-medguards-multi-agent-system-for-reliable-medical-error-detection-and-correction)  
+   evidence：LLM代理安全的全面综述，涵盖自我安全与赋能网络安全
+3. [When the Database Fails: Prompting LLM Dialogue Agents for Safe Recovery in Task-Oriented Dialogue](/202607/02/2606.31307v1-when-the-database-fails-prompting-llm-dialogue-agents-for-safe-recovery-in-task-oriented-dialogue)  
    标签：评分：7.0/10、query:llm-security
-   evidence：提出MedGuards作为LLM输出的医疗安全护栏
-3. [Robust Harmful Features Under Jailbreak Attacks: Mechanistic Evidence from Attention Head Specialization in Large Language Models](/202607/01/2606.28153v1-robust-harmful-features-under-jailbreak-attacks-mechanistic-evidence-from-attention-head-specialization-in-large-language-models)  
+   evidence：LLM对话代理在数据库故障时的安全恢复机制
+4. [Harnessing Textual Refusal Directions for Multimodal Safety](/202607/02/2606.31876v1-harnessing-textual-refusal-directions-for-multimodal-safety)  
    标签：评分：7.0/10、query:llm-security
-   evidence：论文分析越狱攻击机制，识别注意力头专门化，与提示注入攻击相关
-4. [When Can Conformal Risk Control Certify LLM Outputs? Bounds, Impossibility, and Adaptation for Structured Generation](/202607/01/2606.29054v1-when-can-conformal-risk-control-certify-llm-outputs-bounds-impossibility-and-adaptation-for-structured-generation)  
-   标签：评分：7.0/10、query:llm-security
-   evidence：用共形风险控制认证LLM结构化输出
-5. [Toward Secure and Reliable PDDL Formalization of Large Language Models with Planner-in-the-Loop Feedback](/202607/01/2606.29700v1-toward-secure-and-reliable-pddl-formalization-of-large-language-models-with-planner-in-the-loop-feedback)  
+   evidence：利用LLM文本拒绝方向实现多模态内容安全
+5. [Curvature-Guided Module Localization for Low-Rank Detoxification of Backdoored Large Language Models](/202607/02/2606.30899v1-curvature-guided-module-localization-for-low-rank-detoxification-of-backdoored-large-language-models)  
    标签：评分：6.0/10、query:llm-security
-   evidence：通过规划器在环的PDDL形式化实现LLM智能体安全机制
+   evidence：被后门攻击大语言模型的低秩解毒方法
 
 
 <div class="dpr-home-promo-card">
