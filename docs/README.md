@@ -6,55 +6,40 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-02
-- 运行时间：2026-07-02 06:13:42 UTC
+- 最新运行日期：2026-07-03
+- 运行时间：2026-07-03 06:05:34 UTC
 - 运行状态：成功
-- 本次总论文数：11
-- 精读区：6
-- 速读区：5
+- 本次总论文数：6
+- 精读区：4
+- 速读区：2
 
 ### 今日简报（AI）
-今日精读聚焦安全对齐与有害监督防御，速读覆盖自主系统安全治理与LLM代理安全。  
-最值得关注HARC通过耦合有害性与拒绝方向实现鲁棒安全对齐，以及从良性样本中防御有害监督的研究。  
-建议优先精读这两篇论文以把握安全对齐前沿，速读部分可快速了解自主系统运行时治理框架。
-- 详情：[/202607/02/README](/202607/02/README)
+1) 今日聚焦多轮指令安全与RAG系统攻击，精读两篇9.0分论文。  
+2) 最值得关注的是IHDec的对比解码安全机制，以及KidnapRAG对检索增强生成系统的黑盒劫持攻击。  
+3) 建议优先阅读这两篇高分论文，并速览LLM agent安全综述作为补充。
+- 详情：[/202607/03/README](/202607/03/README)
 
 ### 精读区论文标签
-1. [HARC: Coupling Harmfulness and Refusal Directions for Robust Safety Alignment](/202607/02/2607.00572v1-harc-coupling-harmfulness-and-refusal-directions-for-robust-safety-alignment)  
+1. [IHDec: Divergence-Steered Contrastive Decoding for Securing Multi-Turn Instruction Hierarchies](/202607/03/2606.29960v1-ihdec-divergence-steered-contrastive-decoding-for-securing-multi-turn-instruction-hierarchies)  
    标签：评分：9.0/10、query:llm-security
-   evidence：通过耦合有害和拒绝方向提出鲁棒安全对齐方法
-2. [Defending Against Harmful Supervision Hidden in Benign Samples](/202607/02/2606.30263v1-defending-against-harmful-supervision-hidden-in-benign-samples)  
+   evidence：提出IHDec，一种无需训练的对比解码防御方法，用于抵御指令层次违反（一种提示注入）
+2. [KidnapRAG: A Black-Box Attack for Hijacking Reasoning in Agentic Retrieval-Augmented Generation Systems](/202607/03/2607.00422v1-kidnaprag-a-black-box-attack-for-hijacking-reasoning-in-agentic-retrieval-augmented-generation-systems)  
+   标签：评分：9.0/10、query:llm-security
+   evidence：提出针对智能体检索增强系统的黑盒提示注入攻击方法
+3. [Online Safety Monitoring for LLMs](/202607/03/2607.02510v1-online-safety-monitoring-for-llms)  
+   标签：评分：9.0/10、query:llm-security
+   evidence：提出使用外部验证器对LLM输出进行实时在线安全监控
+4. [Beyond the Prompt: Jailbreaking Function-Calling LLMs via Simulated Moderation Traces](/202607/03/2607.00481v1-beyond-the-prompt-jailbreaking-function-calling-llms-via-simulated-moderation-traces)  
    标签：评分：8.0/10、query:llm-security
-   evidence：提出针对隐藏在良性样本中有害监督的防御方法，通过DR-SFT提升内容安全
-3. [Security--Fidelity Tradeoffs: The Hidden Cost of Prompt Injection Defense](/202607/02/2606.30783v1-security--fidelity-tradeoffs-the-hidden-cost-of-prompt-injection-defense)  
-   标签：评分：8.0/10、query:llm-security
-   evidence：识别提示注入防御中的安全-保真度权衡
-4. [A Lifecycle and Application-Stack Survey of Large Language Model Vulnerabilities: Attacks, Risks, Defenses, and Open Problems](/202607/02/2606.31639v1-a-lifecycle-and-application-stack-survey-of-large-language-model-vulnerabilities-attacks-risks-defenses-and-open-problems)  
-   标签：评分：8.0/10、query:llm-security
-   evidence：涵盖LLM漏洞、攻击、风险与防御的全面综述
-5. [Addressing Over-Refusal in LLMs with Competing Rewards](/202607/02/2606.31748v1-addressing-over-refusal-in-llms-with-competing-rewards)  
-   标签：评分：8.0/10、query:llm-security
-   evidence：通过竞争奖励处理安全-拒绝权衡，改进内容安全
-6. [Making Failure Safe: A Constrained, Verifiable Agent Framework for Open-Web Data Collection](/202607/02/2607.00035v1-making-failure-safe-a-constrained-verifiable-agent-framework-for-open-web-data-collection)  
-   标签：评分：8.0/10、query:llm-security
-   evidence：约束可验证智能体框架实现安全数据收集
+   evidence：对功能调用LLM的越狱攻击，与提示注入攻击相关
 
 ### 速读区论文标签
-1. [Managed Autonomy at Runtime: Gear-Based Safety and Governance for Single- and Multi-Agent Cyber-Physical Systems](/202607/02/2607.00334v1-managed-autonomy-at-runtime-gear-based-safety-and-governance-for-single--and-multi-agent-cyber-physical-systems)  
-   标签：评分：8.0/10、query:llm-security
-   evidence：基于齿轮的安全与治理机制，适用于LLM驱动的自主代理
-2. [LLM agents security duality: a comprehensive survey of self-security and empowered cybersecurity](/202607/02/2606.28450v1-llm-agents-security-duality-a-comprehensive-survey-of-self-security-and-empowered-cybersecurity)  
+1. [LLM agents security duality: a comprehensive survey of self-security and empowered cybersecurity](/202607/03/2606.28450v1-llm-agents-security-duality-a-comprehensive-survey-of-self-security-and-empowered-cybersecurity)  
    标签：评分：7.0/10、query:llm-security
-   evidence：LLM代理安全的全面综述，涵盖自我安全与赋能网络安全
-3. [When the Database Fails: Prompting LLM Dialogue Agents for Safe Recovery in Task-Oriented Dialogue](/202607/02/2606.31307v1-when-the-database-fails-prompting-llm-dialogue-agents-for-safe-recovery-in-task-oriented-dialogue)  
-   标签：评分：7.0/10、query:llm-security
-   evidence：LLM对话代理在数据库故障时的安全恢复机制
-4. [Harnessing Textual Refusal Directions for Multimodal Safety](/202607/02/2606.31876v1-harnessing-textual-refusal-directions-for-multimodal-safety)  
-   标签：评分：7.0/10、query:llm-security
-   evidence：利用LLM文本拒绝方向实现多模态内容安全
-5. [Curvature-Guided Module Localization for Low-Rank Detoxification of Backdoored Large Language Models](/202607/02/2606.30899v1-curvature-guided-module-localization-for-low-rank-detoxification-of-backdoored-large-language-models)  
+   evidence：LLM智能体安全综述，涵盖威胁与缓解策略
+2. [A Deterministic Control Plane for LLM Coding Agents](/202607/03/2606.26924v1-a-deterministic-control-plane-for-llm-coding-agents)  
    标签：评分：6.0/10、query:llm-security
-   evidence：被后门攻击大语言模型的低秩解毒方法
+   evidence：研究大语言模型编码智能体的配置安全管理
 
 
 <div class="dpr-home-promo-card">
