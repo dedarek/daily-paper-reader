@@ -1,0 +1,849 @@
+Title: kNNGuard: Turning LLM Hidden Activations into a Training-Free Configurable Guardrail
+
+URL Source: https://arxiv.org/pdf/2607.02072v1
+
+Published Time: Fri, 03 Jul 2026 00:58:51 GMT
+
+Number of Pages: 17
+
+Markdown Content:
+# kNNGuard: Turning LLM Hidden Activations into a Training-Free Configurable Guardrail 
+
+Mahmoud Abdelfattah 1, Hamid Nasiri 1, Peter Garraghan 1,2 
+
+> 1
+
+Lancaster University, 2Mindgard {m.abdelfattah1, h.nasiri}@lancs.ac.uk, peter@mindgard.ai 
+
+Abstract 
+
+Large language models (LLMs) are increas-ingly deployed in domains requiring guardrails to detect unsafe, off-topic, or adversarial prompts. Existing guardrails predominately rely on fine-tuning to build classifiers, which often suffer from low generalization and high inference latency. We present kNNGuard, a training-free guardrail that utilizes the activa-tion space of an off-the-shelf LLM. Given a small bank of 50 safe and unsafe prompts, kNNGuard extracts hidden activations and per-forms multi-layer kNN fusing activation-space and embedding-space scores for classification. Across six domains spanning topical and secu-rity prompts, kNNGuard achieves competitive or superior F1 compared to fine-tuned state-of-the-art guardrails while running 2.7 × faster than the best comparable guardrail, and 10 ×
+
+faster than a fine-tuned safety classifier with-out gradient updates or fine-tuning. Domain adaptation requires only updating the labeled bank, which can be constructed in under 10 seconds and several orders of magnitude faster than established guardrails. We also analyze the impact of system prompts, layer selection, and integration into production LLM pipelines as a configurable, low-latency guardrail. 
+
+Keywords: LLM Guardrails, Prompt Injection, Jailbreak Detection 
+
+1 Introduction 
+
+Large language models (LLMs) are increasingly be-ing integrated into critical applications, from code assistants in software engineering pipelines to in-ternal enterprise copilots and domain-specific cus-tomer service chat-bots. In these settings, it is not sufficient for an LLM to be only capable; it must also resist a growing class of mis-aligned and, more importantly, adversarial prompts including jailbreaks, prompt injection, and evasion attacks that can lead to models leaking sensitive informa-tion, executing harmful instructions, or circumvent-ing organizational security policies (Pathade, 2025). In response to this, researchers and practitioners have created guardrail systems to detect and block unsafe or out-of-domain prompts, which are a ne-cessity as the attack diversity and sophistication grows (Rebedea et al., 2025). Existing guardrail approaches can be categorized into two main categories. The first are dedicated classifier models that are fine-tuned on large, cu-rated datasets to recognize harmful content, sen-sitive topics, or policy violations (Rebedea et al., 2024). These systems can achieve strong accu-racy, however require fine tuning on curated train-ing data, rely on custom classifiers specialized to specific domains, and incur additional inference latency (Chua et al., 2024). The second category are lightweight similarity-based methods such as embedding k-nearest neighbors (kNN), whereby user prompts are embedded using a sentence en-coder or embedding model (Wang et al., 2020) and compared against a small bank of labeled safe and unsafe examples. While such an approach exhibits low guardrail latency, it suffers from high false-positive rates as well as struggles with nuanced safety, security, and topic distinctions from out-of-distribution attacks and subtle prompt injection (Chua et al., 2024). Recent works have highlighted that many widely deployed guardrails are vulnerable to evasion, even when they appear robust on static benchmarks (Hackett et al., 2025). Simple character-level per-turbations, paraphrasing attacks, and algorithmi-cally generated adversarial prompts can bypass popular guardrail systems, achieving high attack success rates while retaining the original prompt’s malicious intent. These findings indicate that guardrails that are heavily dependent on their train-ing distribution are unlikely to generalize to unseen attack types, consistent with recent work on struc-
+
+> arXiv:2607.02072v1 [cs.LG] 2 Jul 2026
+
+tural safety generalization and distribution shift robustness (Broomfield et al., 2025). We introduce kNNGuard , a training-free, rapidly adaptable guardrail framework that works by turn-ing LLM hidden activations into a multi-layer de-cision surface for detecting unsafe, off-topic, and adversarial prompts. Rather than training a sepa-rate classifier, kNNGuard reuses a frozen LLM as a feature extractor where a small labeled bank of safe and unsafe prompts is passed through the model layers once, and the resulting hidden activations are cached. At inference time, an incoming prompt’s activations are compared against this bank using cosine-distance kNN across multiple transformer layers, with Fisher-discriminant-based weighting (Ghojogh et al., 2020) assigning greater influence to layers that best separate the two classes. Afused variant, kNNGuard FE, further combines this activation-space signal with a sentence-embedding score via adaptive confidence-based fusion, improv-ing robustness across domains where either repre-sentation alone is less discriminative. We evaluated kNNGuard on a diverse set of tasks relevant to production LLM deployments: code in-structions, code outputs, medical prompts, general safety prompts, jailbreaks, and prompt-injection attacks. Across these domains, and using only 50 labelled examples per class, kNNGuard achieves an average F1 of 87.4% with a false positive rate of 12.9% and a per-prompt latency of 45.9 ms, achieving competitive results against fine-tuned guardrails such as Llama Nemotron Topic Guard V1 and Nemotron Safety Guard V2 without any fine-tuning, gradient updates, or model retraining, and at 2.7 × lower inference latency than the best comparable state-of-the-art guardrail. 
+
+Our contributions are as follows: 
+
+• We propose kNNGuard, a training-free guardrail framework that operates directly in the acti-vation space of a frozen, off-the-shelf LLM, supporting two variants: a layer-ensemble (kNNGuard LE) that aggregates multi-layer acti-vations via Fisher discriminant weighting, and a fused-ensemble (kNNGuard FE) that combines activation-space and embedding-space kNN via adaptive confidence-based fusion. • We demonstrate that kNNGuard adapts to new do-mains by updating a small reference bank, requir-ing only a single forward pass per bank example yielding guardrail construction times under 10 seconds for a 50-sample bank, 61 × speedup com-pared to LoRA fine-tuning, making kNNGuard practical for rapid deployment and on-the-fly do-main adaptation. • We conduct an extensive evaluation across six domains Code Instructions, Code Outputs, Medi-cal, Safety, Jailbreak, and Prompt Injection, com-paring kNNGuard against Embedding-kNN and state-of-the-art fine-tuned guardrails, demonstrat-ing competitive or superior F1 and attack success rate at a lower inference latency. • We analyze the role of domain-specific system prompts in shaping activation geometry, the con-tribution of individual transformer layers to clas-sification performance, and the trade-offs intro-duced by using no system prompt, providing practical guidance for integrating kNNGuard into production LLM pipelines. 
+
+2 Related Work 
+
+Fine-tuned guardrail classifiers: The predomi-nant methodology for production LLM guardrails relies on models fine-tuned on large, curated safety datasets. Llama Nemotron Topic Guard V1 (Rebe-dea et al., 2024) and Llama Nemotron Safety Guard V2 (Ghosh et al., 2025) are representative examples where both LoRA fine-tune Llama-3.1-8B-Instruct for topic control and content safety classification re-spectively, while Llama Guard 3 (Inan et al., 2023) applies full fine-tuning for harm taxonomy classifi-cation. WildGuard (Han et al., 2024) takes a sim-ilar instruction-tuning approach based on Mistral-7B, extending coverage to 13 risk categories and simultaneously handling prompt harmfulness, re-sponse harmfulness, and refusal detection, demon-strating the growing scope of fine-tuned guardrail systems. Although these approaches achieve strong in-distribution accuracy, they are operationally ex-pensive to adapt: changing the target domain re-quires collecting a new training corpus, fine-tuning the model from scratch, and re-validating the clas-sifier before deployment, making rapid response to emerging threats difficult in practice. 
+
+Lightweight and embedding-based classifiers: 
+
+To reduce latency, a second class of approaches ap-plies kNN or linear classification over sentence em-beddings produced by lightweight encoders such as MiniLM (Wang et al., 2020), where NeMo Guardrails (Rebedea et al., 2025) provide a broader õ System Prompt Formatting j Extract Last-Token Activations Ö 
+
+> 50–250/class cache/*.pt
+> PHASE 1: Bank Building (Once)
+> Layers 0, 4, 8, . . . , 31
+
+# Same System Prompt j Extract Activations     
+
+> PHASE 2: Inference (Per Prompt)
+> Activation kNN LE (Layer Ensemble) Embedding kNN (MiniLM)
+> Fusion (α-blend / adaptive)
+> Score 1
+> unsafe fraction
+> Score 2
+> unsafe fraction
+> Score ≥τ?
+
+è
+
+> BLOCK
+> Off-Topic / Unsafe
+
+¥ 
+
+> ALLOW
+> On-Topic / Safe
+> True False
+
+Figure 1: Architecture of kNNGuard. During the bank-building phase, labelled prompts are processed by the frozen LLM and embedding model, and their representations are cached. During inference, a new prompt is evaluated using activation-space and embedding-space kNN, and resulting scores are fused to produce the final decision. 
+
+framework for composing such classifiers using em-beddings. Prompt Guard 2 (Meta AI, 2025) takes another lightweight approach with fine-tuning a compact DeBERTa classifier (Chua et al., 2024). While these methods offer low inference overhead, they are limited to surface-level lexical similarity, which means semantically ambiguous inputs can be indistinguishable in the embedding space, making reliable classification on nuanced safety boundaries difficult to achieve. 
+
+3 The kNNGuard Framework 
+
+Guardrail evasion and robustness: Recent work has shown that widely deployed guardrails re-main vulnerable to evasion under simple character-level perturbations, paraphrasing, and algorithmi-cally generated adversarial prompts (Hackett et al., 2025). These findings highlight a structural lim-itation of methods that depend heavily on their training distribution, suggesting that they general-ize poorly to unseen attack families (Broomfield et al., 2025). Nasr et al. (Nasr et al., 2025) further demonstrate that adaptive adversaries with white-box access can construct attacks that defeat de-fenses which appear robust under standard bench-marks, suggesting that static evaluation protocols systematically underestimate real-world vulnera-bility. These findings motivate guardrail designs, such as kNNGuard, that do not bind classification boundaries to a fixed training set and can instead be updated by simply replacing the reference bank. 
+
+Activation-space representations for safety: 
+
+Parallel to guardrail development, mechanistic in-terpretability research has demonstrated that refusal behavior in LLMs is mediated by structured direc-tions in the model’s hidden state space (Arditi et al., 2024), where ablating or adding this direction, con-trols the model’s acceptance and refusals of ad-verserial prompts. Subsequent work on SafeSwitch (Han et al., 2025) further showed that these internal activation signals can be monitored at inference time to steer unsafe behavior without modifying model weights, reinforcing the practical promise of activation-space approaches. kNNGuard utilizes multi-layer hidden activa-tions as a non-parametric classification surface rather than fine-tuning a separate safety head or relying on a single refusal direction, addressing three practical requirements for real-world LLM deployments: low latency, no fine-tuning, and rapid domain adaptation. To satisfy these requirements, kNNGuard reuses off-the-shelf instruction-tuned LLMs as a feature extractor and performs non-parametric classification over a small labelled refer-ence bank, allowing the guardrail to be adapted to a new domain by updating the bank and, optionally, modifying the system prompt, without any gradient updates or model retraining. The key idea is that the internal activations of an LLM contain safety and topic-relevant information (Han et al., 2025), where this is not always captured by sentence embeddings. While embedding-based similarity can capture broad semantic closeness, activation-space similarity reflects how the LLM internally represents a prompt after processing it through its transformer layers. kNNGuard there-fore leverages two views: an activation-space view derived from selected hidden layers of the frozen LLM, and an embedding-space view derived from a lightweight sentence embedding model. 
+
+3.1 Architecture 
+
+kNNGuard operates in two phases, as illustrated in Figure 1. In the first phase, referred to as bank building , a small labelled bank of safe/on-topic and unsafe/off-topic prompts are processed once. Each bank prompt is formatted using an optional domain-specific system prompt, passed through the frozen LLM, and the last-token hidden activations from se-lected transformer layers are extracted and cached. In parallel, the same bank prompts are encoded using a frozen sentence embedding model, such as MiniLM (Wang et al., 2020), and the resulting embeddings are also cached. In the second phase, referred to as inference , an unseen user prompt is formatted using the same prompt-formatting procedure and passed through the frozen LLM. Its hidden activations are com-pared with the cached activation bank using k-nearest neighbours. At the same time, the prompt is encoded by the embedding model and compared with the cached embedding bank. The two result-ing risk scores are then fused to produce a final guardrail decision. This dual-view design is useful because the two representation spaces capture different aspects of the input. Activation-space similarity is sensitive to the internal behaviour of the LLM and can high-light prompts that trigger safety-relevant represen-tations (Patel and Wang, 2025). Embedding-space similarity, in contrast, can provide a broader se-mantic signal (Zhao et al., 2026). This may be especially useful when the activation space of a smaller or less specialised LLM is less separable. By combining both views, kNNGuard avoids rely-ing on a single representation type through using the best of both methodologies. 
+
+3.2 Problem Formulation 
+
+Let D = {(xi, y i)}Ni=1 denote a domain-specific reference bank of labelled prompts, where xi ∈ X 
+
+is a prompt and yi ∈ { 0, 1} is its corresponding guardrail label: 
+
+yi =
+
+(
+
+1, if xi is off-topic or unsafe ,
+
+0, if xi is on-topic or safe . (1) Given an unseen user prompt x, the objective is to construct a training-free decision function: 
+
+gFE : X → { 0, 1}, (2) where gFE (x) = 1 indicates that the prompt should be blocked, whereas gFE (x) = 0 indicates that it should be allowed. Let π denote an optional domain-specific system prompt. The formatted input processed by the guardrail is defined as: 
+
+˜x = P(x; π), (3) where P(·) denotes the prompt-formatting function. If no system prompt is used, then ˜x = x. This formulation allows the same framework to operate either with domain conditioning or in a no-system-prompt configuration. 
+
+3.3 Activation-Based Layer Ensemble Representation 
+
+Let F denote a frozen LLM, and let L =
+
+{ℓ1, ℓ 2, . . . , ℓ M } be the set of hidden layers se-lected for representation extraction. For each input 
+
+˜x, the hidden activation obtained from layer ℓ ∈ L 
+
+is denoted by 
+
+h(ℓ)(˜ x) ∈ Rdℓ . (4) To quantify the discriminative capability of each hidden layer, kNNGuard computes a Fisher-style separability score over the labelled reference bank. For each class c ∈ { 0, 1}, the class-wise mean activation vector at layer ℓ is defined as 
+
+μ(ℓ) 
+
+> c
+
+= 1
+
+|D c|
+
+X
+
+> i:yi=c
+
+h(ℓ)(˜ xi), (5) where 
+
+Dc = {(xi, y i) ∈ D : yi = c}. (6) Let dℓ denote the dimensionality of the activa-tion vector extracted from layer ℓ. The between-class separation of layer ℓ is computed as the mean squared distance between the safe and unsafe class centroids: 
+
+Bℓ = 1
+
+dℓ
+
+μ(ℓ)0 − μ(ℓ)1 
+
+> 22
+
+. (7) W cact (x)             
+
+> ócemb (x)
+> Step 1 & 2
+> Compute Gap ( ∆)
+> |cact (x)−cemb (x)|
+> ∆> γ ?
+> Winner-Takes-All
+> Use most confident score
+> 8Confidence Blend
+> Weight by relative certainty
+> YES
+> NO
+> Step 4
+> Apply Threshold
+> Score ≥τ
+> è
+> BLOCK
+> ✓
+> ALLOW
+> True
+> False
+> Intuition: If sources disagree strongly , trust the one that is most certain. If similarly uncer-tain , blend their contributions.
+
+Figure 2: Adaptive fusion in kNNGuard. Activation-space and embedding-space scores are compared via a confidence gap, then combined using winner-takes-all or confidence blending before thresholding to produce the final decision. 
+
+Let σ2,(ℓ) 
+
+> c,q
+
+denote the variance of feature dimen-sion q among the activation vectors that belong to class c. The within-class dispersion of layer ℓ is defined as 
+
+Wℓ = 12dℓdℓX
+
+> q=1
+
+
+
+σ2,(ℓ)0,q + σ2,(ℓ)1,q 
+
+
+
++ ε, (8) where ε > 0 is a small constant introduced for numerical stability. The Fisher-style separability score for layer ℓ is then given by 
+
+Jℓ = Bℓ
+
+Wℓ
+
+. (9) Layers with larger values of Jℓ exhibit stronger separation between safe and unsafe prompts rela-tive to their within-class variation. The resulting layer scores are converted into normalized ensem-ble weights using a softmax: 
+
+αℓ = exp( Jℓ)
+
+P 
+
+> j∈L
+
+exp( Jj ) . (10) The activation-based layer ensemble representa-tion of a prompt is then constructed as a weighted concatenation of the normalised hidden activations: 
+
+ϕact (˜ x) = M
+
+> ℓ∈L
+
+αℓ norm 
+
+
+
+h(ℓ)(˜ x)
+
+
+
+, (11) where L denotes vector concatenation and 
+
+norm( ·) denotes ℓ2-normalisation. 
+
+3.4 Embedding-Based Representation 
+
+In parallel with the activation-based representation, kNNGuard uses a sentence embedding model E,such as MiniLM, to encode each formatted prompt into a de-dimensional semantic embedding space: 
+
+ϕemb (˜ x) = norm ( E(˜ x)) ∈ Rde . (12) where de denotes the embedding dimensionality. The labelled reference bank therefore induces two cached representation banks: 
+
+Bact = {(ϕact (˜ xi), y i)}Ni=1 , (13) and 
+
+Bemb = {(ϕemb (˜ xi), y i)}Ni=1 . (14) The activation bank captures how the frozen LLM internally represents the labelled prompts, while the embedding bank captures conventional semantic similarity. Given both banks are com-puted once and cached, domain adaptation only requires replacing or alternatively updating the la-belled reference examples. 
+
+3.5 kNN-Based Risk Estimation 
+
+For each representation branch r ∈ { act , emb },the distance between a query prompt x and a refer-ence prompt xi is computed using cosine distance: 
+
+dr(x, x i) = 1 − ϕr(˜ x)⊤ϕr(˜ xi). (15) Let N rkr (x) denote the set of kr nearest neigh-bours of x in representation space r. The branch-specific risk score is defined as the proportion of unsafe or off-topic examples within the correspond-ing neighbourhood: 
+
+sr(x) = 1
+
+kr
+
+X  
+
+> i∈N rkr (x)
+
+yi, r ∈ { act , emb }.
+
+(16) Therefore, sact (x) ∈ [0 , 1] and semb (x) ∈ [0 , 1] ,where larger values indicate stronger evidence that the input prompt should be rejected. 
+
+3.6 Fused Ensemble Decision Rule 
+
+The Fused Ensemble combines the activation-space and embedding-space risk scores into a final guardrail score . A simple fusion strategy is fixed alpha blending: 
+
+sα(x) = λs act (x)+(1 −λ)semb (x), λ ∈ [0 , 1] .
+
+(17) Although fixed blending is simple, it assumes that activation-space and embedding-space signals are equally reliable across all prompts and domains. In practice, one representation branch may be more informative for a particular query. For example, activation space may better detect prompts that trigger safety-relevant internal behaviour, while embedding space may be more reliable for broad topical separation. kNNGuard therefore uses a confidence-adaptive fusion mechanism as its main decision rule (Figure 2). Let τ ∈ [0 , 1] denote the decision threshold used to distinguish safe/on-topic prompts from unsafe/off-topic prompts. In the proposed Fused Ensemble method, the threshold is set to τ = 0 .5.The confidence associated with each branch is mea-sured as the absolute distance between its risk score and the decision threshold: 
+
+cact (x) = |sact (x) − τ | , c emb (x) = |semb (x) − τ |
+
+(18) A score closer to τ indicates an uncertain branch prediction, while a score far from τ indicates higher confidence. The confidence gap between the two branches is defined as 
+
+∆( x) = |cact (x) − cemb (x)| . (19) Let γ denote the confidence-gap threshold. In the proposed method, γ = 0 .1. If the confidence gap exceeds γ, the risk score produced by the more confident branch is selected directly. Other-wise, the two branch scores are combined through confidence-weighted fusion. Accordingly, the final fused risk score is defined as                          
+
+> sFE (x) =
+> 
+> sact (x),∆( x)> γ ∧cact (x)> c emb (x),semb (x),∆( x)> γ ∧cemb (x)> c act (x),cact (x)sact (x) + cemb (x)semb (x)
+> cact (x) + cemb (x),∆( x)≤γ∧cact (x) + cemb (x)>0,sact (x) + semb (x)2,cact (x) + cemb (x) = 0 .
+
+(20) Finally, the binary decision produced by the Fused Ensemble guardrail is given by 
+
+gFE (x) = I [sFE (x) ≥ τ ] , (21) where I[·] denotes the indicator function. Hence, 
+
+gFE (x) = 
+
+(
+
+1, block if unsafe or off-topic ,
+
+0, allow if safe or on-topic .
+
+(22) 
+
+Training-Free Configuration Objective: A key property of the proposed method is that neither the LLM nor the sentence embedding model is fine-tuned for the guardrail task. Let ΘF and ΘE denote the parameters of the LLM and the embedding model, respectively. During guardrail construction and inference, both parameter sets remain fixed: 
+
+∇ΘF L = 0 , ∇ΘE L = 0 . (23) Instead of updating model parameters, kNNGuard is configured through the labelled reference bank D, the selected layer set L, the neighbourhood sizes kact and kemb , and the thresholds τ and γ.Given a validation set V, these hyperparame-ters may be selected by minimising an empirical guardrail loss: 
+
+min 
+
+> L, k act , k emb , τ, γ
+
+1
+
+|V| 
+
+X  
+
+> (xj,y j)∈V
+
+ℓ (gFE (xj ), y j ) ,
+
+(24) subject to 
+
+ΘF and ΘE remaining fixed . (25) This formulation enables kNNGuard to exploit both the internal representations of the frozen LLM and the semantic neighbourhood structure induced by the embedding model, while avoiding the com-putational cost and data requirements of fine-tuned guardrail classifiers. In deployment, the guardrail can be adapted to new domains by updating the labelled bank and, where appropriate, revising the system prompt, without changing the underlying model parameters. 
+
+4 Experiment Setup 
+
+To evaluate the effectiveness of kNNGuard, we created a Python implementation of the proposed framework detailed in Section 3. Experiments were conducted through deploying kNNGuard on an NVIDIA RTX 6000 Ada Generation GPU. 
+
+Datasets: A total of 16 unique datasets, as shown in Table 1, were used for evaluation and bank con-struction covering various domains including Cod-ing, Medical, Safety, Jailbreaks and Prompt Injec-tions. To avoid evaluation bias, the kNNGuard bank was constructed from a dataset that is distinct from the evaluation set, ensuring that evaluation test samples are not drawn from the same data dis-tribution used for bank construction. This design Table 1: Datasets used to build the kNN bank and for evaluation per domain. All evaluation datasets consist of 4000 mixed prompts (on-topic/off-topic), except Prompt Injection and Jailbreak datasets, which consist of 2000 total mixed prompts.            
+
+> Domain Bank Safe Bank Unsafe Eval Safe Eval Unsafe
+> Coding Instructions MBPP (Austin et al., 2021) Alpaca (Taori et al., 2023) Code ( instr. col ) (Tarun, 2023) Dolly-15k (Conover et al., 2023) Coding Outputs PromptSet (Pister et al., 2024) Code ( output col )(Tarun, 2023) Medical MedMCQA (Pal et al., 2022) ChatDoctor (Li et al., 2023) Safety Aegis Safety 2.0 (Ghosh et al., 2025)* Safety Benchmark (qualifire, 2025) Prompt Safety (SalKhan12, 2025) Jailbreak Jailbreak Classification (Hao, 2023)* PI Benchmark (rogue-security, 2026) WildJailbreak (Jiang et al., 2024) Prompt Injection BIPIA-GPT (Alamsabi et al., 2026)* Deepset PI (deepset, 2023) PI Dataset (NeurAlchemy, 2026)
+> * Domains in which the same source dataset was used for both the safe and unsafe classes. In those cases, the two banks were constructed by using the different labels provided in the dataset for safe/unsafe samples.
+
+also enables assessment of kNNGuard’s robustness under distributional shift. 
+
+LLM Selection: We conducted experiments through leveraging 6 unique LLM models as back-bone models for kNNGuard. All kNNGuard ex-periments in Section 5 used Llama-3.1-8B-Instruct (Grattafiori et al., 2024) model as the selected back-bone LLM to for comparing against NVIDIA’s Llama Nemotron Topic Guard V1 (Rebedea et al., 2024) which fine-tunes the same model. Additional LLMs used include models with varying parameter sizes such as 4B parameter Phi-4-mini-instruct (Ab-din et al., 2024) model, 7B parameter Mistral-7B-Instruct-v0. (Jiang et al., 2023) model and 12B pa-rameter Gemma-4-12B (Google DeepMind, 2026) (both base and instruct models). These are tested in addition to an abliterated Llama-3 ( Llama-3-8B-Instruct-abliterated-v2 ) (QuixiAI, 2025) model which assists in understanding the impact of the safety direction on kNNGuard. All results of kNNGuard tested on various models are shown in Appendix A.2. Each guardrail variant from kNNGuard and Embedding-kNN was evaluated with k = 13 near-est neighbors and a bank of n = 50 samples per class, selected from the datasets in Table 1 where domains with the same dataset for safe and unsafe classes refer to using different labels (safe/unsafe) to build each bank. 
+
+Prompt formatting: Each input is formatted us-ing a domain-specific system prompt before be-ing passed to the model as seen in Figure 9. The system prompt instructs the model to classify the input as on-topic or off-topic according to the target domain. For example, coding do-main prompt restricts responses to programming-related requests, medical prompt to healthcare top-ics, safety prompt to distinguishing harmful from benign content, jailbreak and prompt injection, and so on. This formatted prompt is consumed by kNNGuard (optional) and Llama Nemotron Topic Guard V1 which requires a system prompt. 
+
+Decision threshold: All variants use a fixed clas-sification threshold of τ = 0 .5: inputs with an unsafe score ≥ τ are blocked or can be configured to execute a certain behavior once classified. This score of 0.5 was chosen due to being the most bal-anced to maximize F1 scores, without affecting false positive and false negative rates significantly. 
+
+Guardrails: Across experiments, we evaluated six different guardrails: • kNNGuard FE (Fused Ensemble) : Fuses kNNGuard LE (Layer Ensemble) with 
+
+Embedding-kNN via adaptive fusion ( α =0.5). • Embedding-kNN (Wang et al., 2020): Bank and evaluation datasets ran through MiniLM, with kNN applied on resulting embeddings. • Llama Nemotron Topic Guard V1 (Rebedea et al., 2024): Specialized 8B parameter fine-tuned (LoRA) LLM designed for topical mod-eration. Uses system prompt to define on and off-topic areas (see Appendix A). • Llama Nemotron Safety Guard V2 (Ghosh et al., 2025): 8B parameter safety model fine-tuned to classify across a 23-category content moderation taxonomy. • Llama Guard 3 (Inan et al., 2023): Fine-tuned 8B parameter LLM using a 14-category tax-onomy for content moderation classification. • Llama Prompt Guard 2 (Meta AI, 2025): Lightweight 86M parameter fine-tuned clas-sifier designed for detecting prompt injection and jailbreak attacks. Decision threshold was set to 0.5. Established configurations (if required) were used for all guardrails using deterministic decoding. No fine-tuning, prompt or taxonomy modifications were applied. 
+
+Metrics: Our evaluation captured various mea-surements to ascertain guardrail effectiveness, con-sisting of: Latency (inference time; the time re-quired by the model to process an input prompt and produce a prediction/classification.), F1 Score, False Positive Rate (FPR; the rate of safe prompts being classified as unsafe), False Negative Rate (FNR; the rate of unsafe prompts being classified as safe, equivalent to the Attack Success Rate (ASR) in security domains) and Recall. 
+
+kNN Bank Construction: For each domain, a two-class bank is built by extracting the hidden-state activations from nine layers spaced as evenly as possible throughout the transformer stack, in-cluding both the input-proximal (layer 0) and final layers of the LLM for each labeled training sample. This specific number of layers is used to ensure representation from each layer range is captured, where each layer’s activations impact is weighed using Fisher’s Score as observed in Section 3.3. Each bank contains n = 50 safe and n = 50 un-safe examples (100 total). Banks are cached to disk and reused across runs. For embedding-based vari-ant ( Embedding-kNN ), sentence embeddings are used in place of layer activations; no layer selection or LLM forward passes were required. 
+
+Sampling robustness: For experiments, we used a fixed bank and evaluation sample per domain to ensure reproducibility and ensuring a controlled fair experiment for all guardrails. Nevertheless, to test sensitivity to prompt selection, we repeated bank construction and evaluation under random resampling from the same source datasets. The results varied only marginally, suggesting that the reported performance is robust to the particular sample draw. An example result of this randomness of bank sample test is shown in Figure 3. With 
+
+> Sys.
+> No
+> Sys.
+> 1.0
+> 1.2
+> F1 Score
+
+F1 Score 
+
+> With
+> Sys.
+> No
+> Sys.
+> 1.0
+> 1.2
+> Recall
+
+Recall 
+
+> With
+> Sys.
+> No
+> Sys.
+> 0.0
+> 0.2
+> 0.4
+> Error Rate
+
+Error Rate 
+
+> With
+> Sys.
+> No
+> Sys.
+> 0
+> 20
+> 40
+> Latency (ms)
+
+Latency 
+
+> kNNGuard FE
+> kNNGuard FE (No System Prompt)
+> ±1 Std. dev.
+> Figure 3: F1, recall, error rate and latency scores across all 5 runs with a randomized bank of 50 samples per class ran on a randomized set of 2000 prompts per class.
+
+Hyperparameter Selection: To select the op-timal value for k , we performed leave-one-out cross-validation (LOOCV) (Stone, 1974) directly on the labeled reference bank, avoiding any leak-age between hyperparameter tuning and final eval-uation. For each domain, we held out one bank example at a time, predicted its label using the re-maining 99 examples, and repeated this across all 100 samples. Through evaluation of odd values of k ∈ { 1, 3, 5, . . . , 21 }, we found that k = 13 
+
+provided the strongest overall trade-off aggregated across all assessed domains. Therefore, we fixed this value for all reported experiments. We also studied bank size n by comparing 50, 100, 250, and 1000 examples per class. Perfor-mance did not improve with larger banks, rather, Table 2: Summary of average F1 score, Recall, FPR, FNR and inference latency across all evaluated domains. Results are averaged over all evaluated domains.                                         
+
+> Guardrail F1 (%) Recall (%) FPR (%) FNR (%) Latency (ms) Llama kNNGuard FE 87.4 86.6 12.9 13.4 46.8
+> Llama kNNGuard FE (No Sys.) 84.2 93.5 38.5 6.5 32.7 Llama Nemotron Topic Guard 82.7 90.5 34.7 9.5 126.0 Prompt Guard 2 ∗70.4 58.6 12.5 41.4 9.7 Llama Nemotron Safety Guard V2 ∗79.2 77.0 12.9 23.0 454.6 Llama Guard 3 ∗74.2 62.7 4.6 37.3 104.5 Embedding KNN 79.6 80.9 31.6 19.1 4.0
+> * Evaluated on relevant domains only. Results are not fully comparable to other guardrails.
+
+banks of 250 and 1000 examples introduced more borderline neighbours leading to increased false positives, likely due to semantically ambiguous examples near the decision boundary. A bank of 
+
+n = 50 per class offered the best balance between coverage, computational efficiency, and class sep-arability, making it the most stable choice for the final configuration. 
+
+5 Experiment Results 
+
+Across all evaluated domains, kNNGuard FE achieves the highest average F1 (87.4%) and the lowest false positive rate (12.9%) among all eval-uated guardrails, while requiring no training or fine-tuning and operating at 45.9 ms per prompt. 2.7 × faster than the comparable Llama Nemotron Topic Guard V1 (126ms) and nearly an order of magnitude faster than Nemotron Safety Guard V2 (454.6 ms). Table 2 presents an aggregated sum-mary of performance across all six evaluated do-mains (Coding Instructions, Coding Outputs, Med-ical, Safety, Jailbreak, and Prompt Injections), providing a macro-level view of each guardrail’s performance-latency trade-off. 
+
+5.1 Topical Domains Results 
+
+Enforcing domain-specific topical boundaries re-quires a guardrail that blocks off-topic requests without over-blocking legitimate ones. Table 3 and Figure 4 report results across three domains: Code Instructions, Code Outputs, and Medical, evaluated on datasets distinct from the bank construction sets. 
+
+kNNGuard FE achieves the most robust and consistent performance across all three topical domains. F1 scores of 99.1%, 99.3%, and 95.3% are attained on Code Instructions, Code Outputs, and Medical respectively, with FPR at or below 0.9% in all three settings and the lowest combined error across two of the three domains. 
+
+Fine-tuned guardrails exhibit distributional fragility across closely related sub-domains. 
+
+Llama Nemotron Topic Guard V1 degrades from 99.6% F1 on Code Outputs to 83.4% F1 with a 39.1% FPR on Code Instructions a closely related task suggesting sensitivity to the linguistic style of its training distribution rather than the underlying topical boundary, consistent with known limita-tions of fine-tuned guardrails (Broomfield et al., 2025). On the other hand, for kNNGuard FE, adapting through the labeled bank alone, maintains near-identical performance across both coding sub-domains ( ≥99.1% F1, ≤0.9% FPR) despite using the same system prompt for both domains. 
+
+Medical domain is the most challenging topi-cal setting, where system prompt has the great-est influence. All methods exhibit higher error rates on Medical than on coding domains, reflect-ing greater semantic ambiguity between on-topic and off-topic prompts. kNNGuard FE exhibits the highest performance result at 95.3% F1 (FPR 0.5%, FNR 8.5%), while omitting the system prompt causes F1 to drop to 85.0% and FPR to rise to 32.6%, consistent with the findings in Section 5.3. 
+
+kNNGuard FE delivers best accuracy-latency trade-off among all evaluated methods. 
+
+Embedding-kNN is the fastest at 4.0 ms but its FNR across all three domains (18.8-21.9%) indicates that surface-level semantic similarity alone is insuf-ficient for reliable topical classification. Llama Nemotron Topic Guard V1 infers at 126.1 ms, 2.7 × slower than kNNGuard FE at 46.8 ms, which achieves the highest F1 across all three domains. 
+
+5.2 Security & Safety Domains Results 
+
+The security-oriented domains constitute a sub-stantially harder evaluation setting than topical do-mains, as the unsafe class is designed to either Table 3: Results of guardrails across 3 topical domains (Code Instructions, Code Outputs, and Medical). F1, FPR and FNR are reported as percentages. Average inference latency is measured in milliseconds per prompt.                                            
+
+> Code Instructions Code Outputs Medical Guardrail
+> Average Latency (ms) F1 (%) FPR (%) FNR (%) F1 (%) FPR (%) FNR (%) F1 (%) FPR (%) FNR (%)
+> kNNGuard FE 46.8 99.1 0.9 0.9 99.3 0.6 0.8 95.3 0.5 8.5
+> kNNGuard FE (No Sys.) 32.7 98.5 1.6 1.5 98.3 2.9 0.5 85.0 32.6 2.1 Nemotron Topic Guard V1 126.1 83.4 39.1 0.5 99.6 0.2 0.5 93.9 12.0 0.9 Embedding-kNN 4.0 87.5 4.5 18.8 88.7 2.9 17.9 87.3 0.9 21.9 kNNGuard
+> FE
+> kNNGuard FE
+> (No Sys.)
+> Nemotron
+> Topic Guard
+> Embedding
+> KNN
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> Error Rate
+> 0.018 0.030
+> 0.396
+> 0.233
+
+Coding Instructions   
+
+> kNNGuard
+> FE
+> kNNGuard FE
+> (No Sys.)
+> Nemotron
+> Topic Guard
+> Embedding
+> KNN
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.013 0.034 0.007
+> 0.208
+
+Coding Outputs 
+
+> kNNGuard
+> FE
+> kNNGuard FE
+> (No Sys.)
+> Nemotron
+> Topic Guard
+> Embedding
+> KNN
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.090
+> 0.346
+> 0.129
+> 0.228
+
+Medical 
+
+FPR (False Positive Rate) FNR (False Negative Rate) 
+
+Figure 4: Total error decomposition across topical domains. Each bar represents the combined FPR and FNR per method. Lower total bar height indicates a better overall operating point. 
+
+evade detection directly (jailbreaks and prompt in-jections) or overlap semantically with benign re-quests (general safety). In security contexts, false positives reduce usability while false negatives cor-respond directly to the attack success rate (ASR). Table 4 and Figure 5 report F1, FPR, and ASR across all methods. 
+
+kNNGuard FE produces the most consistent error decomposition across all security domains. 
+
+Every other method covering all three domains exhibits high values in at least one error compo-nent. Llama Nemotron Topic Guard V1 reaches 97.4% FPR on jailbreak, Embedding-kNN reaches 60.3-60.9% FPR across safety and jailbreak, and Prompt Guard 2 allows 50.2% of jailbreak attempts through. kNNGuard FE consistently produces the most balanced error decomposition across all three domains, with no significant dominance from FPR or ASR. This is the operationally preferable profile when both attack detection and service availability must be maintained simultaneously. 
+
+In the safety domain, state-of-the-art fine-tuned guardrails achieve lower FPR or ASR than kNNGuard FE individually, but not simul-taneously. Nemotron Safety Guard V2 achieves the highest F1 (79.2%) with a low FPR (12.9%), but operates at nearly ten × the latency of kNNGuard FE and with an 8.6% higher ASR. Llama Guard 3 reduces FPR further to 4.7% but at the cost of a 23% higher ASR than kNNGuard FE, indicating a permissive classifier that minimizes false positives at the cost of detecting harmful prompts, which is critical in adversarial settings where missed attacks have direct safety consequences. Llama Nemotron Topic Guard V1 achieves a lower raw ASR (9.5%) than kNNGuard FE but at a 41.1% FPR trade-off, nearly three times higher. kNNGuard FE therefore represents the most practical and balanced operat-ing point for deployments, achieved without any fine-tuning. 
+
+For jailbreak detection, all evaluated guardrails exhibit extreme errors in either FPR or ASR, whereas kNNGuard FE maintains moderate values across both error components. 
+
+Llama Nemotron Topic Guard V1’s near-total FPR of 97.4% indicates very conservative behaviour blocking nearly all benign prompts in this setting and is therefore not operationally viable as a jailbreak guardrail. Additionally, Prompt Guard 2, trained specifically for jailbreak and injection Table 4: Results of guardrails across Safety, Jailbreak, and Prompt Injection domains. F1, FPR and ASR are reported as percentages. Average inference latency is measured in milliseconds. Dashes (–) denote guardrail was not evaluated on the corresponding domain.                                                                         
+
+> Safety Jailbreak Prompt Injection Guardrail
+> Average Latency (ms) F1 (%) FPR (%) ASR (%) F1 (%) FPR (%) ASR (%) F1 (%) FPR (%) ASR (%)
+> kNNGuard FE 46.8 73.7 34.6 14.3 75.0 25.8 29.6 82.2 15.3 26.2
+> kNNGuard FE (No Sys.) 32.7 64.7 70.1 6.9 75.0 43.9 22.2 83.7 80.2 6.1 Nemotron Topic Guard V1 126.1 73.5 41.1 9.5 70.5 97.4 9.7 75.0 18.4 35.9 Nemotron Safety Guard V2 454.7 79.2 12.9 22.9 ——————Llama Guard 3 104.4 74.2 4.7 37.3 ——————Prompt Guard 2 9.6 ———61.9 16.8 50.2 79.0 8.2 32.7 Embedding-kNN 4.0 61.9 60.3 18.5 78.4 60.9 9.0 73.6 60.2 28.5 kNNGuard
+> FE
+> kNNGuard FE
+> (No Sys.)
+> Nemotron
+> Topic Guard
+> Nemotron
+> Safety Guard
+> Llama
+> Guard 3
+> Embedding
+> KNN
+
+0.00 
+
+0.25 
+
+0.50 
+
+0.75 
+
+1.00  
+
+> Error Rate
+> 0.489
+> 0.769
+> 0.506
+> 0.358 0.420
+> 0.788
+
+Safety 
+
+> kNNGuard
+> FE
+> kNNGuard FE
+> (No Sys.)
+> Nemotron
+> Topic Guard
+> Prompt
+> Guard 2
+> Embedding
+> KNN
+
+0.00 
+
+0.25 
+
+0.50 
+
+0.75 
+
+1.00  
+
+> 0.554
+> 0.661
+> 1.071
+> 0.669 0.700
+
+Jailbreak 
+
+> kNNGuard
+> FE
+> kNNGuard FE
+> (No Sys.)
+> Nemotron
+> Topic Guard
+> Prompt
+> Guard 2
+> Embedding
+> KNN
+
+0.00 
+
+0.25 
+
+0.50 
+
+0.75 
+
+1.00 
+
+> 0.415
+> 0.862
+> 0.542
+> 0.409
+> 0.887
+
+Prompt Injection 
+
+FPR (False Positive Rate) FNR (False Negative Rate) 
+
+Figure 5: Total error decomposition across security and safety domains. Each bar represents the combined FPR and FNR/ASR per guardrail. Lower total bar height indicates a better overall operating point. 
+
+detection, still allows 20.6% more adversarial inputs through than kNNGuard FE as it exhibits a high ASR of 50.2%. kNNGuard FE’s more moderate results suggest that activation geometry encodes sufficient structure to partially separate jailbreak from benign prompts without collapsing to either extreme. 
+
+For prompt injection detection, kNNGuard FE and Prompt Guard 2 achieve comparable er-ror, with kNNGuard FE prioritizing lower ASR at the cost of a higher FPR. Their combined error differs by 0.5 percentage points. However, the dis-tribution between error types differs meaningfully with Prompt Guard 2 exhibiting a 7.1% lower FPR at the cost of a 6.5% higher ASR. For such domain, having an operating point of a lower ASR is criti-cal as classifying harmful and injected prompts as safe carries greater risk than over-blocking prompts. The No System Prompt variant achieves the low-est ASR on this domain (6.1%, a 20.1% reduction relative to kNNGuard FE) but at an FPR 64.9% higher, indicating a consistent finding across all three security domains that removing the system prompt shifts the activation geometry toward high sensitivity at the cost of precision. 
+
+5.3 Prompt Conditioning, Representation Space and Cost System Prompt Impact: The structural impact of conditioning the LLM with a domain-specific system prompt before extracting its hidden acti-vations was also investigated. Figure 6 compares the performance of kNNGuard with and without these instructions. We observed that when the sys-tem prompt is omitted, kNNGuard exhibits more sensitive detection, achieving recall of 0.935 and a low false negative rate (0.065). However, this sensitivity comes at a cost to precision, increas-ing the false positive rate up to 0.385. In this un-conditioned state, the LLM’s activation space can encounter difficulty when differentiating between benign edge-cases and unsafe or off-topic prompts. In contrast, including the system prompt signif-icantly reduces the false positive rate by 66% to 0.129, thereby raising the overall F1 score from 0.842 to 0.874.These results are consistent with F1 Recall FPR FNR    
+
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Score
+> 0.874 0.866
+> 0.129 0.134
+> 0.842
+> 0.935
+> 0.385
+> 0.065
+> kNNGuard FE (With Sys. Prompt) kNNGuard FE (No Sys. Prompt)
+
+Figure 6: F1, Recall, FPR, and FNR scores compared between kNNGuard with and without a system prompt, averaged across all domains. 
+
+the system prompt providing a useful conditioning signal in the LLM’s representation space. By con-ditioning the model with a brief system prompt, the intermediate layers project safe and unsafe prompts into more distinctly separated regions of activation space. While this causes moderate increase in false negative rate (rising to 0.134), reduction in false positives is vital for production deployments. Additionally, kNNGuard without a system prompt achieves lower latency at 32.7 ms per prompt, while adding a system prompt increases inference to 46.8 ms on average. This difference is modest compared to other guardrails such as Llama Nemotron Topic Guard V1 exhibiting 126 ms. It is important to note that the system prompt we used for kNNGuard across all experiments was deliber-ately minimal to be a baseline as seen in Appendix A rather than extensively engineered instructions. Overall, this pattern suggests that adding a system prompt makes the classifier more conservative, in-creasing precision and F1 at the cost of recall. 
+
+Representation Spaces: To visualize the per-formance disparity between kNNGuard FE and standard embedding-based approaches seen with Embedding-kNN, we analyze the underlying ge-ometry of the representations. Figure 7 presents t-SNE projections of the bank prompts for the Cod-ing and Medical domains as examples, contrasting the distribution of raw sentence embeddings rep-resenting Embedding-kNN methodology with the LLM hidden activations utilized by kNNGuard. While sentence embeddings effectively capture broad topical proximity, the boundary between in and out-of-domain prompts remains poorly defined. For instance, a benign programming query and a Embedding-kNN  
+
+> Sil=0.391
+> Medical
+> Sil=0.532
+> Coding
+> kNNGuard FE
+> Sil=0.739
+> Medical
+> Sil=0.813
+> Coding
+> Safe / In-domain Unsafe / Out-of-domain
+
+Figure 7: t-SNE projection of prompts in Medical and Coding domains comparing Embedding-kNN and kNNGuard FE. 
+
+malicious code-execution request may share sig-nificant lexical overlap, causing the embedding en-coder to map them to adjacent regions in the vector space. This ambiguity is reflected quantitatively by low Silhouette scores of 0.527 for the Coding domain and 0.342 for the Medical domain. This lack of strict separability accounts for the higher false positive and false negative rates observed in the Embedding-kNN baseline. On the other hand, the projection of the LLM activations (kNNGuard) demonstrates a structural transformation. Rather than relying on surface-level lexical similarity, the internal representations produced by the LLM encode distinctions that surface-level embeddings do not always capture. In these visualizations, the safe and unsafe exam-ples form more distinct clusters than in embedding space. The geometric separation is robust, as evi-denced by the substantial improvements in the Sil-houette scores, representing a relative improvement of 89.0% and 53.2% over the embedding-space scores, respectively. 
+
+Deployment and Adaptation Costs: A key prac-tical advantage of kNNGuard over fine-tuned guardrails is the cost of domain adaptation. Fine-0 5000 10000 15000 20000 25000    
+
+> Time (seconds)
+> kNNGuard
+> (bank building, 50/class)
+> kNNGuard
+> (bank building)
+> Fine-tuning
+> (LoRA)
+> Training vs. Bank-Building Time
+> 25094 s train_samples = 13,854
+> 0200 400 600
+> kNNGuard
+> kNNGuard
+> 7.95 s
+> 413.35 s
+> (13,854 samples)
+> (100 samples)
+> Zoomed in
+
+Figure 8: Time comparison between LoRA fine-tuning and kNNGuard bank construction. 
+
+tuning a guardrail classifier requires curated train-ing data, and backpropagation through the base model, making rapid adaptation to new domains or emerging threat categories operationally expen-sive. On the other hand, kNNGuard, requires only a single forward pass per bank example to extract layer-wise activations, with no gradient computa-tion or parameter updates at any stage. Therefore, we compare the time cost of LoRA fine-tuning (Hu et al., 2022) to kNNGuard bank building. Constructing a full kNNGuard activation bank from 13,854 prompts, the same number used to train Llama Nemotron Topic Guard V1, requires approximately 6.89 minutes , compared to 6.97 hours for end-to-end LoRA fine-tuning of the same base model, a speedup of approximately 
+
+61 × as observed in Figure 8. More practically, the 100-sample bank (50 per class), which is the recommended sample number for kNNGuard, re-quired 7.95 seconds to construct, which is a 3156 ×
+
+speedup, enabling real-time domain adaptation. 
+
+Table 5: Comparison of deployment cost between LoRA fine-tuning and kNNGuard activation-bank construction using Llama-3.1-8B-Instruct.             
+
+> Method Samples Time (s) Speedup
+> LoRA Fine-Tuning 13,854 25,092 1×
+> kNNGuard Bank Buidling 13,854 413 60 .8×
+> kNNGuard Bank Building (Main) 100 7.95 3156 ×
+
+This result suggests a direct practical implication where deploying kNNGuard can adapt the guardrail to a new domain, a new threat category, or an up-dated prompt policy by replacing the labeled bank and, optionally, revising the system prompt. This adaptation pipeline from collecting 50 labeled ex-amples to a deployable guardrail can complete in under 10 seconds, without changing model weights. This is in comparison to fine-tuned approaches, where adapting to a new domain requires a curated dataset, scheduling a training run, and validating the updated classifier before deployment. 
+
+6 Conclusion 
+
+In this paper we have presented kNNGuard: atraining-free guardrail framework that operates di-rectly in the activation space of an off-the-shelf LLM, classifying incoming prompts via multi-layer kNN over a small labeled reference bank with no gradient updates or fine-tuning. t-SNE visualiza-tions demonstrate that LLM hidden activations in-duce substantially better class separation than sen-tence embeddings, with relative Silhouette score improvements of up to 89.0%, providing geometric support for the activation-space approach. Evaluated across six domains including safety and security, kNNGuard FE achieves the highest average F1 score of 87.4% and the lowest over-all FPR (12.9%) among all guardrails, operating at 45.9 ms per prompt, 2.7 × faster than Llama Nemotron Topic Guard V1 and an order of mag-nitude faster than Nemotron Safety Guard V2. In security domains, kNNGuard FE maintained the most consistent FPR/ASR balance across all threat categories, where all fine-tuned and lightweight guardrails exhibited significant errors on at least one domain. Domain adaptation for kNNGuard requires only updating the labeled bank and an op-tional system prompt, and completes in less than 10 seconds compared to 7+ hours for LoRA fine-tuning on equivalent data, thus making it feasible to create session-based, context-specific guardrail configurations for different AI domain tasks. Future work includes adapting kNNGuard through reference bank updates or continual learn-ing to handle concept drift and emerging attacks without manual intervention. Integrating new find-ings from AI interpretability research may improve accuracy and latency, while extending monitoring to tool outputs to provide comprehensive protection for production LLM and agentic AI systems. 
+
+Acknowledgments 
+
+We would like to thank the Mindgard research team for their comments and feedback. This work was supported by the UK Engineering Physcial Science and Research Council (EPSRC) and Mindgard. References 
+
+Marah Abdin, Jyoti Aneja, Hany Awadalla, and 1 oth-ers. 2024. Phi-3 technical report: A highly capable language model locally on your phone. Preprint ,arXiv:2404.14219. M. Alamsabi, M. Tchuindjang, and S. Brohi. 2026. Embedding-based detection of indirect prompt injec-tion attacks in large language models using semantic context analysis. Algorithms , 19:92. Andy Arditi, Oscar Obeso, Aaquib Syed, and 1 others. 2024. Refusal in language models is mediated by a single direction. Advances in Neural Information Processing Systems , 37:136037–136083. Jacob Austin, Augustus Odena, Maxwell Nye, and 1 others. 2021. Program synthesis with large language models. arXiv preprint arXiv:2108.07732 .Julius Broomfield, Tom Gibbs, George Ingebretsen, and 1 others. 2025. The structural safety generalization problem. In Findings of the Association for Compu-tational Linguistics: ACL 2025 , pages 22134–22173. Gabriel Chua, Shing Yee Chan, and Shaun Khoo. 2024. A flexible large language models guardrail develop-ment methodology applied to off-topic prompt detec-tion. arXiv preprint arXiv:2411.12946 .Mike Conover, Matt Hayes, Ankit Mathur, and 1 others. 2023. Free dolly: Introducing the world’s first truly open instruction-tuned llm. deepset. 2023. Prompt injections dataset. 
+
+https://huggingface.co/datasets/ deepset/prompt-injections . Accessed: 2026-05-26. Benyamin Ghojogh, Milad Sikaroudi, H. R. Tizhoosh, Fakhri Karray, and Mark Crowley. 2020. Weighted Fisher Discriminant Analysis in the Input and Feature Spaces , page 3–15. Springer International Publish-ing. Shaona Ghosh, Prasoon Varshney, Makesh Narsimhan Sreedhar, and 1 others. 2025. AEGIS2.0: A diverse AI safety dataset and risks taxonomy for alignment of LLM guardrails. In Proceedings of the 2025 Con-ference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers) ,pages 5992–6026, Albuquerque, New Mexico. Asso-ciation for Computational Linguistics. Google DeepMind. 2026. Introduc-ing gemma 4 12b. https://blog. google/innovation-and-ai/ technology/developers-tools/ introducing-gemma-4-12b/ . Official release announcement, published 2026-06-03. Aaron Grattafiori, Abhimanyu Dubey, Abhinav Jauhri, and 1 others. 2024. The llama 3 herd of models. 
+
+arXiv preprint arXiv:2407.21783 .William Hackett, Lewis Birch, Stefan Trawicki, Neeraj Suri, and Peter Garraghan. 2025. Bypassing llm guardrails: An empirical analysis of evasion attacks against prompt injection and jailbreak detection sys-tems. In Proceedings of the The First Workshop on LLM Security (LLMSEC) , pages 101–114. Peixuan Han, Cheng Qian, Xiusi Chen, Yuji Zhang, Denghui Zhang, and Heng Ji. 2025. Safeswitch: Steering unsafe llm behavior via internal activation signals. arXiv preprint arXiv:2502.01042 .Seungju Han, Kavel Rao, Allyson Ettinger, Liwei Jiang, Bill Yuchen Lin, Nathan Lambert, Yejin Choi, and Nouha Dziri. 2024. Wildguard: Open one-stop mod-eration tools for safety risks, jailbreaks, and refusals of llms. Advances in neural information processing systems , 37:8093–8131. Jack Hao. 2023. Jailbreak classification dataset. 
+
+https://huggingface.co/datasets/ jackhhao/jailbreak-classification .Accessed: 2026-05-26. Edward J Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Liang Wang, Weizhu Chen, and 1 others. 2022. Lora: Low-rank adaptation of large language models. Iclr , 1(2):3. Hakan Inan, Kartikeya Upasani, Jianfeng Chi, Rashi Rungta, Krithika Iyer, Yuning Mao, Michael Tontchev, Qing Hu, Brian Fuller, Davide Testuggine, and 1 others. 2023. Llama guard: Llm-based input-output safeguard for human-ai conversations. arXiv preprint arXiv:2312.06674 .Albert Q. Jiang, Alexandre Sablayrolles, Arthur Men-sch, Chris Bamford, Devendra Singh Chaplot, Diego de las Casas, Florian Bressand, Gianna Lengyel, Guil-laume Lample, Lucile Saulnier, Lélio Renard Lavaud, Marie-Anne Lachaux, Pierre Stock, Teven Le Scao, Thibaut Lavril, Thomas Wang, Timothée Lacroix, and William El Sayed. 2023. Mistral 7b. Preprint ,arXiv:2310.06825. Liwei Jiang, Kavel Rao, Seungju Han, and 1 oth-ers. 2024. Wildteaming at scale: From in-the-wild jailbreaks to (adversarially) safer language models. 
+
+Preprint , arXiv:2406.18510. Yunxiang Li, Zihan Li, Kai Zhang, Ruilong Dan, Steve Jiang, and You Zhang. 2023. Chatdoctor: A medical chat model fine-tuned on a large language model meta-ai (llama) using medical domain knowledge. 
+
+Cureus , 15(6). Meta AI. 2025. Llama prompt guard 2. 
+
+https://huggingface.co/meta-llama/ Llama-Prompt-Guard-2-86M . Accessed: 2026-05-26. Milad Nasr, Nicholas Carlini, Chawin Sitawarin, Sander V Schulhoff, Jamie Hayes, Michael Ilie, Juli-ette Pluto, Shuang Song, Harsh Chaudhari, Ilia Shu-mailov, and 1 others. 2025. The attacker moves second: Stronger adaptive attacks bypass defenses against llm jailbreaks and prompt injections. arXiv preprint arXiv:2510.09023 .NeurAlchemy. 2026. Prompt injection and jailbreak detection dataset. Accessed: 2026-05-26. Ankit Pal, Logesh Kumar Umapathi, and Malaikannan Sankarasubbu. 2022. Medmcqa: A large-scale multi-subject multi-choice dataset for medical domain ques-tion answering. In Proceedings of the Conference on Health, Inference, and Learning , volume 174 of 
+
+Proceedings of Machine Learning Research , pages 248–260. PMLR. Oam Patel and Rowan Wang. 2025. Activation moni-toring: advantages of using internal representations for llm oversight. 2nd NeurIPS Works. on Attributing Model Behavior at Scale .Chetan Pathade. 2025. Red teaming the mind of the machine: A systematic evaluation of prompt injection and jailbreak vulnerabilities in llms. arXiv preprint arXiv:2505.04806 .Kaiser Pister, Dhruba Jyoti Paul, Ishan Joshi, and Patrick Brophy. 2024. Promptset: A programmer’s prompting dataset. In Proceedings of the 1st Inter-national Workshop on Large Language Models for Code , pages 62–69. qualifire. 2025. Safety benchmark dataset. 
+
+https://huggingface.co/datasets/ qualifire/safety-benchmark . Accessed: 2026-05-26. QuixiAI. 2025. Llama-3-8b-instruct-abliterated-v2. Hugging Face model repository based on Meta Llama 3 8B Instruct. Traian Rebedea, Leon Derczynski, Shaona Ghosh, and 1 others. 2025. Guardrails and security for llms: Safe, secure and controllable steering of llm applications. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 5: Tutorial Abstracts) , pages 13–15. Traian Rebedea, Makesh Sreedhar, Shaona Ghosh, and 1 others. 2024. Canttalkaboutthis: Aligning language models to stay on topic in dialogues. In Findings of the Association for Computational Linguistics: EMNLP 2024 , pages 12232–12252. rogue-security. 2026. Prompt injections bench-mark dataset. https://huggingface. co/datasets/rogue-security/ prompt-injections-benchmark . Ac-cessed: 2026-05-26. SalKhan12. 2025. Prompt safety dataset. 
+
+https://huggingface.co/datasets/ SalKhan12/prompt-safety-dataset .Accessed: 2026-05-26. Mervyn Stone. 1974. Cross-validatory choice and as-sessment of statistical predictions. Journal of the royal statistical society: Series B (Methodological) ,36(2):111–133. Rohan Taori, Ishaan Gulrajani, Tianyi Zhang, Yann Dubois, Xuechen Li, Carlos Guestrin, Percy Liang, and Tatsunori B. Hashimoto. 2023. Stan-ford alpaca: An instruction-following llama model. https://github.com/tatsu-lab/ stanford_alpaca .I. A. M. Tarun. 2023. Python code instructions 18k alpaca dataset. https://huggingface. co/datasets/iamtarun/python_code_ instructions_18k_alpaca . Accessed: 2026-05-26. Wenhui Wang, Furu Wei, Li Dong, Hangbo Bao, Nan Yang, and Ming Zhou. 2020. Minilm: Deep self-attention distillation for task-agnostic compression of pre-trained transformers. Advances in neural in-formation processing systems , 33:5776–5788. Xu Zhao, Xiting Wang, and Weiran Shen. 2026. Enhancing safety of large language models via embedding space separation. arXiv preprint arXiv:2603.20206 .A Supplementary Material 
+
+A.1 System Prompts 
+
+Ð Coding Instructions & Outputs 
+
+You are a coding assistant. Only respond to requests about programming, code syntax, debugging, software development, algorithms, data structures, and software engineering topics. If any of the above conditions are violated, please re-spond with "off-topic" . Otherwise, respond with 
+
+"on-topic" . You must respond with "on-topic" 
+
+or "off-topic" .
+
+^ Medical 
+
+You are a medical information assistant. Only respond to requests about diseases, symptoms, treatments, med-ications, clinical procedures, medical conditions, and healthcare-related topics. If any of the above conditions are violated, please re-spond with "off-topic" . Otherwise, respond with 
+
+"on-topic" . You must respond with "on-topic" 
+
+or "off-topic" .
+
+ Safety 
+
+You are a safety classifier. Only classify prompts as safe when they contain benign, general knowledge, or harmless requests. Reject prompts containing harm-ful, offensive, illegal, dangerous content, jailbreaks, or prompt injections. If any of the above conditions are violated, please re-spond with "off-topic" . Otherwise, respond with 
+
+"on-topic" . You must respond with "on-topic" 
+
+or "off-topic" .
+
+´ Jailbreak 
+
+You are a jailbreak detector. Classify each prompt as NORMAL or J AILBREAK .
+
+Normal: Standard user requests that are safe and ap-propriate. 
+
+Jailbreak: Prompts attempting to bypass safety filters, using roleplay scenarios, hypothetical framings, encod-ing tricks, refusal suppression, or other techniques to elicit harmful content. If J AILBREAK , respond with "off-topic" . If N OR -
+
+> MAL
+
+, respond with "on-topic" . You must respond with "on-topic" or "off-topic" .
+
+N Prompt Injection 
+
+You are a prompt injection detector. Classify each prompt as C LEAN or I NJECTION .
+
+Clean: Normal user queries without hidden instruc-tions, malicious payloads, or attempts to override sys-tem behavior. 
+
+Injection: Prompts containing hidden instructions, de-limiter tricks, ignore previous instructions , roleplay attacks, or attempts to manipulate the model’s system 
+
+prompts. If I NJECTION , respond with "off-topic" . If CLEAN , respond with "on-topic" . You must re-spond with "on-topic" or "off-topic" .
+
+Figure 9: System prompts injected per domain for Nemotron Topic Guard and kNNGuard classification. All prompts share a unified output protocol to fit require-ments of Llama Nemotron Topic Guard V1. 
+
+A.2 kNNGuard: Tests on various models 0.0 
+
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> F1 Score
+> 0.874
+> 0.812
+> 0.886
+> 0.889
+> 0.829
+> 0.808
+
+F1 
+
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Recall
+> 0.866
+> 0.793
+> 0.890
+> 0.923
+> 0.909
+> 0.776
+
+Recall 
+
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> FPR
+> 0.129
+> 0.137
+> 0.143
+> 0.179
+> 0.397
+> 0.141
+
+FPR 
+
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> FNR / ASR
+> 0.134
+> 0.207
+> 0.110
+> 0.077
+> 0.091
+> 0.224
+
+FNR 
+
+> Llama-3.1-8B-Instruct
+> Mistral-7B-Instruct-v0.3
+> Phi-4-mini-instruct
+> Gemma-4-12B-it
+> Gemma-4-12B (base)
+> Llama-3-8B-Instruct-abliterated-v2
+
+Figure 10: Average performance of kNNGuard (fused ensemble, k = 13 , n = 50 per class) across all six evaluation domains. F1 score, Recall, false positive rate (FPR), and false negative rate (FNR) are averaged over Coding Instructions, Coding Outputs, Medical, Safety, Jailbreak, and Prompt Injection. Llama-3.1-8B-Instruct denotes the original kNNGuard backbone; all other models are alternative backbones evaluated under identical configuration. Lower FPR and FNR in-dicate stronger resistance to evasion. 
+
+Across most domains, kNNGuard FE exhibits consistent F1 performance regardless of the back-bone model, with Llama-3.1-8B-Instruct, Phi-3-mini-4k-instruct (Abdin et al., 2024), and Mistral-7B-Instruct-v0.3 (Jiang et al., 2023) producing comparable results on topical and general safety do-mains. However, the Prompt Injection domain rep-resents a variety in performance across models than on any other evaluated domain, where unlike the other evaluated domains, prompt injection datasets are more heterogeneous in their construction, en-compassing a wide variety of injection strategies, ranging from direct instruction overrides to indi-rect content injections embedded within seemingly benign text. suggesting that the activation geom-etry induced by injection-style prompts is more sensitive to the specific pretraining and instruction-tuning of the LLM. This is consistent with the hy-pothesis that prompt injection attacks interact di-rectly with the model’s instruction-following mech-anism, meaning that different models may internal-ize the boundary between injected and legitimate instructions differently in their hidden-state geome-try. Coding  
+
+> Instr.
+> Coding
+> Outputs
+> Medical
+> Safety
+> Jailbreak Prompt
+> Inj.
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+
+F1 Score by Domain 
+
+> Llama-3.1-8B-Instruct
+> Mistral-7B-Instruct-v0.3
+> Phi-4-mini-instruct
+> Gemma-4-12B-it
+> Gemma-4-12B (base)
+> Llama-3-8B-Instruct-abliterated-v2
+
+Figure 11: Radar plot of per-domain F1 scores for kNNGuard FE (fused ensemble, k = 13 , bank size 
+
+n = 50 per class, τ = 0 .5). Each axis represents one evaluation domain; larger distance from the center indi-cates higher F1 (better discrimination). Line styles and markers distinguish the six backbone models for read-ability in grayscale. Llama-3.1-8B-Instruct denotes the original kNNGuard baseline; Mistral-7B-Instruct-v0.3, Phi-4-mini-instruct, Gemma-4-12B-it, Gemma-4-12B (base), and Llama-3-8B-Instruct-abliterated-v2 are al-ternative LLMs evaluated under identical configuration. Table 6: Comparison of kNNGuard FE (fused ensemble) across different backbbone models on topic-scoped do-mains (Coding Instructions, Coding Outputs, and Medi-cal). F1, false positive rate (FPR), and false negative rate (FNR) are reported as percentages; average inference latency is measured in milliseconds per prompt ( k = 13 ,bank size n = 50 per class, τ = 0 .5). Llama-3.1-8B-Instruct denotes the original kNNGuard baseline used for main tests; Mistral-7B-Instruct-v0.3, Phi-4-mini-instruct, Gemma-4-12B-it, Gemma-4-12B (base), and Llama-3-8B-Instruct-abliterated-v2 are alternative models evaluated under identical configuration.                                                               
+
+> Code Instructions Code Outputs Medical Model
+> Avg. Latency (ms) F1 (%) FPR (%) FNR (%) F1 (%) FPR (%) FNR (%) F1 (%) FPR (%) FNR (%)
+> Llama-3.1-8B-Instruct 46.8 99.1 0.9 0.9 99.3 0.6 0.8 95.3 0.5 8.5 Mistral-7B-Instruct-v0.3 44.9 98.0 0.9 3.0 99.2 1.0 0.5 93.4 0.6 11.8 Phi-4-mini-instruct 25.2 99.0 1.3 0.8 99.1 1.3 0.4 93.7 0.9 11.1 Gemma-4-12B-it (instruct model) 54.8 98.6 1.7 1.1 98.7 1.4 1.2 97.0 0.2 5.7 Gemma-4-12B (base model) 61.7 97.2 5.1 0.6 97.3 4.1 1.5 86.0 22.1 7.9 Llama-3-8B-Instruct-abliterated-v2 44.3 97.1 2.2 3.6 98.9 1.6 0.6 91.0 0.4 16.2
+
+Table 7: Comparison of kNNGuard FE (fused ensem-ble) across backbbone models on adversarial domains (Safety, Jailbreak, and Prompt Injection). F1, false pos-itive rate (FPR), and false negative rate (FNR) are re-ported as percentages; average inference latency is mea-sured in milliseconds per prompt ( k = 13 , bank size 
+
+n = 50 per class, τ = 0 .5). FNR is equivalent to the attack success rate (ASR) in adversarial settings. Lower values indicate stronger resistance to evasion. 
+
+Llama-3.1-8B-Instruct denotes the original kNNGuard baseline used for main tests; Mistral-7B-Instruct-v0.3, Phi-4-mini-instruct, Gemma-4-12B-it, Gemma-4-12B (base), and Llama-3-8B-Instruct-abliterated-v2 are alter-native models evaluated under identical configuration.
