@@ -1,0 +1,659 @@
+Title: The Past Is Prologue: A Plug-in Controller for Selective Updates in Sequentially Evolving LLM Memory
+
+URL Source: https://arxiv.org/pdf/2606.31121v1
+
+Published Time: Wed, 01 Jul 2026 00:31:17 GMT
+
+Number of Pages: 15
+
+Markdown Content:
+# The Past Is Prologue: A Plug-in Controller for Selective Updates in Sequentially Evolving LLM Memory 
+
+Zihan Chen ♠, Songwei Dong ♠, Chengshuai Shi ♣, Peng Wang ♠,Song Wang ♦, Cong Shen ♠, Jundong Li ♠♠University of Virginia, ♣Princeton University, ♦University of Central Florida, 
+
+{brf3rx, hxt5ap, pw7nc, cong, jundong}@virginia.edu cs1083@princeton.edu , song.wang@ucf.edu 
+
+Abstract 
+
+Sequentially evolving LLM memory enables agents to reuse past experience, but existing systems usually deploy each locally generated memory update without checking whether it improves future behavior. As a result, updates that help the current task may overwrite use-ful knowledge, introduce over-specific rules, or bias the final memory toward recent examples. We propose Janus, a plug-in memory controller that decides whether to accept a candidate mem-ory update or retain the previous memory. To make this decision efficient, Janus uses a Mem-ory Momentum Trigger to identify suspicious deviations in the memory-update trajectory, and compares old and new memories on a compact hybrid evaluation set of coverage, boundary, and fresh tasks instead of replaying the full history. Janus is method-agnostic and wraps existing updaters without changing their update rules. Across six datasets, two backbone LLMs, and two memory updaters, Janus improves av-erage accuracy by +2.7 to +4.6 points over the corresponding base updaters. 
+
+1 Introduction 
+
+Large language models (LLMs) are increasingly deployed as sequential task-solving agents that learn from past interactions through external mem-ory (Xiang et al., 2026; Fang et al., 2025b; Wei et al., 2025). In this setting, the LLM repeatedly encounters tasks, produces answers, receives feed-back, and updates its memory for future use. The resulting trajectories contain successful solutions, failed attempts, feedback signals, and intermediate reasoning traces, which can serve as reusable expe-rience for improving future decisions (Zhao et al., 2024; Wei et al., 2025; Suzgun et al., 2026; Zhou et al., 2025). This form of sequentially evolving memory goes beyond static conversational recall: memory is not merely a record of past interactions, but a test-time adaptation mechanism that shapes the LLM’s behavior on future tasks. Such systems Sequential Memory Updates    
+
+> Task T Task 2 Task 3 Task 1
+> M3 M1 M2 MT
+
+Future Unseen Task      
+
+> More updates do not always mean better future behavior.
+> M2 MT
+> Test 20% 40% 60% 80% 100%
+> Progress in Task Stream
+> 72
+> 74
+> 76
+> 78
+> Test ACC (%)
+> Qwen3-8B GPQA
+> DC-RS
+> ExpeL
+
+Figure 1: Top: Existing sequential memory updates do not guarantee that the final memory will better support future tasks. Bottom: On GPQA, intermediate mem-ory snapshots from two sequential memory methods exhibit non-monotonic test set performance, motivating the need to control which memory updates are deployed. 
+
+are important for reasoning assistants (Ho et al., 2025), tool-use agents (Wang et al., 2025b), and interactive decision-making systems (Zheng et al., 2025; Agrawal et al., 2025), where performance depends not only on the current input but also on the accumulated experience. A common mechanism behind these systems is to update memory using feedback from the current task (Wang et al., 2025c; Wei et al., 2025). This feedback is often expressed as a natural-language signal, sometimes viewed as a form of text gradi-ent : instead of providing numerical gradients over parameters, the environment provides textual feed-back that suggests how the agent should revise its reasoning, strategy, or memory for future tasks. Ex-isting sequential memory methods typically follow 1
+
+> arXiv:2606.31121v1 [cs.AI] 30 Jun 2026
+
+a retrieve–solve–update loop: the agent retrieves memory, solves the current task, and then uses the current trajectory and feedback to update the mem-ory (Suzgun et al., 2026; Zhao et al., 2024; Wei et al., 2025). This design is intuitive and efficient, but it also introduces a fundamental risk. Each update is usually optimized locally for the most recent task, while its effect on the final memory state is rarely evaluated globally (Figure 1). As a result, a memory update that appears useful for the current task may overwrite previously useful knowledge, introduce noisy task-specific rules, or bias the memory toward recent examples. The key challenge is therefore not only how to generate memory updates, but also how to decide whether a proposed update should actually be deployed. This creates a memory validation problem. Ide-ally, before deploying a candidate memory, the agent should estimate whether it improves perfor-mance beyond the current task. The most direct way to obtain such a signal is to compare the pre-vious memory and the candidate memory on tasks that approximate the future task distribution. Since the future is unavailable, previously encountered tasks provide a natural proxy. However, validat-ing every candidate memory on the full history is computationally impractical: the replay cost grows with the number of seen tasks and would introduce substantial latency after each update. A cheaper alternative is to compare memories at fixed inter-vals, such as every N steps, but such schedules are heuristic and may miss harmful updates that occur between scheduled checks. Similarly, using only a small fixed replay set reduces cost but risks over-fitting the deployment decision to stale examples. Thus, an effective memory controller must answer two coupled questions: when should old and new memory be compared, and what tasks should be used for comparison? To solve the above challenges, we propose 
+
+Janus , a plug-in memory controller that wraps existing sequential memory updaters and decides whether each candidate memory update should be accepted or rejected. Instead of treating every gen-erated memory update as automatically beneficial, Janus views memory updating as a deployment de-cision: a candidate memory should replace the pre-vious memory only when it is likely to improve the utility of the final memory for future tasks. Janus introduces two key designs to make this decision efficient. First, it uses a Memory Momentum Trig-ger (MMT) to decide when old and new memory should be explicitly compared. Rather than trig-gering comparison after every task or at a fixed interval, MMT tracks the trajectory of memory changes and triggers comparison when a candi-date update deviates substantially from the recent update direction, indicating that the update may either introduce useful new knowledge or distort the memory toward recent task-specific informa-tion. Second, when comparison is triggered, Janus evaluates the previous and candidate memories on a compact hybrid evaluation batch instead of re-playing the full task history. This batch combines a stored support set, which includes both coverage tasks representing the seen task distribution and boundary tasks where memory choices previously changed correctness, with a fresh slice of recently encountered tasks to avoid overfitting the decision to a fixed support set. In this way, Janus improves memory deployment by selectively testing suspi-cious updates while keeping replay cost controlled. Our main contributions are summarized as follows: • Memory deployment challenge. We identify a key limitation of sequential LLM memory sys-tems: locally generated memory updates are not necessarily globally useful, and blindly accept-ing them may produce final memories that are biased toward noisy task-specific information. • Efficient plug-in memory control. We propose Janus, a method-agnostic controller that wraps existing memory updaters and efficiently decides whether to accept or reject candidate memory updates. Janus combines a Memory Momentum Trigger with a compact hybrid evaluation batch over coverage, boundary, and fresh tasks, en-abling old-versus-new memory selection without modifying the underlying updater or replaying the full task history. • Strong empirical results. Across six datasets, two backbone LLMs, and two sequential mem-ory updater backbones, Janus consistently im-proves final memory usefulness, with average gains ranging from +2 .7 to +4 .6 percentage points over the corresponding base updaters. 
+
+2 Method 
+
+2.1 Problem Setting 
+
+Following Wei et al. (2025), we consider a sequen-tially evolving memory setting where an LLM L
+
+solves a stream of tasks while maintaining an ex-ternal memory. Let D = {(xt, y t)}Tt=1 denote the 2Memory  Updater    
+
+> e.g., ExpeL
+> Task t
+> Hybrid Evaluation Set
+> Coverage Boundary Fresh
+> Compare & Deploy
+> 72% 76%
+> Momentum
+> Trigger
+> Deployed
+> No Trigger
+> Trigger
+> Janus Controller
+
+Figure 2: Overview of Janus. Given a task and the current memory Mt−1, a base updater proposes a candidate memory cMt. Janus acts as a plug-in controller that decides whether to deploy this candidate or retain the previous memory. It first uses a Memory Momentum Trigger to detect whether the candidate update deviates from the recent memory-update trajectory. If triggered, Janus compares Mt−1 and cMt on a compact hybrid evaluation set composed of coverage, boundary, and fresh tasks, and deploys the memory with better evaluation performance. If not triggered, Janus accepts the candidate directly to avoid unnecessary replay. 
+
+task sequence. At step t, the model uses the pre-vious memory Mt−1 to predict ˆyt = L(xt, M t−1).
+
+After receiving feedback ft, such as correctness signals or textual critiques, a base memory updater proposes a revised memory: 
+
+cMt = Update (Mt−1, (xt, ˆyt, f t), L) . (1) Existing sequential memory methods typically de-ploy this candidate directly by setting Mt = cMt.In contrast, Janus treats memory updating as a de-ployment decision: given Mt−1 and cMt, it chooses 
+
+Mt ∈ { Mt−1, cMt}, (2) with the goal of maintaining a final memory MT
+
+that generalizes well to future unseen tasks. 
+
+2.2 Janus: Plug-in Memory Control 
+
+As illustrated in Figure 1, blindly accepting ev-ery memory update can leave an LLM with a final memory that fails to support future unseen tasks. Motivated by this observation, we propose Janus ,a plug-in controller that wraps a base memory up-dater and decides whether each candidate mem-ory should be deployed. After solving the t-th task, the base updater proposes a candidate mem-ory cMt based on the previous memory Mt−1 and the current interaction. Rather than directly set-ting Mt = cMt, Janus chooses whether to accept the candidate memory or retain the previous mem-ory. This design addresses two core challenges in sequential memory control: when to compare the previous and candidate memories, and what 
+
+tasks to use for comparison. For the first challenge, Janus introduces a Memory Momentum Trigger, which detects suspicious deviations in the memory-update trajectory and avoids unnecessary compar-isons. For the second challenge, Janus uses a com-pact hybrid evaluation set, combining representa-tive, memory-sensitive, and fresh tasks to approxi-mate full-history replay with much lower cost. 
+
+Memory Momentum Trigger (MMT). Ideally, we would verify every memory update before de-ployment. However, comparing Mt−1 and cMt after every task incurs substantial replay cost, while trig-gering comparisons at fixed intervals, e.g., every 
+
+N steps, is heuristic and may miss abrupt harmful updates. Janus instead views memory updates as a trajectory and triggers comparison only when the candidate update deviates substantially from recent memory evolution. Let ϕ(·) denote a text encoder that maps a memory state into a vector space. We represent the candidate update direction as 
+
+zt = ϕ( cMt) − ϕ(Mt−1). (3) Janus maintains an exponential moving average of previous update directions: 
+
+mt = βm t−1 + (1 − β)zt, (4) where β controls the strength of memory momen-tum. The intuition is that comparison is most valu-able when a candidate update substantially changes the recent trajectory of memory evolution. Even when tasks arrive in a shuffled order, consecutive candidate updates may still induce aligned changes to the memory, corresponding to incremental re-finements rather than major memory transitions. In such cases, repeatedly comparing old and new memories provides limited additional benefit. In contrast, a sharp directional deviation indicates that the candidate memory may significantly al-ter the deployed memory: it may introduce useful new knowledge, but it may also overwrite broadly useful information with recent-task-specific con-tent. Janus therefore treats the historical momen-tum mt−1 as a compact summary of recent memory evolution and uses directional misalignment as a signal for when explicit validation is needed. Specifically, Janus triggers an old-versus-new 3memory comparison when 
+
+cos( zt, m t−1) < τ, (5) where τ is a threshold. If the trigger does not fire, Janus directly accepts the candidate memory, i.e., 
+
+Mt = cMt. If the trigger fires, Janus evaluates Mt−1
+
+and cMt on a compact evaluation set and deploys the memory state with better performance. 
+
+Hybrid Trigger-Time Evaluation Set. When the memory momentum trigger fires, Janus needs to decide whether the candidate memory cMt should replace the current memory Mt−1. A reliable com-parison should approximate full-history replay, but evaluating on all previously seen tasks would make the replay cost grow linearly with the task stream. Janus therefore constructs a compact hybrid evalua-tion set that serves three goals: covering the global support of previously seen tasks, focusing on tasks that are sensitive to memory changes, and incorpo-rating newly encountered tasks. Formally, at trigger time t, Janus evaluates the two memory states on 
+
+Et = Scov  
+
+> t
+
+∪ S bdry  
+
+> t
+
+∪ F t, (6) where Scov  
+
+> t
+
+is a coverage set, Sbdry  
+
+> t
+
+is a boundary set, and Ft is a fresh set. The coverage set summa-rizes the broad distribution of previously seen tasks, the boundary set stores memory-sensitive tasks where memory choices have previously changed the agent’s behavior, and the fresh set injects tasks encountered since the last trigger. Together, these subsets provide a bounded-cost approximation to full-history replay. Given Et, Janus evaluates both memories using the same LLM and deploys the memory with higher evaluation performance: 
+
+Mt = arg max   
+
+> M∈{ Mt−1,cMt}
+
+Performance( M ; Et, L).
+
+As the task stream evolves, Janus refreshes each subset of Et to maintain an informative estimate of memory utility. We update each subset as follows. 
+
+Coverage set update. The coverage set Scov  
+
+> t
+
+pre-serves representative support of the observed tasks. At each trigger time t, Janus refreshes this set by clustering the embeddings of all tasks seen so far: 
+
+Ucov  
+
+> t
+
+= {x1, . . . , x t}. (7) Using the previous centroids as initialization when available, Janus clusters {ϕ(x) : x ∈ U cov  
+
+> t
+
+} and selects the task closest to each centroid as the new representative. This global refresh keeps the cover-age set compact while ensuring that its representa-tives remain aligned with the full observed tasks. 
+
+Boundary set update. The boundary set Sbdry  
+
+> t
+
+fo-cuses the evaluation set on memory-sensitive tasks. After comparing Mt−1 and cMt on Et, Janus identi-fies the flip set: 
+
+Bt =
+
+n
+
+x ∈ E t : 1corr (x; Mt−1)̸ = 1corr (x; cMt)
+
+o
+
+,
+
+(8) where 1corr (x; M ) ∈ { 0, 1} indicates whether the LLM L answers task x correctly when using mem-ory M . These tasks are informative because the choice of memory state directly changes the agent’s correctness. Janus first removes tasks already se-lected into the coverage set: 
+
+eBt = Bt \ S cov  
+
+> t
+
+. (9) It then fills the boundary set with tasks from eBt. If the number of new flip tasks is insufficient, Janus retains non-overlapping tasks from the previous boundary set: 
+
+Sbdry  
+
+> t
+
+⊆ eBt ∪
+
+
+
+Sbdry  
+
+> t−
+
+\ S cov 
+
+> t
+
+
+
+. (10) This update rule preserves hard, behavior-changing examples while allowing the boundary set to evolve as new memory-sensitive regions are discovered. 
+
+Fresh set update. Let ℓ(t) denote the time step of the most recent trigger before t. At trigger time t,Janus constructs the fresh set Ft by sampling from tasks encountered after ℓ(t):
+
+Ft ⊆ { xℓ(t)+1 , . . . , x t}. (11) This set prevents memory comparison from be-coming a closed loop over a fixed replay buffer. By including newly observed tasks, Janus can test whether the candidate memory helps in recently explored regions of the task stream and can also discover new behavior-changing cases. 
+
+3 Experiment 
+
+3.1 Experimental Settings Datasets and LLMs. We evaluate Janus on six datasets covering mathematical reason-ing (MATH500 (Hendrycks et al., 2021; Light-man et al., 2024)), scientific reasoning (GPQA Diamond (Rein et al., 2023)), professional STEM reasoning (MMLU-Pro Engineering and Physics (Wang et al., 2024)), code generation Hu-manEval (Chen et al., 2021)), and tool/API use 4Table 1: Main results on six datasets with two LLMs. Accuracy (%) is reported for each dataset. Janus is applied as a plug-in controller to two base memory updaters. Shaded rows indicate Janus-enhanced variants.                                                                                      
+
+> Method MATH500 GPQA MMLU-Pro (Eng.) MMLU-Pro (Phy.) APIBench HumanEval Avg.
+> Qwen3-8B
+> Memory-free 78.2 57.4 61.2 84.0 65.2 90.3 72.7
+> ExpRAG 82.0 69.2 66.2 87.2 72.0 91.2 78.0
+> DC-RS 81.4 73.4 64.4 84.0 80.8 93.2 79.5
+> DC-RS + Janus 83.6 81.5 68.0 89.2 82.8 93.9 83.2 ExpeL 80.0 72.9 68.8 90.4 66.4 91.2 78.3
+> ExpeL + Janus 81.6 78.5 71.6 92.8 70.4 93.9 81.5
+> DeepSeek-V4-Flash
+> Memory-free 75.4 71.2 68.4 78.2 66.8 85.6 74.3
+> ExpRAG 78.0 74.9 70.0 82.4 71.6 86.4 77.2
+> DC-RS 79.0 70.7 66.4 83.2 74.8 86.0 76.7
+> DC-RS + Janus 86.2 73.3 74.4 89.2 76.8 87.8 81.3 ExpeL 74.8 71.8 73.2 85.2 82.0 90.3 79.6
+> ExpeL + Janus 79.2 76.4 75.6 88.4 83.2 91.2 82.3
+
+(APIBench-HF (Patil et al., 2024)). For memory construction, we sample training examples from each dataset: 500 for MATH, non-overlapping GPQA Main examples for GPQA Diamond, 250 examples for each MMLU-Pro subset, 50 Hu-manEval problems, and 250 APIBench-HF exam-ples. Evaluation is conducted on the correspond-ing held-out test sets, with another 250 examples used for testing on MMLU-Pro and APIBench-HF. We focus on APIBench-HF because other APIBench subsets are relatively small and nearly saturated in our setting. Full task prompts are provided in Appendix C. Our main experiments use Qwen3-8B (Yang et al., 2025) and DeepSeek-V4-Flash (DeepSeek-AI, 2026). Unless other-wise specified, we set max-new-tokens=8192 
+
+and temperature=0.7 ; we enable thinking mode for Qwen3-8B and use non-thinking mode for DeepSeek-V4-Flash for cost efficiency. 
+
+Baselines. We compare Janus with a representa-tive set of sequential memory baselines under the same task stream. Memory-free solves each task using only the underlying LLM without persistent memory, serving as a reference for measuring the benefit of external memory. ExpRAG (Wei et al., 2025) is a lightweight experience-reuse baseline that retrieves the top-k most similar past tasks ac-cording to embedding similarity. DC-RS (Suzgun et al., 2026) maintains a dynamic cheatsheet and uses retrieval-and-synthesis to organize past expe-rience into structured memory. ExpeL (Zhao et al., 2024) derives reusable insights from successful and failed trajectories through reflection; we adapt it to the sequential memory setting while following its original multi-attempt strategy. For all base memory methods, we follow the original papers’ recommended hyperparameter settings. For Janus, unless otherwise specified, we use support-set size 
+
+K = 20 , where K′ = 12 tasks are allocated to the coverage set Scov  
+
+> t
+
+and the remaining K − K′ = 8 
+
+tasks are allocated to the boundary set Sbdry  
+
+> t
+
+. We set the fresh-set size to KF = 5 , the MMT thresh-old to τ = 0 .0, and the momentum coefficient to 
+
+β = 0 .9. We provide detailed algorithmic descrip-tions in Appendix D and study Janus’s sensitivity to key hyperparameters in Section 3.6. 
+
+3.2 Main Results 
+
+Table 1 reports the main results across six datasets and two LLMs. We highlight two key observations. 
+
+Structured memory updates are not always bet-ter than raw experience reuse. Compared with the memory-free baseline, most memory-based methods improve performance, showing the gen-eral value of external memory in sequential task solving. However, stronger memory abstraction does not guarantee better final performance. Al-though DC-RS and ExpeL extract higher-level cheatsheets or reusable insights from past trajec-tories, they do not consistently outperform the lightweight ExpRAG baseline, which simply re-trieves similar past experiences. This suggests that extracted memory can sometimes lose useful task-specific details, introduce noisy or over-specialized rules, or bias the final memory toward recent tasks. This observation motivates our central claim: the key issue is not only how to generate memory, but also whether each generated memory should be de-ployed. Janus consistently improves final mem-ory usefulness across base updaters and LLMs. 
+
+5Table 2: Ablation study of the Memory Momentum Trigger. We compare Janus with alternative trigger policies using Qwen3-8B on GPQA and HumanEval. “Base” denotes the base updater without Janus.“Always” compares old and new memory after every task, while “Random” and “Periodic” trigger comparisons under comparable trigger budgets to Janus.                                           
+
+> Updater Policy GPQA HumanEval Acc. Trig. Rate Acc. Trig. Rate DC-RS Base 73.4 0.0% 93.2 0.0%
+> Random 77.4 72.8% 93.2 12.0%
+> Periodic 76.4 50.2% 92.1 12.0%
+> Always 80.0 100.0% 93.9 100.0%
+> Janus 81.5 72.4% 93.9 12.0%
+> ExpeL Base 72.9 0.0% 91.2 0.0%
+> Random 75.9 75.7% 91.2 24.0%
+> Periodic 74.3 50.2% 93.0 20.0%
+> Always 79.0 100.0% 94.7 100.0%
+> Janus 78.5 71.5% 93.9 20.0%
+
+When applied to DC-RS and ExpeL, Janus im-proves the corresponding base updater across both LLMs and all datasets. On average, DC-RS+Janus improves over DC-RS from 79 .5 to 83 .2 on Qwen3-8B and from 76 .7 to 81 .3 on DeepSeek-V4. Sim-ilarly, ExpeL+Janus improves over ExpeL from 
+
+78 .3 to 81 .5 on Qwen3-8B and from 79 .6 to 82 .3
+
+on DeepSeek-V4. The best-performing method in each LLM block is also a Janus-enhanced variant. These results support Janus as a method-agnostic controller: instead of replacing the base updater, it improves sequential memory systems by filtering locally generated updates and maintaining a more useful final memory for future tasks. 
+
+3.3 MMT Trigger Ablation 
+
+Table 2 studies whether the Memory Momentum Trigger identifies useful moments for old-versus-new memory comparison. We compare Janus with four alternatives: Base , which never triggers com-parison and directly accepts each candidate update; 
+
+Always , which compares after every task; Random ,which triggers comparison at each step with the same trigger probability as Janus; and Periodic ,which triggers every N steps, with N chosen to approximately match Janus’s trigger count for the same updater and dataset. This ablation targets the “when to compare” challenge: an effective con-troller should trigger comparison at informative memory-transition points rather than relying on a hand-designed schedule. The results show that trigger timing matters. Compared with random and periodic triggering, 74 76 78 80 82     
+
+> Accuracy
+> w/o Fresh
+> w/o Boundary
+> w/o Coverage
+> Janus
+> (a) GPQA
+> 90 91 92 93 94
+> Accuracy
+> (b) HumanEval
+
+Figure 3: Ablation study of the hybrid trigger-time evaluation set. We evaluate Janus with Qwen3-8B and the DC-RS updater on GPQA and HumanEval, re-porting final test accuracy. Each ablation removes one component: coverage, boundary, or fresh tasks. 
+
+Janus achieves stronger or comparable accuracy under similar trigger budgets, especially on GPQA. This suggests that MMT is not merely reducing the number of comparisons, but is able to capture meaningful changes in the memory-update trajec-tory where deployment decisions are more likely to affect final performance. At the same time, Janus approaches the performance of the always-trigger policy with substantially fewer comparisons. On HumanEval, Janus uses only a small fraction of triggers for both DC-RS and ExpeL while remain-ing close to always triggering. On GPQA, Janus even outperforms always triggering for DC-RS, in-dicating that more frequent comparison is not nec-essarily better when the evaluation set is compact and potentially noisy. Overall, the results support MMT as an efficient trigger mechanism for decid-ing when memory comparison is needed. 
+
+3.4 Support Set Composition Ablation 
+
+Figure 3 studies the composition of the hybrid eval-uation set used when Janus triggers an old-versus-new memory comparison. This ablation targets the “what to compare” challenge: after deciding that a candidate memory should be checked, Janus must evaluate it on a compact but informative set that approximates full-history replay. We compare full Janus against three variants that remove coverage, boundary, or fresh tasks. The results show that all three components contribute to reliable memory se-lection. Removing the coverage set or the boundary set consistently reduces performance, suggesting that they provide complementary signals. Cover-age tasks preserve broad representativeness over the seen task distribution, while boundary tasks focus the comparison on memory-sensitive cases where different memory states are likely to change the prediction. The largest drop comes from re-moving the fresh set, especially on both GPQA and HumanEval. This indicates that relying only on the 673          
+
+> 75
+> 77
+> 79
+> 81 DC-RS on GPQA
+> 62
+> 64
+> 66
+> 68 DC-RS on MMLU-Pro (Eng.)
+> 74
+> 76
+> 78 ExpeL on GPQA
+> 20% 40% 60% 80% 100%
+> 68
+> 69
+> 70
+> 71 ExpeL on MMLU-Pro (Eng.)
+> Test Accuracy (%)
+> Progress in Task Stream
+> Old-vs-New Deployment Decision Ablation
+> Base Updater with Janus
+
+Figure 4: Old-vs-new deployment decision ablation. 
+
+We evaluate memory checkpoints obtained after pro-cessing 20% , 40% , 60% , 80% , and 100% of the task stream using Qwen3-8B on GPQA and MMLU-Pro (Eng.). The base updater directly deploys every candi-date memory, while Janus selectively accepts or rejects candidate updates. 
+
+stored support set can make the comparison stale and self-reinforcing. Fresh tasks provide recent pending evidence that has not yet been absorbed into the support set, allowing Janus to evaluate can-didate memories on newly encountered regions of the task stream. Overall, the ablation confirms that Janus’s hybrid evaluation set is important for mak-ing effective memory deployment decisions under a bounded comparison budget. 
+
+3.5 Memory Deployment Ablation 
+
+Figure 4 evaluates whether the core deployment de-cision in Janus is useful. Instead of only reporting the final memory after the full stream, we measure the test accuracy of intermediate memory states after processing 20% , 40% , 60% , 80% , and 100% 
+
+of the training stream. This ablation directly tests whether selectively choosing between the previous memory and the candidate memory helps preserve useful information as more tasks are observed. The results show that directly accepting every memory update does not necessarily lead to better future-task performance. For both DC-RS and Ex-peL, the base updater often improves in the early or middle stages but then stagnates or drops as the stream continues. This indicates that additional 
+
+Table 3: Hyperparameter sensitivity of Janus-DC-RS. We sweep the support-set size K = |S t| and the MMT threshold τ using Qwen3-8B on GPQA. Unless otherwise specified, we use the default setting K = 20 ,
+
+K′ = |S cov  
+
+> t
+
+| = 12 , |S bdry  
+
+> t
+
+| = K − K′ = 8 , KF =
+
+|F t| = 5 , and τ = 0 .0. Evaluation cost is approximated by #Trig . × (K + KF ).                                          
+
+> Sweep KτAcc. #Trig. Trig. Rate Cost
+> Default 20 0.0 81.5 173 72.4 4,325
+> K
+> 15 0.0 74.9 175 74.8 3,500 25 0.0 76.9 172 76.8 5,160 50 0.0 78.5 157 78.9 8,635
+> τ
+> 20 -0.1 72.8 152 66.4 3,800 20 0.1 77.4 199 86.9 4,975 20 0.2 82.1 208 90.8 5,200
+
+memory updates can introduce noisy, overly spe-cific, or conflicting information, causing the final memory to become less useful than earlier memory states. In contrast, Janus produces a more stable upward trend in most settings and achieves better final accuracy across all four comparisons. This supports the central motivation of Janus: sequen-tial memory systems need a deployment controller, because the newest memory is not always the best memory for future tasks. The improvement is espe-cially clear near the end of the stream. While the base updaters can degrade after processing more tasks, Janus tends to preserve or improve test accu-racy, suggesting that its old-vs-new decision helps retain broadly useful memory while filtering harm-ful candidate updates. Overall, this ablation con-firms that Janus is not merely changing the update schedule; its explicit accept-or-reject decision is important for maintaining a final memory that gen-eralizes better to unseen tasks. We further ana-lyze robustness to different task-stream orders in Appendix A, where Janus also yields more stable final-memory performance. 
+
+3.6 Hyperparameter Sensitivity 
+
+Table 3 analyzes how Janus is affected by two key hyperparameters: the support-set size K and the MMT threshold τ . These two parameters cor-respond to the two main efficiency dimensions of Janus. The support-set size K controls the coverage–boundary portion of the trigger-time eval-uation set, while τ controls how frequently MMT triggers such comparisons. We report final test ac-curacy together with the number of triggers and the estimated evaluation cost. The results show that increasing the comparison budget does not always 7improve performance. For the support-set sweep, 
+
+K = 20 gives the best accuracy among the tested values, while larger support sets increase evalua-tion cost without yielding better performance. This suggests that a compact but informative support set is preferable to simply using more replay tasks. For the trigger threshold sweep, increasing τ makes Janus more sensitive to memory-trajectory devia-tions and therefore increases the trigger rate. A larger τ can improve accuracy, but it also incurs higher evaluation cost. Overall, these results show that Janus provides a controllable trade-off between final memory performance and replay cost, with the default setting offering a strong balance between accuracy and efficiency. 
+
+4 Related Work 
+
+Sequentially Evolving LLM Memory. Memory has become a central mechanism for enabling LLM agents to adapt over sequential interactions (Xiang et al., 2026; Fang et al., 2025a; Wei et al., 2025; Chhikara et al., 2025). Recent memory-augmented agents extract reusable information from prior tra-jectories, feedback, reflections, workflows, or task solutions, and use such information to improve fu-ture reasoning and decision-making (Wang et al., 2025a; Fang et al., 2025b; Zhong et al., 2024; Xu et al., 2025). Representative approaches include reflection- or experience-based methods such as Ex-peL (Zhao et al., 2024), dynamic memory construc-tion methods such as Dynamic Cheatsheet (Suzgun et al., 2026), workflow-level memory methods such as Agent Workflow Memory (Wang et al., 2025c), and retrieval- or structure-based memory systems such as G-Memory (Zhang et al., 2026) and Me-mento (Zhou et al., 2025). These methods mainly focus on how to construct or update memory, and assume that each newly generated memory should be directly deployed for future tasks. In contrast, Janus studies the deployment decision itself: given a candidate memory produced by an existing up-dater, should the agent accept it or keep the previ-ous memory? This distinction is important because locally useful updates can still bias the final mem-ory toward recent tasks or noisy task-specific rules, reducing its usefulness for future unseen tasks. 
+
+Test-Time Adaptation and Memory Control. 
+
+Test-time adaptation aims to improve model be-havior during deployment, often by using feedback from the test environment rather than updating the model solely during offline training (Wang et al., 2021; Zhang et al., 2022). Recent LLM agent systems extend this idea through natural-language feedback loops, where agents reflect on failures, re-vise solutions, refine prompts, or update strategies across interactions (Shinn et al., 2023; Madaan et al., 2023; Gou et al., 2024; Asai et al., 2024). A related line of work formalizes such feedback as textual gradients, where natural-language cri-tiques play a role analogous to gradients by indi-cating how an output, prompt, or policy should be mproved (Yuksekgonul et al., 2025). These methods show that feedback can support continual improvement without directly modifying model pa-rameters. However, feedback-driven updates are of-ten local to the current task or recent trajectory, and may not improve the final memory used for future unseen tasks. Janus addresses this deployment chal-lenge by selectively validating candidate updates with a momentum-based trigger and a compact hybrid evaluation set, deciding which feedback-induced memories should actually be deployed. 
+
+5 Conclusion 
+
+Sequentially evolving LLM memory raises a dif-ferent scaling question from simply storing more experience or updating memory more often. As agents accumulate longer task histories, the critical issue becomes how to allocate additional inference effort: not every new memory should be trusted, and not every update deserves expensive valida-tion. Janus points to a selective scaling strategy for self-evolving agents, where extra tokens are spent only when a candidate memory update is likely to change the trajectory of future behavior. By treat-ing memory updating as a deployment decision, Janus shifts the focus from blindly accepting locally generated memories to controlling which memo-ries should shape future inference. Across multiple datasets, backbone LLMs, and base memory up-daters, Janus consistently improves final memory performance while avoiding unnecessary compar-isons. Our ablations further show that both the trig-ger mechanism and the hybrid evaluation set are important for reliable memory deployment. This perspective suggests that robust sequentially evolv-ing LLM memory requires not only better mem-ory writers, but also mechanisms that decide when memory refinement is worth the cost. 8Limitations 
+
+Scope of memory mechanisms. Our evaluation focuses on prompt-based sequential memory sys-tems, where the base LLM remains fixed and mem-ory is updated through retrieval, summarization, reflection, cheatsheets, or other external text-based mechanisms. This scope matches many current memory-augmented agent systems and allows us to compare different updaters under a unified test-time protocol. However, another emerging direc-tion is training-based evolution, where experience is used to update policies, skills, or model behavior through learning, such as reinforcement learning-based methods (Yan et al., 2025; Xia et al., 2026). Extending Janus to jointly control external memory updates and parameter- or policy-level adaptation is an important direction for future work. 
+
+Evaluation coverage. Our experiments cover multiple task types and two backbone LLMs, but they do not exhaust all possible sequential agent environments. In particular, long-horizon interac-tive environments, multi-agent settings, and tasks with non-stationary distributions may introduce ad-ditional challenges for memory control. Further evaluation in these settings would help better char-acterize the generality of Janus. 
+
+Ethical considerations 
+
+Our work focuses on improving the reliability of sequential LLM memory systems by controlling whether candidate memory updates should be de-ployed. In real-world applications, memory sys-tems may store sensitive user information or incor-rect task-specific rules, so they should be used with appropriate privacy protections, data filtering, and human oversight when necessary. We do not fore-see major negative societal impacts from the pro-posed method itself, but responsible deployment depends on the underlying LLM, task domain, and memory contents 
+
+References 
+
+Lakshya A Agrawal, Shangyin Tan, Dilara Soylu, Noah Ziems, Rishi Khare, Krista Opsahl-Ong, Ar-nav Singhvi, Herumb Shandilya, Michael J Ryan, Meng Jiang, and 1 others. 2025. Gepa: Reflec-tive prompt evolution can outperform reinforcement learning. arXiv preprint arXiv:2507.19457 .Akari Asai, Zeqiu Wu, Yizhong Wang, Avi Sil, and Hannaneh Hajishirzi. 2024. Self-rag: Learning to re-trieve, generate, and critique through self-reflection. In International conference on learning representa-tions , volume 2024, pages 9112–9141. Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique Ponde De Oliveira Pinto, Jared Kaplan, Harri Edwards, Yuri Burda, Nicholas Joseph, Greg Brockman, and 1 others. 2021. Evaluating large language models trained on code. arXiv preprint arXiv:2107.03374 .Prateek Chhikara, Dev Khant, Saket Aryan, Taranjeet Singh, and Deshraj Yadav. 2025. Mem0: Building production-ready ai agents with scalable long-term memory. arXiv preprint arXiv:2504.19413 .DeepSeek-AI. 2026. Deepseek-v4: Towards highly efficient million-token context intelligence. Jinyuan Fang, Yanwen Peng, Xi Zhang, Yingxu Wang, Xinhao Yi, Guibin Zhang, Yi Xu, Bin Wu, Siwei Liu, Zihao Li, and 1 others. 2025a. A comprehensive survey of self-evolving ai agents: A new paradigm bridging foundation models and lifelong agentic sys-tems. arXiv preprint arXiv:2508.07407 .Runnan Fang, Yuan Liang, Xiaobin Wang, Jialong Wu, Shuofei Qiao, Pengjun Xie, Fei Huang, Hua-jun Chen, and Ningyu Zhang. 2025b. Memp: Ex-ploring agent procedural memory. arXiv preprint arXiv:2508.06433 .Zhibin Gou, Zhihong Shao, Yeyun Gong, Yujiu Yang, Nan Duan, Weizhu Chen, and 1 others. 2024. Critic: Large language models can self-correct with tool-interactive critiquing. In International Conference on Learning Representations , volume 2024, pages 57734–57811. Dan Hendrycks, Collin Burns, Saurav Kadavath, Akul Arora, Steven Basart, Eric Tang, Dawn Song, and Ja-cob Steinhardt. 2021. Measuring mathematical prob-lem solving with the math dataset. arXiv preprint arXiv:2103.03874 .Matthew Ho, Chen Si, Zhaoxiang Feng, Fangxu Yu, Yichi Yang, Zhijian Liu, Zhiting Hu, and Lianhui Qin. 2025. Arcmemo: Abstract reasoning compo-sition with lifelong llm memory. arXiv preprint arXiv:2509.04439 .Hunter Lightman, Vineet Kosaraju, Yuri Burda, Harri-son Edwards, Bowen Baker, Teddy Lee, Jan Leike, John Schulman, Ilya Sutskever, and Karl Cobbe. 2024. Let’s verify step by step. In International Conference on Learning Representations , volume 2024, pages 39578–39601. Aman Madaan, Niket Tandon, Prakhar Gupta, Skyler Hallinan, Luyu Gao, Sarah Wiegreffe, Uri Alon, Nouha Dziri, Shrimai Prabhumoye, Yiming Yang, and 1 others. 2023. Self-refine: Iterative refinement with self-feedback. Advances in neural information processing systems , 36:46534–46594. 
+
+9Shishir G Patil, Tianjun Zhang, Xin Wang, and Joseph E Gonzalez. 2024. Gorilla: Large language model connected with massive apis. Advances in Neural Information Processing Systems , 37:126544–126565. David Rein, Betty Li Hou, Asa Cooper Stickland, Jack-son Petty, Richard Yuanzhe Pang, Julien Dirani, Ju-lian Michael, and Samuel R Bowman. 2023. Gpqa: A graduate-level google-proof q&a benchmark. arXiv preprint arXiv:2311.12022 .Noah Shinn, Federico Cassano, Ashwin Gopinath, Karthik Narasimhan, and Shunyu Yao. 2023. Re-flexion: Language agents with verbal reinforcement learning. Advances in neural information processing systems , 36:8634–8652. Mirac Suzgun, Mert Yuksekgonul, Federico Bianchi, Dan Jurafsky, and James Zou. 2026. Dynamic cheat-sheet: Test-time learning with adaptive memory. In 
+
+Proceedings of the 19th Conference of the European Chapter of the Association for Computational Lin-guistics (Volume 1: Long Papers) , pages 7080–7106. Dequan Wang, Evan Shelhamer, Shaoteng Liu, Bruno Olshausen, and Trevor Darrell. 2021. Tent: Fully test-time adaptation by entropy minimization. In In-ternational Conference on Learning Representations .Jiayin Wang, Zhiqiang Guo, Weizhi Ma, and Min Zhang. 2025a. How far can llms improve from experience? measuring test-time learning ability in llms with hu-man comparison. In Proceedings of the 2025 Con-ference on Empirical Methods in Natural Language Processing , pages 25688–25702. Jiongxiao Wang, Qiaojing Yan, Yawei Wang, Yijun Tian, Soumya Smruti Mishra, Zhichao Xu, Megha Gandhi, Panpan Xu, and Lin Lee Cheong. 2025b. Reinforcement learning for self-improving agent with skill library. arXiv preprint arXiv:2512.17102 .Yubo Wang, Xueguang Ma, Ge Zhang, Yuansheng Ni, Abhranil Chandra, Shiguang Guo, Weiming Ren, Aaran Arulraj, Xuan He, Ziyan Jiang, and 1 others. 2024. Mmlu-pro: A more robust and challenging multi-task language understanding benchmark. Ad-vances in Neural Information Processing Systems ,37:95266–95290. Zora Zhiruo Wang, Jiayuan Mao, Daniel Fried, and Graham Neubig. 2025c. Agent workflow memory. In International Conference on Machine Learning ,pages 63897–63911. PMLR. Tianxin Wei, Noveen Sachdeva, Benjamin Coleman, Zhankui He, Yuanchen Bei, Xuying Ning, Mengting Ai, Yunzhe Li, Jingrui He, Ed H Chi, and 1 oth-ers. 2025. Evo-memory: Benchmarking llm agent test-time learning with self-evolving memory. arXiv preprint arXiv:2511.20857 .Peng Xia, Jianwen Chen, Hanyang Wang, Jiaqi Liu, Kaide Zeng, Yu Wang, Siwei Han, Yiyang Zhou, Xujiang Zhao, Haifeng Chen, and 1 others. 2026. Skillrl: Evolving agents via recursive skill-augmented reinforcement learning. arXiv preprint arXiv:2602.08234 .Zhishang Xiang, Chengyi Yang, Zerui Chen, Zhimin Wei, Yunbo Tang, Zongpei Teng, Zexi Peng, Zongxia Li, Chengsong Huang, Yicheng He, and 1 oth-ers. 2026. A systematic survey of self-evolving agents: From model-centric to environment-driven co-evolution. Available at SSRN 6626878 .Wujiang Xu, Zujie Liang, Kai Mei, Hang Gao, Jun-tao Tan, and Yongfeng Zhang. 2025. A-mem: Agentic memory for llm agents. arXiv preprint arXiv:2502.12110 .Sikuan Yan, Xiufeng Yang, Zuchao Huang, Ercong Nie, Zifeng Ding, Zonggen Li, Xiaowen Ma, Jinhe Bi, Kristian Kersting, Jeff Z Pan, and 1 others. 2025. Memory-r1: Enhancing large language model agents to manage and utilize memories via reinforcement learning. arXiv preprint arXiv:2508.19828 .An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, and 1 others. 2025. Qwen3 technical report. arXiv preprint arXiv:2505.09388 .Mert Yuksekgonul, Federico Bianchi, Joseph Boen, Sheng Liu, Pan Lu, Zhi Huang, Carlos Guestrin, and James Zou. 2025. Optimizing generative ai by backpropagating language model feedback. Nature ,639(8055):609–616. Guibin Zhang, Muxin Fu, Kun Wang, Frank Wan, Miao Yu, and Shuicheng Yan. 2026. G-memory: Tracing hierarchical memory for multi-agent systems. Ad-vances in Neural Information Processing Systems ,38:12988–13018. Marvin Zhang, Sergey Levine, and Chelsea Finn. 2022. Memo: Test time robustness via adaptation and aug-mentation. Advances in neural information process-ing systems , 35:38629–38642. Andrew Zhao, Daniel Huang, Quentin Xu, Matthieu Lin, Yong-Jin Liu, and Gao Huang. 2024. Expel: Llm agents are experiential learners. In Proceedings of the AAAI Conference on Artificial Intelligence ,volume 38, pages 19632–19642. Boyuan Zheng, Michael Y Fatemi, Xiaolong Jin, Zora Zhiruo Wang, Apurva Gandhi, Yueqi Song, Yu Gu, Jayanth Srinivasa, Gaowen Liu, Graham Neu-big, and 1 others. 2025. Skillweaver: Web agents can self-improve by discovering and honing skills. arXiv preprint arXiv:2504.07079 .Wanjun Zhong, Lianghong Guo, Qiqi Gao, He Ye, and Yanlin Wang. 2024. Memorybank: Enhancing large language models with long-term memory. In Pro-ceedings of the AAAI conference on artificial intelli-gence , volume 38, pages 19724–19731. 
+
+10 Huichi Zhou, Yihang Chen, Siyuan Guo, Xue Yan, Kin Hei Lee, Zihan Wang, Ka Yiu Lee, Guchun Zhang, Kun Shao, Linyi Yang, and 1 others. 2025. Memento: Fine-tuning llm agents without fine-tuning llms. arXiv preprint arXiv:2508.16153 .
+
+11 DC-RS DC-RS+Janus ExpeL ExpeL+Janus 
+
+> 88
+> 90
+> 92
+> 94
+> 96
+> Test Accuracy (%)
+> Qwen3-8B HumanEval
+
+Figure 5: Stream order analysis. We evaluate the final frozen-memory test accuracy under five different shuf-fled task-stream orders using Qwen3-8B on HumanEval. Each point corresponds to one stream order, and error bars show the variation across orders. 
+
+A Stream Order Analysis 
+
+Figure 5 analyzes the sensitivity of sequential mem-ory methods to the order of the task stream. This experiment is closely related to our motivation: be-cause base memory updaters revise memory using local feedback from the current task, the final mem-ory may depend heavily on which tasks appear later in the stream. We therefore shuffle the training stream with different random seeds and evaluate the final frozen memory on the same HumanEval test set. The results show that Janus improves both accuracy and stability under stream-order changes. For DC-RS, the base updater exhibits noticeable variance across different orders, indicating that di-rectly accepting every candidate memory can lead to order-dependent final memories. With Janus, the final performance is consistently higher and the variation across orders becomes smaller. A simi-lar pattern appears for ExpeL: the base updater is sensitive to the stream order, while ExpeL+Janus achieves stronger and more stable performance. These results support the role of Janus as a memory-deployment controller. By selectively ac-cepting or rejecting candidate updates, Janus re-duces the effect of myopic and recent-biased mem-ory revisions. Rather than letting the final memory be determined by the particular order in which tasks are encountered, Janus helps maintain a memory state that is more robust for future inference. 
+
+B Qualitative Case Study 
+
+We provide examples to illustrate how Janus be-haves as a memory-deployment controller. Each 
+
+Table 4: Representative Janus memory-deployment decisions. All cases are triggered by MMT. Janus com-pares the previous memory and the candidate memory on the compact evaluation set and deploys the memory with better support-set performance.                     
+
+> Updater Task Old New Decision
+> DC-RS APIBench-HF 58.3 25.0 Rollback DC-RS APIBench-HF 53.3 86.7 Accept ExpeL MATH 73.3 53.3 Rollback ExpeL MATH 42.9 57.1 Accept
+
+example is taken from a triggered decision during training. When the Memory Momentum Trigger fires, Janus compares the previous memory Mt−1
+
+and the candidate memory cMt on the compact eval-uation set, and then either rolls back to Mt−1 or deploys cMt. For consistency, we use APIBench-HF for the DC-RS cases and MATH for the ExpeL cases. For rollback cases, we show the candidate memory rejected by Janus; for accept cases, we show the previous memory that Janus replaces. 
+
+DC-RS rollback: rejecting a narrow recent-task rewrite. In the first APIBench-HF case, the cur-rent task asks the agent to classify news into cate-gories such as technology, sports, or politics. Be-fore this step, the deployed memory Mt−1 contains API-use patterns from a recent robotics-related tra-jectory, including: 
+
+> Use Hugging Face pipelines for robotics task au-tomation; Load pretrained Decision Transformer models for motor control tasks; Implement zero-shot reinforcement learning with multimodal transformers.
+
+This previous memory is not necessarily ideal for every future APIBench task. However, the candi-date memory cMt proposed by DC-RS rewrites the cheatsheet almost entirely around the latest news-classification task: 
+
+> Use zero-shot classification for multi-domain text categorization; Optimize classification with cross-encoder mod-els; Utilize transformer-based pipelines for real-time classification.
+
+The first rule directly reflects the current label space, while the remaining rules mostly repeat zero-shot text-classification advice. Thus, the candidate does not merely add a useful insight; it shifts the whole memory toward one recent task type. On the compact evaluation set, this rewrite reduces the 12 support-set score from 58 .3 to 25 .0. Janus there-fore rolls back to Mt−1. This case illustrates that Janus does not require the previous memory to be semantically perfect; it only needs to detect that the candidate deployment would make the memory less useful under the support-set comparison. 
+
+DC-RS accept: deploying a useful new tool pat-tern. The second APIBench-HF case shows the opposite behavior. Here, the current task requires classifying product images of electronic devices. The previous memory is dominated by multilingual text-classification rules: 
+
+> Use the Hugging Face pipeline API for text sum-marization with minimal code; Implement zero-shot classification with XLM-RoBERTa models for multilingual text categoriza-tion; Apply zero-shot classification with pre-trained multilingual models for cross-lingual categoriza-tion.
+
+The candidate memory adds a new vision-oriented API pattern: 
+
+> Use CLIP-based zero-shot image classification for electronic device categorization; Deploy Hugging Face pipelines for zero-shot im-age classification with custom device categories; Apply zero-shot image classification with CLIP models for cross-domain product categorization.
+
+Unlike the previous rollback case, this update in-troduces a genuinely new and reusable capability that the old memory lacks. The support-set score increases from 53 .3 to 86 .7, so Janus accepts cMt.This case shows that Janus is not conservative by default; it deploys candidate memories when they improve broader support-set behavior. 
+
+ExpeL rollback: rejecting a correct but narrow task-derived rule. In the first MATH case, the current problem asks for the greatest whole number that must divide the product of any three consecu-tive positive integers. The previous ExpeL memory contains a diverse set of reusable mathematical heuristics, including: 
+
+> Combine like terms in polynomial expressions by grouping and summing coefficients; Use Fermat’s Little Theorem for modular arith-metic when dealing with exponents modulo prime numbers; Apply Simon’s Favorite Factoring Trick to solve equations by adding constants to factor expres-sions.
+
+The candidate memory keeps most previous rules but adds the following rule: 
+
+> The product of any three consecutive positive in-tegers is always divisible by 6.
+
+This rule is mathematically correct, but it is tightly tied to the current problem pattern and has limited coverage over the support tasks used in this compar-ison. In other words, correctness on the latest task does not imply that deploying the updated memory improves broader memory utility. The support-set comparison confirms this: the previous memory scores 73 .3, while the candidate memory drops to 53 .3. Janus therefore rejects the candidate and keeps the earlier memory. This example shows that Janus can filter even correct local updates when they reduce the usefulness of the deployed memory for the broader task stream. 
+
+ExpeL accept: replacing a low-yield rule with a reusable procedure. The second MATH case involves converting repeating decimals into a com-mon fraction. Before the update, the last rule in the deployed memory is a simple percentage heuristic: 
+
+> Calculate percentage by dividing the count of de-sired elements by total elements and multiplying by 100.
+
+The candidate memory replaces this low-yield rule with a procedural rule for converting repeating dec-imals:       
+
+> Convert repeating decimals to fractions by setting
+> xequal to the decimal, multiplying by 10 nwhere
+> nis the number of repeating digits, subtracting the original equation to eliminate the repeating part, and solving for xas a fraction.
+
+Although the two rules do not address the same mathematical topic, this is exactly the deploy-ment decision Janus is designed to make under a bounded memory budget: whether the candidate memory state is more useful than the previous one. The new rule encodes a general algebraic proce-dure for a recurring class of problems, whereas the replaced percentage rule is a simpler heuristic with less support-set utility in this context. The support-set score improves from 42 .9 to 57 .1, so Janus accepts the candidate memory. 
+
+Takeaway. These cases show that Janus does not judge whether a candidate memory is locally cor-rect or semantically similar to the replaced rule. Instead, it evaluates whether the resulting mem-ory state is more useful on a compact support set. Thus, Janus can reject correct but narrow updates when they reduce broader utility, and accept task-motivated updates when they introduce reusable procedures or capabilities. 13 C Task Prompts 
+
+MATH Prompt 
+
+Solve the following math problem. Please do your derivation in LaTeX as much as possible. Keep the reasoning concise but complete. At the end, put only the final answer in the LAST \boxed{...}. If the final answer is a fraction, use LaTeX fraction form like \frac{a}{b} (not decimal approximation unless required). Problem: {question} 
+
+GPQA Prompt 
+
+Answer the following multiple-choice question. Question: {question} Choices: {choices} Think carefully and then output only the final option letter (A/B/C/D). 
+
+MMLU-Pro Prompt 
+
+Answer the following multiple-choice question. Question: {question} Choices: {choices} Think carefully and then output only the final option letter ({valid_labels}). 
+
+HumanEval Prompt 
+
+Complete the following Python function. Implement {entry_point} so that it satisfies the docstring. 
+
+``` python {question} 
+
+``` 
+
+Return the full implementation (including the function signature) inside a single ``` python... ``` 
+
+code block. Do not add any example usage or extra prose after the code block. 
+
+APIBench Prompt 
+
+You are a helpful API writer who can write APIs based on requirements. {question} Write a Python program in 1 to 2 lines to call API in {framework}. The answer should follow the format: <<<domain>>> $DOMAIN, <<<api_call>>>: $API_CALL, <<<api_provider>>>: $API_PROVIDER, <<<explanation>>>: $EXPLANATION, <<<code>>>: $CODE. Here are the requirements: 1. $DOMAIN should be inferred from the task description. 2. $API_CALL should have only one line of code that calls the API. 3. $API_PROVIDER should be the programming framework used. 4. $EXPLANATION should be a step-by-step explanation. 5. $CODE is the Python code. 6. Do not repeat the format in your answer. 
+
+D Algorithms 
+
+14 Algorithm 1 ExpeL 
+
+Input: Sequence of tasks T = {Ti}Ni=1 , large language model L, self-reflection model LREFLECT , insight prompt Pin , retrieval budget K, step size L, max tries Z 
+
+> 1:
+
+Initialize: Experience pool B ← FMANUAL (seed demos if available), recent success set S ← ∅ ,insight set ˆι ← ∅  
+
+> 2:
+
+for Task Ti = ( xi, y i) ∈ T do  
+
+> 3:
+
+Retrieve Top-K similar success cases FSIM from B ▷ Search  
+
+> 4:
+
+ν ← ""  
+
+> 5:
+
+τ SUCC ← ∅ , τ FAIL ← ∅  
+
+> 6:
+
+for z = 1 to Z do  
+
+> 7:
+
+ˆy(z) 
+
+> i
+
+← L (xi, F SIM , ˆι, ν ) ▷ Synthesis  
+
+> 8:
+
+success (z) ← Evaluator( xi, y i, ˆy(z) 
+
+> i
+
+) 
+
+> 9:
+
+if success (z) = 1 then  
+
+> 10:
+
+τ SUCC ← (xi, ˆy(z) 
+
+> i
+
+) 
+
+> 11:
+
+B ← B ∪ { τ SUCC } ▷ Evolve  
+
+> 12:
+
+break  
+
+> 13:
+
+else  
+
+> 14:
+
+τ FAIL ← (xi, ˆy(z) 
+
+> i
+
+) 
+
+> 15:
+
+ν ← CONCAT (ν, LREFLECT (τ FAIL )) ▷ Reflect  
+
+> 16:
+
+end if  
+
+> 17:
+
+end for  
+
+> 18:
+
+if τ SUCC ̸ = ∅ then  
+
+> 19:
+
+S ← S ∪ { τ SUCC } 
+
+> 20:
+
+end if  
+
+> 21:
+
+if τ SUCC ̸ = ∅ and τ FAIL ̸ = ∅ then  
+
+> 22:
+
+ˆι ← L (Pin , τ SUCC , τ FAIL , ˆι) ▷ Pair Update  
+
+> 23:
+
+end if  
+
+> 24:
+
+if |S| = L then  
+
+> 25:
+
+ˆι ← L (Pin , S, ˆι) ▷ Batch Update  
+
+> 26:
+
+S ← ∅  
+
+> 27:
+
+end if  
+
+> 28:
+
+end for Algorithm 2 Dynamic Cheatsheet Retrieval-and-Synthesis (DC-RS) 
+
+Input: Sequence of tasks T = {Ti}Ni=1 , large language model L, retrival budget K, generator template 
+
+Pgen , curator template Pcur  
+
+> 1:
+
+Initialize: Cheatsheet M0 ← ∅ , history H0 ← ∅  
+
+> 2:
+
+for Task Ti = ( xi, y i) ∈ T do  
+
+> 3:
+
+if |H i−1| > 0 then  
+
+> 4:
+
+Retrieve Top-K similar past cases Cretr from Hi−1 ▷ Search  
+
+> 5:
+
+else  
+
+> 6:
+
+P ← ∅  
+
+> 7:
+
+end if  
+
+> 8:
+
+Update memory state Mi ← L (Pcur , C retr , x i, Mi−1) ▷ Evolve  
+
+> 9:
+
+Answer ˆyi ← L (Pgen , x i, Mi) ▷ Synthesis  
+
+> 10:
+
+Update history Hi ← H i−1 ∪ { xi, ˆyi} ▷ Evolve  
+
+> 11:
+
+end for 
+
+15
