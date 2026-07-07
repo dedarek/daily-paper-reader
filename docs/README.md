@@ -6,40 +6,32 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-06
-- 运行时间：2026-07-06 06:34:46 UTC
+- 最新运行日期：2026-07-07
+- 运行时间：2026-07-07 05:33:47 UTC
 - 运行状态：成功
-- 本次总论文数：6
-- 精读区：2
-- 速读区：4
+- 本次总论文数：4
+- 精读区：1
+- 速读区：3
 
 ### 今日简报（AI）
-1) 今日精选6篇论文，精读两篇高分研究：激活盲点防御与用户参与式权限管理。  
-2) 最值得关注方向：LLM安全防御中的响应时间探测机制，以及Agent权限管理的用户介入框架。  
-3) 建议普通读者优先精读上述两篇满分作，从中了解最前沿的模型安全与自主代理控制方案。
-- 详情：[/202607/06/README](/202607/06/README)
+今日精读LLM漏洞全生命周期综述，速读三篇聚焦模型编辑、隐私脱敏与安全评估的论文。最值得看的是精读论文，系统性梳理了从开发到部署的攻击、风险与防御。建议优先精读该综述建立知识框架，再按需查阅其他论文。
+- 详情：[/202607/07/README](/202607/07/README)
 
 ### 精读区论文标签
-1. [Closing the Activation-Cone Blind Spot: Response-Time Probing and Unified Defense](/202607/06/2606.29441v1-closing-the-activation-cone-blind-spot-response-time-probing-and-unified-defense)  
-   标签：评分：9.0/10、query:llm-security
-   evidence：提出针对提示注入和对抗性提示的统一防御
-2. [Janus: a Playground for User-Involved Agentic Permission Management](/202607/06/2607.01510v1-janus-a-playground-for-user-involved-agentic-permission-management)  
+1. [A Lifecycle and Application-Stack Survey of Large Language Model Vulnerabilities: Attacks, Risks, Defenses, and Open Problems](/202607/07/2606.31639v1-a-lifecycle-and-application-stack-survey-of-large-language-model-vulnerabilities-attacks-risks-defenses-and-open-problems)  
    标签：评分：8.0/10、query:llm-security
-   evidence：针对AI智能体的权限管理系统，直接涉及自主智能体的安全机制
+   evidence：综述涵盖提示注入攻击及其他漏洞
 
 ### 速读区论文标签
-1. [A-TMA: Decoupling State-Aware Memory Failures in Long-Term Agent Memory](/202607/06/2607.01935v1-a-tma-decoupling-state-aware-memory-failures-in-long-term-agent-memory)  
+1. [Mitigating Package Hallucinations in Large Language Models via Model Editing](/202607/07/2607.02052v1-mitigating-package-hallucinations-in-large-language-models-via-model-editing)  
    标签：评分：7.0/10、query:llm-security
-   evidence：通过解决状态协调失败提高LLM智能体记忆的安全性
-2. [Breaking the Rounding Trap: Securing LLMs against Quantization-Conditioned Backdoors](/202607/06/2606.29239v1-breaking-the-rounding-trap-securing-llms-against-quantization-conditioned-backdoors)  
+   evidence：通过模型编辑防御软件包幻觉，增强LLM安全
+2. [SurrogateShield: Beyond Redaction for High-Utility, Privacy-Preserving LLM Interactions](/202607/07/2606.29567v1-surrogateshield-beyond-redaction-for-high-utility-privacy-preserving-llm-interactions)  
    标签：评分：6.0/10、query:llm-security
-   evidence：提出量化前防御方法QuantGuard，抵御量化后门攻击
-3. [Understanding and Evaluating Claw-like Agent Security Through a Computer-Systems Lens](/202607/06/2606.30755v1-understanding-and-evaluating-claw-like-agent-security-through-a-computer-systems-lens)  
+   evidence：客户端代理，用替代值替换PII，属于输入验证技术
+3. [Adversarial Pragmatics for AI Safety Evaluation: A Benchmark for Instruction Conflict, Embedded Commands, and Policy Ambiguity](/202607/07/2607.01153v1-adversarial-pragmatics-for-ai-safety-evaluation-a-benchmark-for-instruction-conflict-embedded-commands-and-policy-ambiguity)  
    标签：评分：6.0/10、query:llm-security
-   evidence：通过计算机系统类比进行智能体安全分析与评估
-4. [The Past Is Prologue: A Plug-in Controller for Selective Updates in Sequentially Evolving LLM Memory](/202607/06/2606.31121v1-the-past-is-prologue-a-plug-in-controller-for-selective-updates-in-sequentially-evolving-llm-memory)  
-   标签：评分：6.0/10、query:llm-security
-   evidence：用于LLM智能体的内存控制器，防止有害更新
+   evidence：针对指令冲突和嵌入命令的基准评估
 
 
 <div class="dpr-home-promo-card">
