@@ -6,44 +6,47 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-09
-- 运行时间：2026-07-09 06:19:37 UTC
+- 最新运行日期：2026-07-10
+- 运行时间：2026-07-10 06:18:23 UTC
 - 运行状态：成功
-- 本次总论文数：8
-- 精读区：6
-- 速读区：2
+- 本次总论文数：9
+- 精读区：4
+- 速读区：5
 
 ### 今日简报（AI）
-今日聚焦8篇论文，精读6篇，核心关注LLM Agent的上下文执行完整性与可扩展提示攻击。最值得关注的两项高分研究：《Context-to-Execution Integrity for LLM Agents》与《Beware of Agentic Botnets》，分别探讨Agent执行链安全与通用对抗性HalluSquatting攻击。建议普通读者着重了解MCP服务器漏洞防护（得分8.0）及多Agent安全委托框架，以提升实际部署的防御意识。
-- 详情：[/202607/09/README](/202607/09/README)
+今日精读两篇9.0分论文，聚焦语言模型安全对齐与Web代理提示注入防护；速读三篇涉及幻觉减少、知识库投毒和合同工程。最值得关注的方向包括利用潜在人格特质提升模型安全性，以及Prismata框架限制跨站提示注入。建议普通读者优先了解这两篇精读论文，以掌握当前LLM安全领域的前沿防护思路。
+- 详情：[/202607/10/README](/202607/10/README)
 
 ### 精读区论文标签
-1. [Context-to-Execution Integrity for LLM Agents](/202607/09/2607.06000v1-context-to-execution-integrity-for-llm-agents)  
+1. [Efficient Safety Alignment of Language Models via Latent Personality Traits](/202607/10/2607.07918v1-efficient-safety-alignment-of-language-models-via-latent-personality-traits)  
    标签：评分：9.0/10、query:llm-security
-   evidence：为LLM智能体提供上下文到执行完整性的边界系统
-2. [Beware of Agentic Botnets: Scalable Untargeted Promptware Attacks via Universal and Transferable Adversarial HalluSquatting](/202607/09/2607.07433v1-beware-of-agentic-botnets-scalable-untargeted-promptware-attacks-via-universal-and-transferable-adversarial-hallusquatting)  
+   evidence：通过潜在人格特质对齐防御对抗攻击
+2. [Prismata: Confining Cross-Site Prompt Injection in Web Agents](/202607/10/2607.08147v1-prismata-confining-cross-site-prompt-injection-in-web-agents)  
    标签：评分：9.0/10、query:llm-security
-   evidence：通过幻觉资源标识符在智能体LLM中实现可扩展的提示注入攻击
-3. [HARC: Coupling Harmfulness and Refusal Directions for Robust Safety Alignment](/202607/09/2607.00572v2-harc-coupling-harmfulness-and-refusal-directions-for-robust-safety-alignment)  
+   evidence：通过上下文最小权限防御网页代理中的跨站提示注入
+3. [Token-Flow Firewall: Semantic Runtime Auditing for Persistent AI Agents](/202607/10/2607.08395v1-token-flow-firewall-semantic-runtime-auditing-for-persistent-ai-agents)  
+   标签：评分：9.0/10、query:llm-security
+   evidence：针对持久化AI代理的语义运行时审计
+4. [Multi-Agent Firewall Architecture for Privacy Protection of Sensitive Data in Interactions with Language Models](/202607/10/2607.08282v1-multi-agent-firewall-architecture-for-privacy-protection-of-sensitive-data-in-interactions-with-language-models)  
    标签：评分：8.0/10、query:llm-security
-   evidence：通过耦合有害性和拒绝方向实现鲁棒安全对齐
-4. [HARC: Coupling Harmfulness and Refusal Directions for Robust Safety Alignment](/202607/09/2607.00572v3-harc-coupling-harmfulness-and-refusal-directions-for-robust-safety-alignment)  
-   标签：评分：8.0/10、query:llm-security
-   evidence：针对对抗性提示的鲁棒安全对齐
-5. [Knowledge Base Poisoning Attacks and Defense for Policy-Aware LLM-RAG Framework](/202607/09/2607.04379v1-knowledge-base-poisoning-attacks-and-defense-for-policy-aware-llm-rag-framework)  
-   标签：评分：8.0/10、query:llm-security
-   evidence：针对LLM-RAG知识库投毒的防御方法
-6. [When Agents Go Rogue: Activation-Based Detection of Malicious Behaviors in Multi-Agent Systems](/202607/09/2607.06807v1-when-agents-go-rogue-activation-based-detection-of-malicious-behaviors-in-multi-agent-systems)  
-   标签：评分：8.0/10、query:llm-security
-   evidence：基于LLM的多智能体系统中的恶意行为检测
+   evidence：面向LLM交互隐私保护的多智能体防火墙
 
 ### 速读区论文标签
-1. [Mitigating Taint-Style Vulnerabilities in MCP Servers via Security-Aware Tool Descriptions](/202607/09/2607.07461v1-mitigating-taint-style-vulnerabilities-in-mcp-servers-via-security-aware-tool-descriptions)  
-   标签：评分：8.0/10、query:llm-security
-   evidence：针对基于LLM的自主智能体的MCP服务器安全机制
-2. [Operational Reframing and Approval-Framed Delegation in Multi-Agent LLM Safety](/202607/09/2607.07097v1-operational-reframing-and-approval-framed-delegation-in-multi-agent-llm-safety)  
+1. [Grounded Optimization: A Layered Engineering Framework for Reducing LLM Hallucination in Automated Personal Document Rewriting](/202607/10/2607.01457v1-grounded-optimization-a-layered-engineering-framework-for-reducing-llm-hallucination-in-automated-personal-document-rewriting)  
+   标签：评分：7.0/10、query:llm-security
+   evidence：减少LLM幻觉以提升内容安全
+2. [Knowledge Base Poisoning Attacks and Defense for Policy-Aware LLM-RAG Framework](/202607/10/2607.04379v1-knowledge-base-poisoning-attacks-and-defense-for-policy-aware-llm-rag-framework)  
+   标签：评分：7.0/10、query:llm-security
+   evidence：针对LLM-RAG知识库投毒的防御方法
+3. [From Prompts to Contracts: Harness Engineering for Auditable Enterprise LLM Agents](/202607/10/2607.08028v1-from-prompts-to-contracts-harness-engineering-for-auditable-enterprise-llm-agents)  
+   标签：评分：7.0/10、query:llm-security
+   evidence：为企业LLM智能体提供可审计的工程方法
+4. [Distributed Attacks in Persistent-State AI Control](/202607/10/2607.02514v2-distributed-attacks-in-persistent-state-ai-control)  
    标签：评分：6.0/10、query:llm-security
-   evidence：多智能体LLM系统的安全性评估与控制对比设计
+   evidence：研究编码智能体中的提示注入攻击
+5. [Out of Sight: Compression-Aware Content Protection against Agentic Crawlers](/202607/10/2607.08180v1-out-of-sight-compression-aware-content-protection-against-agentic-crawlers)  
+   标签：评分：6.0/10、query:llm-security
+   evidence：针对LLM代理爬虫的压缩感知内容保护
 
 
 <div class="dpr-home-promo-card">

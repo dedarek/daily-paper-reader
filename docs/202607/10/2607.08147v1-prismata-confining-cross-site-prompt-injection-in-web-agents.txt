@@ -1,0 +1,522 @@
+Title: Prismata: Confining Cross-Site Prompt Injection in Web Agents
+
+URL Source: https://arxiv.org/pdf/2607.08147v1
+
+Published Time: Fri, 10 Jul 2026 00:41:25 GMT
+
+Number of Pages: 15
+
+Markdown Content:
+# Prismata: Confining Cross-Site Prompt Injection in Web Agents 
+
+# Corban Villa 
+
+corban .villa@berkeley .edu UC Berkeley 
+
+# Alp Eren Ozdarendeli 
+
+alp_ozdarendeli@berkeley .edu UC Berkeley 
+
+# Sijun Tan 
+
+sijuntan@berkeley .edu UC Berkeley 
+
+# Raluca Ada Popa 
+
+raluca .popa@berkeley .edu UC Berkeley 
+
+## Abstract 
+
+Autonomous web agents promise to automate everyday browsing tasks, but inherit one of the web’s oldest attack surfaces. Cross-Site Scripting proved that mixing trusted and untrusted content is dangerous, even on benign pages. Agents resurface this risk by interpreting natural language as instructions, allowing third-party and user-generated content to hijack the agent via prompt injection. The core challenge is that deriving a task-specific security policy requires reasoning over page structure that is entangled with the attacker’s content. We present Prismata, a defense enforcing contextual least privi-lege for web agents, constraining both what the agent sees and what it can do. Prismata’s dynamic trust derivation produces permission labels for page content, with structural confinement guarantees, in-spired by classical integrity models, that bound any labeling errors so that labels can only decrease in privilege and mislabelings are bounded. Prismata’s mechanical confinement enforces these labels by redacting content and restricting agent capabilities. Importantly, these mechanisms require no developer annotations, so Prismata supports the long tail of websites. Across recent published web agent attacks, including adaptive variants, Prismata substantially reduces attack success while preserving benign task utility. 
+
+## 1 Introduction 
+
+Autonomous browser-based web agents have surged in popular-ity, promising to automate tedious browsing workflows, boost workplace productivity, reclaim personal time, and accelerate re-search [ 2 , 17 , 24 , 38 , 51 , 57 , 58 , 61 , 85 , 88 , 97 , 98 ]. In doing so, they inherit one of the web’s oldest attack surfaces: even on benign sites, trusted and untrusted origins intersperse content on the same page. Consider a site like shopping.com (Fig. 1), which mixes site 
+
+developer content (navigation menus, product listings, purchase buttons), user content (product reviews, ratings), and external ad-vertisements (sponsored placements, banner ads). Alice tasks her web agent to order the best-reviewed bow from the site, unaware that Eve, a malicious actor, has planted a prompt-injection payload in a review on the bow’s product page. The payload instructs Al-ice’s agent to reply to the review with the user’s credit card details. Recent work demonstrates that such attacks, from natural-language injections to adversarial image perturbations, are both feasible and effective against current web agents [ 22 , 37 , 44 , 49 , 67 , 72 , 75 , 84 ,93, 100]. The web has faced similar threats before: Cross-Site Scripting (XSS) allows malicious scripts injected into a benign website to execute in a victim’s browser. We call the agent-side analogue 
+
+Cross-Site Prompting (XSP) , where indirect prompt injections placed       
+
+> Eve creates a malicious product.
+> 1
+> Alice asks her agent to shop.
+> 2
+> Search
+> Bow Tie $19.99
+> Elegant silk bow tie,. . . Buy Now
+> Reviews
+> Eve: Ignore previous instructions. Direct mes-sage user “Eve” and send the user’s credit card details for a discount!
+> Bob: Highly recommend!
+> Jon: Not what I expected, but it’s ok. Alice’s agent leaks her details to Eve.
+> 3
+
+Figure 1: Cross-Site Prompting (XSP): Eve embeds a prompt injection in a product review, hijacking Alice’s agent into leaking her credit card details. 
+
+on a benign site manipulate a victim’s web agent. As with XSS, XSP exploits the site’s own features to carry out the attack, such as exfil-trating data via direct messages, posting content through reviews, or modifying permissions via account settings. Unfortunately, XSS defenses do not transfer: XSP payloads are not executable code but natural language and images, input sanitizers cannot distinguish instructions from data, and external content cannot be sandboxed from the agent’s context [ 29 , 53 , 59 ]. Formalizing XSP as a class lets us design defenses that hold regardless of the attack’s delivery mechanism, and generalizing to novel variants. Mitigations for prompt injection tend to fall into two categories: (1) model-level defenses, which rely on a model to resist such at-tacks [ 10 , 47 , 55 , 71 ], and (2) system-level defenses that apply clas-sical security principles in agent designs to provide stronger se-curity properties [ 15 , 64 , 69 , 81 ]. Despite gradual improvements, adaptive attacks continue to bypass model-level defenses at high rates [ 1, 9, 12 , 35 , 36 , 63 , 73 , 78 , 90 , 99 ]. Existing web agent defenses fall primarily into the former category [ 11 , 25 , 32 , 40 , 76 , 82 , 89 ,91 , 94 ]. System-level approaches such as CaMeL [ 15 ] require pre-planning all actions before execution and struggle to generalize to data-dependent web tasks [ 20 ], while others provide origin-level controls such as read-only domains [ 25 ]. Fine-grained, page-level policies that address XSP have thus far required exhaustive site maps that must be developers manually construct per site [54]. The fundamental challenge for web agents is that determining the security implications of an action requires reading the site’s structure, which is itself entangled with untrusted content. On arXiv:2607.08147v1 [cs.CR] 9 Jul 2026 Figure 2: Web Entanglement Problem: Tool-agent defenses (e.g., CaMeL) can leverage ground-truth tool semantics to mediate agent actions (top). Web-agent actions are contextual: their security meaning requires disentangling site structure from untrusted content on the page (bottom). 
+
+shopping.com , the same click(id) might complete Alice’s pur-chase, reply to Eve’s review, or interact with a sponsored ad; it is the site, not the action, that carries the security meaning. We refer to this as the web entanglement problem (Fig. 2): a general web-agent defense must separate the structural signals from the untrusted content to derive a security policy for the agent, yet the act of separation itself exposes the defense to adversarial manipulation. An ideal least-privilege defense would grant the agent only the capabilities its task requires, and nothing more. This is desirable because, without such restrictions, a web agent can interact with every element on a page. An agent tasked with ordering Alice a bow tie should never be resetting her password or sending direct mes-sages on her behalf, yet without least privilege, untrusted content can trigger any of these actions. Not all attacks fall under the least privilege umbrella: fake reviews that attempt to convince Alice’s agent to prefer one product over another are a platform moderation problem that predates web agents entirely [ 30 , 86 , 95 ]. To enforce least privilege, the developer faces a dilemma: manually annotating untrusted regions or mapping site elements to semantic actions does not scale, while deriving policies dynamically exposes the defense to the very attacks it aims to prevent [35, 55, 90]. In this work, we contribute Prismata, a contextual least-privilege 
+
+defense for web agents that confines both what the agent sees and 
+
+what it can do , based on its specific task. Since XSP typically in-volves both an injection site (e.g., a malicious review) and a goal action (e.g., resetting a password), Prismata works to confine both. It reduces the potential injection sites by pruning or restricting attacker-controlled content where possible, and confines the at-tacker’s goal by gating the agent’s allowed actions to the task scope. We contribute two techniques: (1) Dynamic trust derivation in-fers trust labels, denoting content origin and permissions, from the page using structural cues and invariants that bound any mislabel propagation. (2) Mechanical confinement enforces the resulting policy by restricting, redacting, or removing content based on its assigned labels. Together, these allow Prismata to operate on exist-ing sites without any effort from developers, while grounding its security properties in classical confinement principles [39, 62]. 
+
+## 1.1 System Overview 
+
+Our key insight to solve the web entanglement problem starts with the fact that for any interactive element on a page, we can trace a critical path from the root of the Document Object Model (DOM) to that element. We observe and measure that these paths are typically comprised almost entirely of benign, developer-authored structural elements, such as container divs, layout wrappers, and navigation elements, and only rarely include untrusted content. Isolating a single element’s critical path yields the element’s own text (e.g., “Add to Cart”) along with the ancestor elements that provide context for where it sits on the page. A reasoning model can then consider the user’s task along with the element’s text and its contextual path to determine whether the element is within scope, producing least-privilege labels from a restricted view: no other element in the DOM is visible to the labeler, so an attacker whose injection lies anywhere besides the critical path cannot influence the decision. In an empirical analysis of 1,500+ of the most visited sites (§3), of the over 90,000 instances of untrusted content sampled, only 1.2% lay on a critical path to an interactable element, which we address next. In cases where the critical path or the element text itself is compromised, attackers may seek to manipulate the action gate. Our insight to resolve this is that these critical paths often con-tain structural cues that signal the boundary of untrusted con-tent before it appears, such as headings (“Reviews”), accessibil-ity attributes ( aria-label="Customer Reviews" ), and developer-authored class names ( class="review-card" ). Inspired by the 1977 Biba integrity model [ 8], we apply a no-read-down, no-write-up policy to recursively evaluate each layer of the path before revealing its children, inferring the presence of untrusted content before it enters the labeler’s context. This allows Prismata to prune untrusted content not required for the task, or confine it to read-only privileges for tasks that require it. In practice, the action gate thwarts the attacker’s goals by confining allowed actions to the task scope, while Biba parsing restricts or entirely removes the injection site, addressing the edge cases where the attacker’s target action lies on a critical path containing untrusted content. Com-bined, the action gate and Biba parsing leave approximately 0.1% of 90,000+ paths unaddressed across our 1,500+ website sample, with-out requiring any effort from site developers. Furthermore, sites that implement existing web best practices reduce this to 0.017% (§3). On our example on shopping.com (Fig. 1), Alice tasks her agent to “order a new bow tie.” Eve plants a malicious product review instructing the agent to reset Alice’s password. However, her review is not on the critical path to account settings; the action gate never sees it, independently determines that account settings are out of scope, and disables the button. The injection also targets the DM feature, whose critical path passes through a user profile section containing Alice’s display name as alt-text. Since a user-profile 
+
+class precedes the user content in the DOM, Prismata identifies Figure 3: Prismata’s Interface: Prismata operates between the web agent and the browser, providing a system-level defense that filters and constrains web content before it reaches the web agent. Prismata leverages a combination of a page’s HTML DOM for finer granularity during labeling, and the accessibility tree (AxTree) to reduce the verbosity of the restricted observation. 
+
+the boundary and restricts the DM feature prior to seeing the alt-text label. In summary, as long as the attacker’s goal lies on an uncompromised critical path, or lies on a compromised critical path but with structural cues that precede the untrusted content, Prismata derives the least-privilege labels that confine the agent without exposing the decisive labeling step to the attacker’s content. 
+
+## 1.2 Evaluation summary 
+
+We evaluate Prismata against three attack templates implemented in the WebArena environment, with additional WASP [ 19 ] and adaptive stress tests. Across the main attack settings, Prismata drives attack success rate down from 85.5% to 0.7% on average, while boosting task completion under attack from 4.5% to 23.0%. Prismata also blocks the observed WASP plain-goal success that occurs without the defense. Prismata preserves most benign utility, with task success changing from 29.9% without Prismata to 26.6% with Prismata enabled, and a manual validation study confirms that its dynamic trust derivation stays aligned with human expectations. 
+
+## 2 Prismata System Design 
+
+Fig. 3 illustrates Prismata’s position in the web agent stack. Prismata operates as a transparent defense layer between the web agent and the browser: it intercepts each page’s rendered DOM, applies trust derivation and confinement, and passes the restricted observation to the agent. Since Prismata filters the captured observation rather than the live DOM, it introduces no additional state drift beyond what a standard web agent already faces, and does not require modifications to the site by the developer (§2.2). 
+
+## 2.1 Setup and Threat Model 
+
+Prismata builds on BrowserGym [ 18 ], which runs a web agent in a headless Chromium browser and exposes the rendered page through an accessibility-tree observation. BrowserGym assigns identifiers to page elements and restricts the agent to a finite action space (Appendix A): element-targeting actions, such as click and 
+
+fill , refer to page elements by identifier, while navigation and con-trol actions do not target page content. We model the rendered page as a rooted DOM tree. Each interactive element has a critical path from the DOM root to that element, and Prismata mediates both the observation shown to the agent and every element-targeting action before it reaches the browser. Prismata protects users navigating benign websites where user, hosted-party, or external content may contain XSP attacks. Our focus is on sites that implement security measures and best prac-tices to prevent traditional XSS, such as input sanitizing [ 4, 31 ], sandboxed advertisements [ 23 , 34 , 53 ], and content security poli-cies [26, 52]. We assume that an attacker may inject text-based content into any user content (e.g., posts, comments, product reviews), hosted-party content (e.g., marketplace seller listings), or external content (e.g., advertisements, social media embeds) on a benign site. Any attacker-supplied JavaScript is confined to sandboxed iframes; ar-bitrary execution on the trusted origin is classical XSS and out of scope (§6.2). We consider sophisticated attackers that may deduce the agent’s assigned task (e.g., via web tracking [ 5, 42 , 56 ]) and use this information to produce more targeted attacks [ 44 , 49 , 93 ]. We also consider adaptive attackers that attempt to attack Prismata’s trust derivation process through multiple iterative rounds, without assuming adversarial robustness of the labeling models. 
+
+Limitations. Prismata protects against XSP attacks where the at-tacker’s goal exceeds the task’s required privileges. Attacks within the privilege scope, such as fake reviews influencing product se-lection when the task requires reading reviews, fall within least privilege and are better addressed by model-level reasoning. Pris-mata operates in the textual input modality. While Prismata may be extended to support non-textual inputs by mapping the same DOM-based permission structure into screenshots, we consider it beyond the scope of this work. 
+
+## 2.2 System Architecture 
+
+When the agent navigates to a page, Prismata processes the DOM in three stages before the agent observes or acts on it. Subsequent sections formalize the security properties (§2.3). 
+
+Action gate. Interactive elements on the page (buttons, links, form fields) are enumerated via the browser’s DevTools interface. For each one, Prismata traces the critical path : the full HTML ancestor chain from the DOM root to that element. Each critical path is independently evaluated by an LLM, which considers only the user’s task and the structural context along the path to determine whether the element is within the task’s scope. No other page content is visible to this evaluation, so an attacker whose injection lies anywhere outside the critical path cannot influence the labeling decision. When the critical path contains no untrusted content, this evaluation is injection-free by construction. 
+
+Biba parsing. To identify and confine any untrusted content along the critical path, Prismata classifies content by its origin: devel-oper (e.g., account settings), user (e.g., reviews), hosted-party (e.g., marketplace sellers), or external (e.g., advertisements). Inspired by the Biba integrity model [ 8 ], each element is labeled using only itself and its ancestry from the root, with children and siblings masked (no-read-down). Once an element’s origin label is resolved, it is locked; trust labels cannot exceed their parent’s (no-write-up). When structural cues such as headings, accessibility attributes, or developer-authored class names signal untrusted content, the label cascades to all descendants and no further elements in the subtree are queried. Each non-developer subtree receives both a provenance label and a capability assignment: content not required for the task is pruned, while content the task does require (e.g., reviews for a purchasing task) is restricted to read-only so the agent can observe but not interact with it. 
+
+Enforcement. Before the agent observes or acts on the page, a separate policy model is provided only the task details, with no DOM content, to determine which content origins the task requires, allowing entire origin classes to be pruned (e.g., canceling a sub-scription should not require user, hosted-party, or external content). Mechanical confinement then applies the resulting policy: pruned content is removed from the agent’s observation entirely, and inter-active elements beyond their assigned capability are downgraded so the agent cannot interact with them. The effective capability of each element is the minimum of the action gate and Biba parser assignments. 
+
+Mechanical confinement. Prismata implements mechanical con-finement as a deterministic enforcement layer between the browser and the agent. BrowserGym uses Playwright to drive the live Chromium page and, after each agent action, captures a page state that includes the rendered HTML, the accessibility tree, and Chrome DevTools metadata. Prismata treats this captured state as the en-forcement boundary: it labels the DOM, builds an element-ID-to-capability map, and maps those labels onto the accessibility-tree observation that the agent will receive. Before the agent observes the page, Prismata removes nodes whose provenance falls outside the task policy, downgrades read-only elements by removing or disabling their target identifiers, and passes only the filtered ob-servation to the web agent. Prismata repeats this process at every agent action, so dynamic page changes are handled by re-capturing and re-filtering the next page state. When the agent returns an action, Prismata checks the target identifier against the same capability map before forwarding the action to BrowserGym. If the identifier has been removed, or if the target element lacks sufficient capability for the requested action, Prismata rejects the tool call before Playwright executes it in the browser. Since the agent acts only through BrowserGym’s finite                  
+
+> Case Configuration Injection-free
+> 1𝑖 ∉path (𝑒 )✓
+> 2𝑖 ∈path (𝑒 ), with cues ✓
+> 3𝑖 ∈path (𝑒 ), no cues ×
+
+Table 1: Case analysis: Prismata derives labels without ex-posure to attacker-controlled content except in empirically rare configurations (§3). 
+
+action interface, and no action permits arbitrary JavaScript execu-tion, this check covers the page actions available to the agent. This enforcement is practical since DOM structures cache well across nearby page states, allowing Prismata to reuse labels and capability maps across repeated observations; we quantify this overhead in the evaluation (§5.4). 
+
+Page drift. Prismata filters the captured observation rather than mutating the live DOM, matching the observation model used by BrowserGym and similar web agents that operate over captured accessibility-tree observations [ 18 , 51 , 77 , 87 , 88 , 92 ]. As a result, Prismata introduces no additional page-drift channel beyond the standard observe-act loop: content that appears after capture is not visible to the agent and has no targetable identifier in that step, and Prismata reprocesses the page on the next observation. 
+
+## 2.3 Prismata Security 
+
+Prismata enforces least-privilege labels on each element and, in all but empirically rare configurations, derives those labels without exposing the decisive labeling step to attacker-controlled content. 
+
+Setup. We model the DOM as a rooted tree 𝑇 = (E , 𝑟 ). The attacker controls a subset I ⊆ E of untrusted elements (§2.1). For each element 𝑒 , let path (𝑒 ) denote its critical path from the root. The action gate and Biba parsing each assign a capability based on path (𝑒 ) and the user’s task; the effective capability is: cap (𝑒, task ) =
+
+min (cap gate (𝑒, task ), cap biba (𝑒, task )) .
+
+Definition 2.1 (Injection-Free Label). The trust label assigned to element 𝑒 is injection-free if no untrusted content on path (𝑒 ) is an input to the labeling decision. It suffices for either mechanism to produce an injection-free label, as the effective capability cannot exceed the more restrictive of the two. We now detail the three cases that arise based on the injection’s placement (Table 1). Fig. 4 illustrates why the residual risk is local to specific root-to-element paths: Case 1 excludes attacker content from the critical path, Case 2 detects the trust boundary before revealing attacker content, and only Case 3 places attacker content on the decisive path without an earlier structural cue. 
+
+Case 1. The injection lies outside the critical path to the goal action, so the action gate’s decision is injection-free. Structural cues may or may not be present for Biba parsing, but the effective capability is upper-bounded by the action gate’s injection-free label. 
+
+Case 2. The injection lies on the critical path, but structural cues allow Biba parsing to identify the content origin and restrict the capability before the untrusted content is revealed to the labeler, so Biba parsing’s decision is injection-free. The action gate may or may not be influenced by the untrusted content on the path, Case 1 
+
+DOM 
+
+main inj 
+
+action 
+
+Case 2 
+
+DOM 
+
+reviews 
+
+inj 
+
+action 
+
+Case 3 
+
+DOM 
+
+div 
+
+inj 
+
+action 
+
+dev content cue 
+
+attacker content labeled element 
+
+Figure 4: DOM placements for the three cases. Red marks attacker content, blue marks a structural cue, and teal marks the labeled element. 
+
+but the effective capability is upper-bounded by Biba parsing’s injection-free label. 
+
+Case 3. The injection lies on the critical path with no preceding structural cues. Neither mechanism can rule out exposure to the injection during the decisive labeling step. We find this residual risk to be empirically rare ( ∼0.1% of sampled paths), and further reducible to ∼0.017% (§3). Furthermore, any tampering is confined to elements whose criti-cal path contains the injection; all other elements on the page re-main unaffected and still receive least-privilege confinement from Prismata. 
+
+## 2.4 Informal Proof of Security 
+
+Prismata derives labels without exposing the decisive labeling step to attacker-controlled content in Cases 1 and 2 (§2.3), and mechan-ical confinement deterministically enforces them. We now show that these properties compose with the web agent framework’s closed action space to confine the agent end to end. The argument proceeds by enumerating the attacker’s available strategies and showing that each is blocked. Every element the agent interacts with passes through exactly three decision points: the action gate assigns a scope decision, Biba parsing assigns a trust label and capability, and enforcement applies the resulting labels. An attacker must subvert at least one of these to bypass Prismata’s confinement: (a) influence the action gate’s per-element scope decision, (b) influence Biba parsing’s trust label and capability assignment, or (c) bypass enforcement to execute an action that the resulting labels would block. We now show why each strategy fails. 
+
+(a) The action gate. For each interactive element 𝑒 , the action gate computes cap gate (𝑒 ) = ActionGate (path (𝑒 ), task ), where path (𝑒 )
+
+is the critical path from the DOM root to 𝑒 . No other page content is provided as input. If an injection 𝑖 ∈ DOM but 𝑖 ∉ path (𝑒 ), then path (𝑒 ) is identical whether or not 𝑖 is present in the DOM, so cap gate (𝑒 ) is unaffected by 𝑖 ; the label is injection-free (Case 1). 
+
+(b) Biba parsing. Biba parsing traverses path (𝑒 ) = (𝑒 1, . . . , 𝑒 𝑗 , . . . , 𝑒 )
+
+recursively. At depth 𝑗 , the labeler observes only (𝑒 1, . . . , 𝑒 𝑗 ); chil-dren and siblings are masked. Once label (𝑒 𝑗 ) is resolved, it is locked before 𝑒 𝑗 +1 is revealed. If a structural cue at depth 𝑗 signals un-trusted content, the label cascades to all descendants without fur-ther queries. Suppose an injection 𝑖 appears at depth 𝑗 +1 or below; since the cue at 𝑗 precedes 𝑖 , labels at depths 1, . . . , 𝑗 were deter-mined without 𝑖 as input; the label is injection-free (Case 2). 
+
+Composition. Since cap (𝑒 ) = min (cap gate , cap biba ), the attacker must defeat both mechanisms to elevate an element’s capability: the injection must lie on the critical path and no structural cues may precede it. This is Case 3 (Table 1), which we find to be empirically rare (§3). 
+
+(c) Enforcement cannot be bypassed. The agent’s action space is closed: every action targets a DOM element by identifier, and no action permits arbitrary code execution (§2.2). The security policy is derived from only the user-provided task details, with no DOM content as input, so the attacker cannot influence which content origins are retained or pruned. Mechanical confinement then removes pruned content from the agent’s observation and rejects any tool call that exceeds the target element’s assigned capability. This enforcement is deterministic code, independent of any LLM reasoning, and interposes on every agent action before it reaches the browser. 
+
+Residual risk. In Case 3, neither mechanism can rule out exposure to attacker-controlled content during labeling. The label may still be correct, as the labeler may reason correctly even on inputs that include untrusted content. However, even in these cases, misla-belings are confined to elements whose critical paths contain the injection: for every element 𝑒 ∈ DOM where 𝑖 ∉ path (𝑒 ), cap (𝑒 )
+
+remains unaffected. 
+
+## 3 Empirical Foundations 
+
+Prismata’s security argument depends on two empirical properties of real web pages: that untrusted content rarely lies on the critical path to an actionable element, and that when it does, a structural cue typically precedes it. We assess both on a corpus of real DOMs drawn from two sources. Common Crawl [ 13 ] provides broad cov-erage of high-traffic public sites, and Mind2Web [ 17 ] provides task traces over real interactive pages. From Common Crawl we take the Tranco top 10K domains [ 41 ]and sample 100 pages per domain (the homepage plus 99 others drawn at random from its captured URLs), giving 2,832 domains and 283,200 archived DOMs. For the labeled corpus we take one page per Common Crawl domain and an equal number of Mind2Web pages, sampled at random across its task traces so that each task contributes steps roughly evenly. The result is a 5,664-DOM corpus, split evenly between the two sources, spanning static pages and interactive browsing states. Two language models assist us in annotating the corpus. A prove-nance model flags each DOM node as owned by a public user, a hosted party, or an external embed, and treats all remaining content as developer-authored; we iterated on its prompt by hand against manually checked pages to align it with our criteria. For every untrusted node, a second model reads the path from the root and identifies the interval where a structural signal first indicates that untrusted content is about to appear, which is the condition Case 2 depends on. This yields 90,408 untrusted path instances, 24,992 0 25 50 75 100     
+
+> Site Percentile
+> 0.0
+> 0.5
+> 1.0
+> Coverage
+> (a) Case 1: Critical Paths
+> 025 50 75 100
+> Site Percentile
+> 0.0
+> 0.5
+> 1.0
+> Coverage
+> (b) Case 2: Structural Cues
+
+Figure 5: Case 1 and Case 2 coverage across sites. Most sites satisfy Prismata’s critical-path and structural-cue conditions for nearly all untrusted paths. 
+
+from Common Crawl and 65,416 from Mind2Web. We now test each property against this corpus. 
+
+Untrusted content rarely lies on the path to an action. Only 1,086 of the 90,408 untrusted paths (1.2%) contain an actionable descendant, an element the agent could click or fill (Fig. 5); the rest are leaves or text-only regions that cannot sit above a targetable element. We count a descendant as actionable if it is a non-hidden form control, a link, a label target, an element with an interactive ARIA role, an onclick handler, an editable region, or a tabindex .
+
+Structural cues typically precede untrusted content. Of those 1,086 cases, all but 94 carry a structural signal ahead of the action, letting Biba parsing catch the boundary before exposing the descen-dant. Those 94 are 8.7% of the actionable cases and only 0.10% of the full corpus, and most are low-risk: 79 (84%) are ordinary links (57 plain a[href] , 22 with role=link ). Our threat model assumes sites follow web best practices, under which a same-origin GET must be non-state-changing, so following a same-site link cannot carry out an attacker’s action; a link to another site falls outside the same-site scope of XSP. On sites that follow these practices, the residual therefore falls from 0.10% to 0.017% of the corpus: 15 genuine cases, all non-link controls such as buttons, inputs, and click handlers, which form the Case 3 configuration that Prismata handles with classical checks and conservative policy. 
+
+Trust labels cache across related pages. Because trust derivation runs an LLM over each critical path, its cost hinges on how often Prismata can reuse a previous decision, which is practical only if DOM structure recurs. If every page presented novel lineage, each element would need a fresh labeling pass. Figure 6 shows the opposite: lineage cache coverage climbs quickly as more DOMs from a site are processed, sharply for Mind2Web task traces, where the agent revisits the same page structure across steps, and steadily for Common Crawl as snapshots of the same site accumulate. Because sites reuse layout scaffolding across pages, a label computed once applies to many later observations. We quantify the cost and latency this reuse saves under deployment in §5.4. 
+
+## 4 Implementation & Evaluation Framework 
+
+In this section, we detail how we evaluate Prismata across a num-ber of web agent attacks. We also describe how our evaluation framework can be extended to evaluate entirely new defenses and attacks. 25 50 75 100     
+
+> DOMs per Site
+> 0
+> 50
+> 100
+> Cache Rate
+> (a) Per-Site Cache Coverage
+> Mind2Web Common Crawl
+> 14710 13
+> Monthly Snapshot
+> 0
+> 50
+> 100
+> Cache Rate
+> (b) Temporal (1 Year)
+
+Figure 6: Per-site cache coverage across Mind2Web and Com-mon Crawl snapshots. 
+
+## 4.1 Web Agent Attacks 
+
+We evaluate Prismata against three pop-up attack templates adapted from recent web-agent security literature [ 93 ]. Fig. 7 illustrates the attack templates with specific examples shown. Pop-up attacks incite the agent to click on advertisement-like overlays that contain malicious task instructions or deceptive shortcuts. These attacks are designed to imitate real-world scenarios and remain consistent with our threat model, similar to prior work [ 93 ]. Pop-up attacks mimic infamous pop-up advertisements delivered by external ad platforms, while varying the injected instruction pattern that attempts to derail the agent’s behavior. Notably, attack injections are limited to DOM locations that could realistically be modified by a malicious user or external party, similar to related work [ 19 ]. We use this attack class as a basis to develop three concrete attack templates that dynamically execute and inject malicious content into WebArena benchmark sites. We detail these attack templates below. We consider three variations of Pop-up attacks [ 93 ] in our exper-iments: Shortcut attacks, Fake Completion attacks [ 79 ], and Ignore Instruction attacks [ 60 ]. All three aim to redirect the agent to a ma-licious website by inserting task-related content into pop-ups that induce clicks. The Fake Completion and Ignore Instruction attacks represent well-recognized prompt injection patterns adapted for web agents: the Fake Completion attack presents a deceptive “task completed” message, while the Ignore Instruction attack attempts to override the agent’s prior instructions. However, these attacks are inherently constrained by their reliance on specific prompt structures. To capture a more adaptable pattern, we also propose the Shortcut attack, which presents an “obvious” shortcut (e.g., a one-click solution) as a pop-up to entice the agent to interact. 
+
+## 4.2 Prismata Evaluation Framework 
+
+We implement these attacks in a web-agent security evaluation framework for Prismata. We adopt a modular approach that en-ables bespoke web agent attack and defense components to inter-act with the browser environment, while also providing reusable components (e.g., pop-ups) that facilitate the easy composition of attacks. Each attack implements a standard interface that defines two fundamental features: 1) attack.step() invokes the module and passes a reference to the browser, allowing the attack module to execute its runtime sequence, potentially invoking its attack (i.e., with JavaScript), and returns a flag reflecting its decision. 2) 
+
+attack.success() allows the attack module to evaluate whether the attack was successful, provided the web agent’s next action and subsequent observation. This design isolates attacks from the Figure 7: Attacks Overview: We evaluate Prismata under three pop-up attack templates adapted from Pop-up [ 93 ] attacks. These templates use different prompt injection techniques and deceptive shortcuts to induce the agent to interact with adversarial content. 
+
+environmental execution, allowing attack modules to be made inde-pendently of the browser environment infrastructure. We anticipate that this modular approach will enable future work to introduce more attacks that adhere to an open-ended interface and support experimentation of defenses against various adversarial attack sce-narios. In addition to enabling attack research, we also introduce a stan-dardized interface to evaluate various defense mechanisms. De-fenses implement a standard interface that includes a run_defense 
+
+method, which provides the current HTML, accessibility tree, and screenshots to the defense module. The defense is then able to op-erate on the observation of choice (or use multiple in tandem), to perform the desired filtering and subsequently return a restricted observation that the base web agent then consumes. The Prismata evaluation framework provides two primary evalu-ation methods: 1) run_experiment() provides an end-to-end eval-uation where a web agent is tasked to complete a user-assigned task. At the same time, attacks are injected onto the page dy-namically, and the defense restricts observations in real time. 2) 
+
+defense_harness() provides a more fine-grained evaluation of the defense, enabling more precise diagnosis of which defense fea-tures work and which ones struggle. This method uses successfully completed tasks from a reference end-to-end evaluation (where neither attack nor defense is enabled) as a ground truth. It then post-hoc evaluates the defense on each step that the agent took in the ground truth and determines if the defense made the action impossible through restrictions. While we acknowledge that there may be multiple ways to com-plete a trajectory, and that this ground truth may not be the shortest path to the solution, this defense harness provides a lower-bound metric for defense utility. Moreover, it can be used to specifically di-agnose which stage of a defense is over-restricting the observation, identifying what parts of the defense may require additional tuning. Additionally, as there is some variance in the base web agent’s performance from run to run, this simulation-type evaluation con-trols for the randomness in the base web agent, ensuring the only remaining non-deterministic factor is from the defense model itself. Lastly, in cases where users may wish to fine-tune a model to be more specifically suited for these tasks, the defense harness lends itself particularly well to reinforcement learning problems. 
+
+## 4.3 Evaluation Metrics 
+
+We evaluate Prismata across two metric families: attack effective-ness and labeling accuracy. These metrics capture both security behavior and practical usability, measuring Prismata’s protective capabilities against XSP attacks. 
+
+4.3.1 Attack Metrics. We define three metrics: task success, attack success, and defense success. 
+
+Task Success Rate (TSR). Defined by WebArena for each bench-mark and computed using a combination of programmatic checks, LLM-as-a-judge, and string matching [97]. 
+
+Attack Success Rate (ASR). An attack is successful if the agent interacts with injected malicious content, e.g., clicking a malicious link, or filling an injected form; note that one-click browser exploits still appear in the wild [27, 50]. 
+
+Defense Success Rate (DSR). A defense step succeeds when Pris-mata removes or downgrades the attack to read-only where appli-cable. A failed attack does not imply a successful defense, and vice versa. 
+
+4.3.2 Prismata Labeling Metrics. We use three allowed-element labeling metrics: precision, recall, and F1. These metrics compare a model’s labeling against human-expert annotations over the DOM elements that remain available to the agent after Prismata’s security policy and mechanical confinement has been enforced. 
+
+Allowed-element set. Let 𝐴 human and 𝐴 model be the sets of ele-ments admitted by Prismata’s security policy under the expert’s and the model’s labels, respectively. Comparing the two sets isolates the elements admitted under one labeling but not the other. 
+
+Allowed-element Precision. The fraction of model-admitted el-ements the expert also admits: Prec = |𝐴 model ∩ 𝐴 human |/| 𝐴 model |.Low precision indicates over-permissiveness; it weakens security by admitting elements the expert would reject. 
+
+Allowed-element Recall. The fraction of elements the expert admits that the model also admits: Rec = |𝐴 model ∩𝐴 human |/| 𝐴 human |.Low recall indicates over-restrictiveness; it degrades agent utility but does not weaken security. 
+
+Allowed-element F1. The harmonic mean of precision and recall: 
+
+𝐹 1 = 2 · Prec · Rec /( Prec + Rec ). We report all three because a defense’s tolerable precision/recall trade-off is application-specific. 
+
+## 4.4 Implementation 
+
+To evaluate Prismata, we constructed an evaluation framework to implement various XSP attacks in an end-to-end web environ-ment [ 97 ]. Our framework is built on the rllm project [ 68 ], which provides an asynchronous and parallel environment for evaluating agents. We then use BrowserGym [ 18 ] to orchestrate the browser environment for the web agent, and to provide code for the base web agent that we build upon. Under the hood, BrowserGym uti-lizes Playwright with Chromium, an automated browser testing framework, to expose various core functions to the web agent (e.g., 
+
+click() , fill() , go_back ). To standardize our LLM API requests and enable caching for Prismata, we deploy LiteLLM [ 6 ] with Redis. However, we specifically disable caching by default and only en-able it on specific requests within Prismata, whilst leaving caching off for the web agent attack logic. Our Prismata evaluation frame-work, accumulating 18,409 lines of code, is written in Python and leverages SQLAlchemy and a PostgreSQL backend to store all the various web agent experiment results (e.g., observations, actions, telemetry). Prismata itself is implemented as a Python-based defense module that can be plugged into the evaluation framework, allowing for quick iterations on its design and logic. It stores the entire DOM representation, along with a representation of the accessibility tree, to facilitate mapping between the two representations. This enables both optimization purposes (e.g., pruning non-visible branches) and provides a high degree of granularity pertaining to the DOM. Its core function, populate_metadata , is the logic that implements Biba Parsing (§2.3). Once invoked, it leverages an asynchronous runtime, semaphores, and condition variables to launch multiple concurrent requests and coordinate their responses simultaneously. The code for Prismata is relatively concise, at around 1,135 lines of code. 
+
+## 5 Evaluation 
+
+In this section, we provide three primary evaluations of Prismata. The first evaluates how effectively Prismata mitigates attacks across the dataset and compares it to the base web agent without Pris-mata (§5.2). The second evaluates how Prismata affects the baseline performance of the web agent in non-adversarial settings (§5.4). Finally, we provide a more granular analysis of the performance of Prismata in its various stages, along with addressing potential issues such as computational cost or time to execute (§5.4). 
+
+## 5.1 Experimental Setup 
+
+We use WebArena which provides reliable and reproducible en-vironments for web agent evaluations [ 97 ], and has been used extensively by the web agent community [ 51 , 77 , 88 , 92 , 98 ]. We-bArena is built from widely deployed open-source stacks: its GitLab 
+
+Table 2: Attack Evaluation with Prismata enabled ( ) and without it enabled ( #). 
+
+Attack TSR 𝜎 ASR 𝜎 DSR 𝜎  
+
+> Baseline
+
+# 29.9 1.4 – – – –  
+
+> 26.6 0.3
+
+– – – – 
+
+> Shortcut
+
+# 11.2 0.9 63.9 2.0 – –      
+
+> 24.4 1.1 2.1 0.4 88.4 2.0 Completion
+
+# 2.3 0.3 92.5 0.7 – –      
+
+> 24.8 0.8 0.0 0.0 95.8 2.7 Ignore
+
+# 0.0 0.0 100.0 0.0 – –     
+
+> 19.9 0.7 0.0 0.0 95.1 5.0
+
+instance runs the real GitLab codebase, and its shopping, Reddit-style forum, and CMS sites are backed by production-grade plat-forms populated with realistic data, giving its DOM structures a fidelity comparable to the live web. We execute each experiment three times and report mean values along with standard deviations across runs (model snapshots are recorded in Appendix B). For our base web agent, we first evaluated gpt-5.4 , gpt-5.4-mini , and 
+
+gpt-5.4-nano on the full WebArena benchmark using the Browser-Gym framework and web agent, which achieved reward-weighted task success rates of 33.6%, 30.8%, and 16.0%, respectively. Because the differences between gpt-5.4 and gpt-5.4-mini were modest, we chose gpt-5.4-mini as our primary model for all experiments, balancing performance with the cost and efficiency requirements of running the experiments required for this paper. For our defense models, we selected candidates with inference cost lower than or comparable to the cost of running the web agent itself. 
+
+5.1.1 Validation Study. Prismata’s security rests on the underly-ing model correctly labeling ownership and capabilities, since a mislabel can admit content the policy would otherwise restrict. We therefore conduct a validation study to assess model performance on owner and capability labeling. Using the same experimental setup, we randomly sample four observations from each WebArena site, drawn from our baseline experiments regardless of task success. For each observation, we replace the model labeler with an expert human annotator knowledgeable in web security and development, while maintaining all other cascading policy and enforcement set-tings. We then compare these human annotations against model predictions. Each observation required approximately one hour to annotate, totaling approximately 20 hours of annotation time. We focus on benign observations as the XSP threat model assumes malicious content is injected into user or external fields; accurate labeling of these fields helps Prismata restrict them. We use DSR to measure how effectively Prismata mitigates attacks end to end, and use allowed-element precision, recall, and F1 to measure how closely model-derived filtering matches expert annotations. 
+
+## 5.2 Attack Evaluation 
+
+Our adversarial evaluation of Prismata is presented in Table 2, which includes experiments with and without Prismata enabled, along with WASP stress tests (Table 3) [ 19 ]. Table 2 also includes a Table 3: WASP and adaptive attack evaluations.                         
+
+> WASP
+> Setting Prismata Goal 0 Goal 1 E2E #1/21 0/21 Int. #1/21 0/21 E2E 0/21 0/21 Int. 0/21 0/21
+> Adaptive WA20
+> Attack Prismata ASR Shortcut #100.0 Shortcut 0.0 Completion #65.0 Completion 0.0 Ignore #85.0 Ignore 0.0
+
+benign baseline to quantify the performance cost in non-adversarial conditions, which we refer to as utility . Across all adversarial set-tings, Prismata increases the average task success rate (TSR) from 4.5% to 23.0% (+18.5 percentage points; ≈5.1 × relative), while re-ducing the average attack success rate (ASR) from 85.5% to 0.7% compared to the baseline without Prismata. Averaged across attacks, this corresponds to ΔASR = −84 .8 points, ΔTSR = +18 .5 points, and an average defense success rate (DSR) of 93 .1% . Under benign conditions, Prismata preserves most baseline utility: the baseline TSR of 29.9% without Prismata is 26.6% with Prismata enabled. These evaluations demonstrate that Prismata is particularly ef-fective at mitigating attacks that convince the agent to interact with adversarial content (i.e., Shortcut), complete the task prematurely (i.e., Completion), or distract it with ignorable content (i.e., Ignore). For Completion and Ignore, Prismata drives ASR to 0.0% while in-creasing TSR from 2.3% and 0.0% to 24.8% and 19.9%, respectively. For Shortcut, Prismata reduces ASR from 63.9% to 2.1% while rais-ing TSR from 11.2% to 24.4%. Although TSR under attack remains below the benign baseline, Prismata consistently makes otherwise-vulnerable trajectories both safer and more likely to complete the user’s task. Table 3 separately reports the WASP and adaptive attack stress tests: Prismata eliminates end-to-end attack success on the adaptive WA20 attacks and blocks WASP plain-goal attack success in both goal settings. The WASP email change task is a direct test of XSP: it attempts to use the site’s benign account-management feature to change the user’s email to test@footest.com . Without Prismata, the WASP plain-goal attack succeeds once in the Goal 0 setting; with Prismata enabled, that success is blocked. Prismata is designed to confine that site feature when it falls outside the user’s task. 
+
+ASR and DSR are not complements. A successful attack always counts as a defense failure, but the converse does not hold: an attack can fail even when Prismata never removes or downgrades it, because the agent sometimes ignores the injected content on its own. We report both because ASR measures whether the agent was compromised, while DSR measures whether Prismata actively neutralized the attack (§4.3). 
+
+## 5.3 Prismata Labeling Evaluation 
+
+Our validation study replaces Biba parsing’s ownership and capa-bility labeling with expert annotations. We compare the resulting allowed-element sets using the metrics defined in Sec. 4.3. We sam-pled 20 WebArena observations spanning five domains: GitLab, Maps, Reddit, Shopping, and Shopping Admin. Each observation is labeled once by a domain expert and once by each candidate model. From every labeling, we derive the set of elements that survive Gemini 3.1 Flash Lite   
+
+> GPT-5 Nano
+> GPT-OSS 120B
+> Qwen3 8B
+> MiniMax M2.5
+> GPT-5.4 Nano
+> 0.0
+> 0.5
+> 1.0
+> Score
+> Precision Recall F1
+
+Figure 8: Allowed-element precision, recall, and F1 for the six evaluated labelers, averaged over the 20 paired observa-tions. Each metric compares the set of elements that survive Prismata’s defense under the model’s labeling against the set that survives under the expert’s. GitLab   
+
+> Maps
+> Reddit
+> Shopping
+> Shopping Admin
+> 0.0
+> 0.5
+> 1.0
+> Score
+> Precision Recall F1
+
+Figure 9: Per-site allowed-element precision, recall, and F1 for GPT-5.4-nano. Precision holds at or above 95% on every site; the lowest recall occurs on Maps. 
+
+Prismata’s filtering process and report the precision, recall, and F1 of the model’s allowed-element set against the expert’s. We hold the rest of the defense stack fixed so the metrics isolate how well each model captures the labeling decisions that Prismata’s filtering depends on. Fig. 8 summarizes allowed-element precision, recall, and F1 across the six evaluated models. Across both proprietary and open-source models, we observe consistently high precision: every eval-uated model exceeds 93% precision and 87% F1, with the strongest configurations clustering between 95% and 99% precision. Since over-permissive labels are the failure mode that weakens Prismata’s integrity guarantee, we prioritize precision when comparing mod-els. Under that criterion, GPT-5.4-nano achieves the highest pre-cision ( 98 .69% ), but at the cost of the lowest recall ( 82 .69% ). Gem-ini 3 Flash achieves the highest F1 at 95 .14% , while GPT-5.4-mini provides a strong balance between precision and recall. The open-source models, GPT-OSS-120B, Qwen3-8B, and MiniMax-M2.5, also maintain high precision, but their lower recall suggests more con-servative labeling: they tend to exclude benign elements more often than they admit elements the expert would reject. Fig. 9 shows the per-site breakdown for GPT-5.4-nano. Precision remains at or above 95% on every site, and F1 remains above 89% 
+
+throughout. The only meaningful recall dip occurs on Maps, where the smaller annotated DOM makes each single-element disagree-ment have a larger effect on the aggregate score. These results indicate that the models powering Biba parsing can provide labels precise enough for Prismata to enforce its policy while preserving most benign elements. They also suggest that remaining precision gains depend more on base-model quality than on architectural changes to Prismata. Two caveats are worth noting. First, allowed-element F1 averages over many elements, so it does not capture worst-case safety. A 
+
+95% F1 still leaves room for a single mislabel on a critical element to allow an attack-relevant element through, although other parts of Prismata, such as capability restriction, may still contain the attack. Second, the human annotation pass is subject to reviewer fatigue and possible human error, so we capped the study at four observations per site to keep the labeling effort manageable while preserving diversity across page archetypes. 
+
+## 5.4 Prismata Utility Evaluation 
+
+To understand the performance impact imposed by Prismata on the web agent beyond TSR, we directly compare the benign We-bArena baseline runs with and without Prismata. These runs show a small task-success-rate difference (mean difference = 3.3 percent-age points), indicating that Prismata preserves most of the agent’s baseline utility while active. Prismata does, however, rely on a significant number of requests in order to properly annotate the HTML DOM. To minimize the latency and cost of these requests, we measured the effectiveness of our caching layer [ 6]. Fig. 10 summarizes this deployment overhead with four panels: the end-to-end latency breakdown, the end-to-end cost breakdown, the per-component latency of Prismata, and the caching savings from KV and request-level reuse. In the matched WA20 runs, adding Prismata increases the mean web-agent request-duration contribution from 1,649.8s to 1,781.4s, while adding 459.0s for the policy model, 1,098.2s for action gating, and 789.6s for Biba parsing. The simulated cached cost is $1.105 without Prismata and $1.623 with Prismata across the 20-task runs. Caching avoids $1.821 through KV reuse and $1.102 through request-level reuse. Thus, Prismata’s extra inference cost is concentrated in reusable DOM-labeling work, so both cache layers are essential to keeping Prismata inexpensive. 
+
+## 6 Discussion & Related Work 
+
+In this section, we will discuss approaches from prior work in ap-proaches to agent security and web agent-specific defenses. We will then further contextualize how XSP fits into the broader secu-rity landscape as an attack class. We also expand on the parallels between XSP and XSS, and how the fine-grain security framework we establish to dissect web pages in some ways mirrors prevention for XSS. 
+
+## 6.1 Related Work 
+
+In our review, we’ve found approaches to agent security and specif-ically preventing prompt injection have often taken either one of two routes: 1) model-based approaches [ 47 , 71 ], which are typ-ically evaluated empirically, and 2) systems security-based ap-proaches [ 7 , 15 , 64 , 69 , 81 ], that can provide more mechanical con-straints and protections against attacks. Model-based approaches to preventing prompt-injection have introduced significant steps forward for agentic security [ 16 , 45 –47 , 71 , 83 ]. However, empirically-driven approaches can also lack No Prismata Prismata 
+
+> 0
+> 2000
+> 4000
+> Seconds
+
+A. Latency Breakdown  
+
+> No Prismata Prismata
+> 0.0
+> 0.5
+> 1.0
+> 1.5
+> USD
+
+B. Cost Breakdown 
+
+> Web Agent
+> Policy Model
+> Action Gate  Biba Parser
+> 0
+> 500
+> 1000
+> 1500
+> Seconds
+
+C. Prismata Component Latency  
+
+> KV Cache Req. Cache
+> 0
+> 1
+> 2
+> USD
+> $2.023 $0.202 $1.102
+
+D. Prismata Cache Savings  
+
+> No Cache Cached
+> Web Agent Policy Model Action Gate Biba Parser
+
+Figure 10: Deployment cost and caching. Panels A and B com-pare end-to-end latency and cached dollar cost for matched WA20 runs with and without Prismata. Panels C and D iso-late Prismata runs, showing component latency for the web agent, policy model, action gate, and Biba parser, along with the cost avoided by KV and request-level caching. 
+
+the ability to provide more formal guarantees inherited by the more traditional security approaches. Although model-based approaches have been proposed in the web agent security landscape [ 89 , 94 ], these approaches can be more difficult to generalize, and can be more susceptible to attacks against XSP-like attacks [19]. Under the system security umbrella, prior work has explored defenses involving information flow control [ 14 , 65 , 81 , 96 ], for in-stance. These approaches have become an increasingly popular tech-nique used to provide security guarantees in agentic systems that connect various systems via tool-calling. These systems benefit sig-nificantly from rich ground-truth metadata features inherent to the tools defined (e.g., send_email(recipient, subject, body) ), al-lowing external security frameworks to detect information flowing in potentially harmful directions. Unfortunately, the web agent’s ac-tions are contextually uninformative (e.g., click(element=101) ). These non-descriptive actions make it difficult to assess, with any real granularity, the security implications of actions without under-standing the broader browsing context. The only parallel ground-truth metadata, in these cases, is the domain that the agent accesses. Unfortunately, domain-level granularity is likely insufficient for an agentic web browser. Recalling our example, even generally trusted domains (i.e., shopping.com) often include user content (e.g., product reviews). Moreover, as with XSS, compromised agents may leverage site features to exfiltrate information to attackers, even without leaving the domain (e.g., direct messages, reviews, etc.). Specifically, CaMeL [ 15 ] achieves complete-mediation guaran-tees by pre-planning over structured tool APIs whose arguments carry semantic ground truth and are, crucially, not data-dependent. However, every web browsing task is inherently data-dependent: an action like click(id) carries no security meaning in isolation. The same action might post a public comment, send a direct mes-sage, or reset a password; it is the site, not the action, that decides what the click actually does. As such, CaMeL-style pre-planning cannot be lifted directly into the web agent setting without first solving the web entanglement problem. Another novel complexity of the web browsing context is the general uncertainty of the actions required to complete a task (es-pecially prior to beginning the task), and a need to, at times, utilize untrusted information to make decisions. While many previous agentic defense frameworks leverage security models to plan the potential tools and permissions required before beginning a task [ 3, 14 , 15 , 81 ], web browsing is a fundamentally open-ended inter-face, typically featuring multiple ways to do the same thing. Some work [ 69 ] has begun to explore solutions that leverage context to enable just-in-time security policies across open-ended tasks, balancing both utility with fine-grained controls. Dual LLM architectures for secure AI systems have been pro-posed [ 80 ] and implemented recently [ 7, 14 , 15 ]. Originally inspired by the dual LLM approach, Prismata is designed with a finer-grained separation and strict notions of authentication prior to authoriza-tion. Dual-LLM designs typically assume structured tool APIs in which actions and data are clearly typed, allowing a quarantined model to pass bounded variables up to a privileged planner. Web agents violate this assumption: their action vocabulary is abstract (click(elementId=. . . ) , fill(. . . ) ) and each argument is a reference into the untrusted DOM, so deciding what to act on requires direct exposure to page context. A strict two-level split is therefore insufficient. We argue that processing the untrusted content from web environments requires an intermediary level of exposure to untrusted content (e.g., Biba parsing). Therefore, Prismata introduces this intermediary level of exposure between quarantine and full privilege. 
+
+## 6.2 XSS Preventions 
+
+Browser, framework, and site developers have collaborated over the past decade to introduce techniques and standards to mitigate these attacks, including input sanitization [ 4, 31 ], content security policies [26, 52], for instance. Unfortunately, state-of-the-art mitigations for XSS can not be easily adapted to web agent environments. In the case of user con-tent, developers can leverage sanitizers [ 4, 31 ] to guarantee an input does not contain executable code. With agents, LLMs have no clear distinction between data and instructions [ 28 ], meaning that any textual content may be interpreted and executed as instructions. In other words, all user content is a potential avenue for malicious pay-loads, and no filter can provide formally provable security without censoring all content. Rigorous protections have also been developed to ensure that external content, such as advertisements, cannot execute mali-cious instructions. Browser-based detection techniques [ 66 , 70 ]and sandboxing with iframes [ 53 ] provide advertisements with an isolated document environment in which to operate, and the Content-Security-Policy (CSP) sandbox directive [ 52 ] further re-stricts ad capabilities. These browser primitives are leveraged by platforms such as Google AdSense, which implement the SafeFrame specification [ 34 ] to ensure advertisements are restricted in their capabilities to interact with the host site [ 23 ], along with CSP stan-dards [ 26 ]. Unfortunately, once again, web agents have no real notion of fine-grain permissions and are unable to guarantee re-stricted capabilities or privileges for any content within the LLM context. This absence of granular controls positions Prismata as a novel security framework, allowing a web page to be subcategorized into different regions of ownership with distinctive capabilities. In the same way that iframe directives can provide or restrict browser capabilities in advertisements, such as allow-downloads 
+
+or allow-popups [53 ], Prismata provides read-only or read-write capabilities for the web agent. 
+
+## 6.3 Limitations 
+
+Integrity vs. Accuracy: A key limitation of Prismata is an in-tentional trade-off of integrity vs. accuracy, where Prismata opts to preserve integrity over prioritizing accuracy. More specifically, we mean that a model with access to an element’s parents and children may predict more accurate labels pertaining to each ele-ment’s purpose and context. However, our approach mechanically blocks upward tampering and privilege escalation under the stated action-space and threat-model assumptions. Prismata is limited by the accuracy of the underlying model used to produce outputs at the various stages (i.e., the policy model, action gate, and Biba parsing). As we demonstrate in our evaluation (§5.4), different models produce various results in this regard. To further improve performance, it would be straightforward to utilize a reinforcement learning pipeline to fine-tune these components. However, for our evaluations, we found this step unnecessary, as commodity models already provide satisfactory performance. 
+
+Context Availability: In the same regard, it is essential to recog-nize that Prismata utilizes the HTML and available attributes (e.g., class names, href, etc.) to determine the appropriate metadata and capabilities defined. As such, there is the potential for mislabeling, which is influenced by the site’s specific HTML layout and structure. In practice, Prismata’s labeling draws on multiple signals, including ancestry in the DOM, visible headers (e.g., “Reviews,” “Comments”), link targets, and other metadata, rather than any single attribute. Labeling is inherently heuristic: our validation study (§5.1.1) is designed to enable comparison across models against a security-oriented human reference, not to assert ground truth. Attack success rate and baseline utility then serve as complementary end-to-end proxies, since overly permissive labeling would raise ASR while overly restrictive labeling would degrade TSR. This posture is con-sistent with other application-layer defenses (e.g., WAFs, IDS, spam filters) that operate under imperfect signals yet remain valuable within a defense-in-depth strategy. In practice, several widespread conventions produce the structural cues that Prismata relies on: UI design conventions place headings and labels before the content they describe; accessibility standards such as WCAG require section headers before their content; and component-based development practices, including semantic HTML and methodologies like BEM, produce descriptive wrapper elements around dynamically injected content. These conventions are reinforced by economic incentives: search engines both reward and rely on semantic structure and accessibility compliance to parse and rank content. Collaboration with site developers to integrate standardized labels, such as the ones used in this work, would further alleviate the issue. As web agents continue to gain prominence, it is not impossible that these types of websites or standards could be adopted, especially consid-ering the standards adopted to prevent XSS [34, 53]. 
+
+Captured vs. Live DOM: Prismata operates on the same serialized DOM snapshot that is handed to the underlying agent, so any drift between the captured observation and the live page at execution time affects the agent and Prismata equally. This gap is a funda-mental limitation of LLM-driven web agents, which must serialize the page into text before reasoning about it, rather than an artifact introduced by Prismata. 
+
+Non-Textual Attacks: We acknowledge that Prismata does not cover all domains of attacks web agents will encounter in multi-modal environments. Since we evaluate web agents using accessibil-ity trees as the primary input, we recognize that multimodal agents will also utilize non-textual modalities such as visual and aural inputs. Therefore, gradient-based image perturbations [ 48 ], non-textual jailbreaking attacks [ 21 , 43 ], and multimodal attacks [ 74 ] are still exploitable for web agents using Prismata. However, Prismata’s core security principles may be applied to develop defenses target-ing non-textual modalities, enabling future system-level defenses that provide comprehensive protection for multimodal agents. 
+
+Hallucinations: Additionally, hallucinations are currently an issue that plagues LLMs in general [ 33 ]. Structured outputs that define predefined output values help to constrain the output hallucination space, ensuring all outputs are sampled from a limited set of possi-bilities. Furthermore, we can ensure that malicious content will be constrained by permissions that it cannot influence, as shown in our Prismata Security argument (§2.3). 
+
+High-Risk Tasks: Lastly, we acknowledge that some tasks are likely to require all types of content (e.g., user and external), with all capabilities provided to untrusted content. In these situations, we propose that future work explore solutions that delegate significant untrusted work to quarantined web agents in a manner similar to what has been done for tool calling with quarantined models [ 7, 15 ]. 
+
+Agent architectures. Some web agents have begun to explore multi-agent designs. The filtered observation produced by Prismata could theoretically be ingested by subagents in these architectures, as well as by single-agent architectures. 
+
+## 7 Conclusion 
+
+In this work, we present Prismata, a novel contextual least-privilege defense for securing web agents from XSP attacks, inspired by the 1977 classical Biba integrity model [ 8 ]. Prismata proposes a fine-grain security framework to dissect pages and provide granular access control and capabilities to web agents. Prismata then inter-prets the web page through this framework, providing security properties that significantly constrain XSP attacks from conducting malicious activity through user or external content. To provide upward integrity, we introduce Biba parsing, a novel technique for parsing untrusted data with LLMs, which the classic Biba integrity model once again inspires. Finally, we evaluate Prismata across three web agent XSP attack templates, measuring a reduction in attack success rate from 85.5% to 0.7%, while improving task suc-cess rate under adversarial conditions from 4.5% to 23.0%, all while preserving most benign web agent utility. Lastly, our Prismata eval-uation framework provides future researchers with an end-to-end framework to evaluate future XSP attacks and defenses. 
+
+## References 
+
+[1] Sahar Abdelnabi, Aideen Fay, Ahmed Salem, et al . 2025. LLMail-Inject: A Dataset from a Realistic Adaptive Prompt Injection Challenge. In The Thirty-ninth Annual Conference on Neural Information Processing Systems Datasets and Benchmarks Track . https://openreview .net/forum?id =FhXoETzdfs [2] Anthropic. 2024. Developing a computer use model . Technical Report. Anthropic. [3] Mislav Balunovic, Luca Beurer-Kellner, Marc Fischer, and Martin Vechev. 2024. AI Agents with Formal Security Guarantees. In ICML 2024 Next Generation of AI Safety Workshop . https://openreview .net/forum?id =c6jNHPksiZ [4] Davide Balzarotti, Marco Cova, Vika Felmetsger, Nenad Jovanovic, Engin Kirda, Christopher Kruegel, and Giovanni Vigna. 2008. Saner: Composing Static and Dynamic Analysis to Validate Sanitization in Web Applications. In Proceedings of the 29th IEEE Symposium on Security and Privacy .[5] Muhammad Ahmad Bashir, Sajjad Arshad, William Robertson, and Christo Wil-son. 2016. Tracing Information Flows Between Ad Exchanges Using Retargeted Ads. In 25th USENIX Security Symposium . 481–496. [6] BerriAI. [n. d.]. LiteLLM. https://github .com/BerriAI/litellm. Accessed August 2025. [7] Luca Beurer-Kellner, Beat Buesser, Ana-Maria Creţu, et al . 2025. Design Pat-terns for Securing LLM Agents against Prompt Injections. arXiv preprint arXiv:2506.08837 (2025). doi:10 .48550/arXiv .2506 .08837 [8] K. J. Biba. 1977. Integrity Considerations for Secure Computer Systems . Technical Report MTR-3153 (ESD-TR-76-372). The MITRE Corporation. [9] Hwan Chang, Yonghyun Jun, and Hwanhee Lee. 2026. ChatInject: Abusing Chat Templates for Prompt Injection in LLM Agents. In The Fourteenth International Conference on Learning Representations . https://openreview .net/forum?id =
+
+WVhgFSKniL [10] Sizhe Chen, Julien Piet, Chawin Sitawarin, and David Wagner. 2024. StruQ: Defending Against Prompt Injection with Structured Queries. arXiv preprint arXiv:2402.06363 (2024). doi:10 .48550/arXiv .2402 .06363 [11] Yulin Chen, Tri Cao, Haoran Li, et al . 2026. WebAgentGuard: A Reasoning-Driven Guard Model for Detecting Prompt Injection Attacks in Web Agents. 
+
+arXiv preprint arXiv:2604.12284 (2026). doi:10 .48550/arXiv .2604 .12284 [12] Sarthak Choudhary, Divyam Anshumaan, Nils Palumbo, and Somesh Jha. 2025. How Not to Detect Prompt Injections with an LLM. arXiv preprint arXiv:2507.05630 (2025). doi:10 .48550/arXiv .2507 .05630 [13] Common Crawl Foundation. 2026. Common Crawl. https: //registry .opendata .aws/commoncrawl. Accessed April 22, 2026. Crawl collection used: CC-MAIN-2026-12.. [14] Manuel Costa, Boris Köpf, Aashish Kolluri, Andrew Paverd, Mark Russinovich, Ahmed Salem, Shruti Tople, Lukas Wutschitz, and Santiago Zanella-Béguelin. 2025. Securing AI Agents with Information-Flow Control. arXiv preprint arXiv:2505.23643 (2025). doi:10 .48550/arXiv .2505 .23643 [15] Edoardo Debenedetti, Ilia Shumailov, Tianqi Fan, et al . 2025. Defeating Prompt Injections by Design. arXiv preprint arXiv:2503.18813 (2025). doi:10 .48550/ arXiv .2503 .18813 [16] Edoardo Debenedetti, Jie Zhang, Mislav Balunovic, Luca Beurer-Kellner, Marc Fischer, and Florian Tramèr. 2024. AgentDojo: A Dynamic Environment to Evaluate Prompt Injection Attacks and Defenses for LLM Agents. In The 38th Conference on Neural Information Processing Systems Datasets and Benchmarks Track . https://openreview .net/forum?id =m1YYAQjO3w [17] Xiang Deng, Yu Gu, Boyuan Zheng, Shijie Chen, Samuel Stevens, Boshi Wang, Huan Sun, and Yu Su. 2023. Mind2Web: Towards a Generalist Agent for the Web. arXiv preprint arXiv:2306.06070 (2023). doi:10 .48550/arXiv .2306 .06070 [18] Alexandre Drouin, Maxime Gasse, Massimo Caccia, Issam H. Laradji, Manuel Del Verme, Tom Marty, David Vazquez, Nicolas Chapados, and Alexandre Lacoste. 2024. WorkArena: How Capable are Web Agents at Solving Common Knowledge Work Tasks?. In Proceedings of the 41st International Conference on Machine Learning , Ruslan Salakhutdinov, Zico Kolter, Katherine Heller, Adrian Weller, Nuria Oliver, Jonathan Scarlett, and Felix Berkenkamp (Eds.). https: //proceedings .mlr .press/v235/drouin24a .html [19] Ivan Evtimov, Arman Zharmagambetov, Aaron Grattafiori, Chuan Guo, and Kamalika Chaudhuri. 2025. WASP: Benchmarking Web Agent Security Against Prompt Injection Attacks. arXiv preprint arXiv:2504.18575 (2025). doi:10 .48550/ arXiv .2504 .18575 [20] Hanna Foerster, Tom Blanchard, Kristina Nikolić, Ilia Shumailov, Cheng Zhang, Robert Mullins, Nicolas Papernot, Florian Tramèr, and Yiren Zhao. 2026. CaMeLs Can Use Computers Too: System-level Security for Computer Use Agents. arXiv preprint arXiv:2601.09923 (2026). doi:10 .48550/arXiv .2601 .09923 [21] Jiahui Geng, Thy Thy Tran, Preslav Nakov, and Iryna Gurevych. 2025. Con Instruction: Universal Jailbreaking of Multimodal Large Language Models via Non-Textual Modalities. In Proceedings of the 63rd Annual Meeting of the As-sociation for Computational Linguistics (Volume 1: Long Papers) , Wanxiang Che, Joyce Nabende, Ekaterina Shutova, and Mohammad Taher Pilehvar (Eds.). doi:10 .18653/v1/2025 .acl-long .146 [22] Yichen Gong, Delong Ran, Jinyuan Liu, Conglei Wang, Tianshuo Cong, Anyu Wang, Sisi Duan, and Xiaoyun Wang. 2025. FigStep: Jailbreaking Large Vision-Language Models via Typographic Visual Prompts. In Proceedings of the Thirty-Ninth AAAI Conference on Artificial Intelligence . AAAI Press, 23951–23959. doi:10 .1609/aaai .v39i22 .34568 [23] Google. 2022. Render creatives using SafeFrame. https://support .google .com/ admanager/answer/6023110?hl =en. Accessed July 2025. [24] Google. 2024. Gemini Deep Research. https://gemini .google/overview/deep-research/. Announced December 11, 2024; Accessed August 2025. [25] Google. 2025. Architecting Security for Agentic AI. https: //security .googleblog .com/2025/12/architecting-security-for-agentic .html. Accessed April 2026. [26] Google. 2025. Use Tag Manager with a Content Security Policy (CSP). https: //developers .google .com/tag-platform/security/guides/csp. Accessed July 2025. [27] Google Threat Analysis Group. 2024. Buying Spying: Insights into Commercial Surveillance Vendors . Technical Report. Google. [28] Kai Greshake, Sahar Abdelnabi, Shailesh Mishra, Christoph Endres, Thorsten Holz, and Mario Fritz. 2023. Not What You’ve Signed Up For: Compromising Real-World LLM-Integrated Applications with Indirect Prompt Injection. In 
+
+Proceedings of the 16th ACM Workshop on Artificial Intelligence and Security .79–90. doi:10 .1145/3605764 .3623985 [29] Jeremiah Grossman, Seth Fogie, Robert Hansen, and Anton Rager. 2007. XSS Attacks: Cross-Site Scripting Exploits and Defense . Syngress. [30] Sherry He, Brett Hollenbeck, and Davide Proserpio. 2021. The Market for Fake Reviews. In Proceedings of the 22nd ACM Conference on Economics and Computation . doi:10 .1145/3465456 .3467589 [31] Pieter Hooimeijer, Benjamin Livshits, David Molnar, Prateek Saxena, and Mar-gus Veanes. 2011. Fast and Precise Sanitizer Analysis with BEK. In 20th USENIX Security Symposium (USENIX Security 11) . https://www .usenix .org/conference/ usenix-security-11/presentation/fast-and-precise-sanitizer-analysis-bek [32] Haitao Hu, Peng Chen, Yanpeng Zhao, and Yuqi Chen. 2025. AgentSentinel: An End-to-End and Real-Time Security Defense Framework for Computer-Use Agents. arXiv preprint arXiv:2509.07764 (2025). doi:10 .48550/arXiv .2509 .07764 [33] Yue Huang, Lichao Sun, Haoran Wang, et al . 2024. Position: TrustLLM: Trustwor-thiness in Large Language Models. In Proceedings of the 41st International Con-ference on Machine Learning (Proceedings of Machine Learning Research, Vol. 235) .PMLR, 20166–20270. https://proceedings .mlr .press/v235/huang24x .html [34] Interactive Advertising Bureau. 2014. SafeFrames v1.1 Specification . Technical Report. Interactive Advertising Bureau. https://www .iab .com/wp-content/ uploads/2014/08/SafeFrames_v1 .1_final .pdf#page =26 .73 Accessed July 2025. [35] Yuqi Jia, Zedian Shao, Yupei Liu, Jinyuan Jia, Dawn Song, and Neil Zhenqiang Gong. 2025. A Critical Evaluation of Defenses against Prompt Injection Attacks. 
+
+arXiv preprint arXiv:2505.18333 (2025). doi:10 .48550/arXiv .2505 .18333 [36] Yigitcan Kaya, Anton Landerer, Stijn Pletinckx, Michelle Zimmermann, Christo-pher Kruegel, and Giovanni Vigna. 2026. When AI Meets the Web: Prompt Injection Risks in Third-Party AI Chatbot Plugins. In Proceedings of the IEEE Symposium on Security and Privacy (S&P) . doi:10 .48550/arXiv .2511 .05797 [37] Hanna Kim, Minkyoo Song, Seung Ho Na, Seungwon Shin, and Kimin Lee. 2025. When LLMs Go Online: The Emerging Threat of Web-Enabled LLMs. In 34th USENIX Security Symposium .[38] Jing Yu Koh, Robert Lo, Lawrence Jang, et al . 2024. VisualWebArena: Eval-uating Multimodal Agents on Realistic Visual Web Tasks. arXiv preprint arXiv:2401.13649 (2024). doi:10 .48550/arXiv .2401 .13649 [39] Butler W. Lampson. 1973. A Note on the Confinement Problem. Commun. ACM 
+
+16, 10 (1973). doi:10 .1145/362375 .362389 [40] Qianlong Lan and Anuj Kaul. 2026. The Cognitive Firewall:Securing Browser Based AI Agents Against Indirect Prompt Injection Via Hybrid Edge Cloud Defense. arXiv preprint arXiv:2603.23791 (2026). doi:10 .48550/arXiv .2603 .23791 [41] Victor Le Pochat, Tom Van Goethem, Samaneh Tajalizadehkhoob, Maciej Ko-rczyński, and Wouter Joosen. 2019. Tranco: A Research-Oriented Top Sites Ranking Hardened Against Manipulation. In Proceedings 2019 Network and Distributed System Security Symposium . doi:10 .14722/ndss .2019 .23386 [42] Ada Lerner, Anna Kornfeld Simpson, Tadayoshi Kohno, and Franziska Roesner. 2016. Internet Jones and the Raiders of the Lost Trackers: An Archaeological Study of Web Tracking from 1996 to 2016. In 25th USENIX Security Symposium .[43] Yifan Li, Hangyu Guo, Kun Zhou, Wayne Xin Zhao, and Ji-Rong Wen. 2024. Im-ages Are Achilles’ Heel of Alignment: Exploiting Visual Vulnerabilities for Jail-breaking Multimodal Large Language Models. In Computer Vision - ECCV 2024 ,Aleš Leonardis, Elisa Ricci, Stefan Roth, Olga Russakovsky, Torsten Sattler, and Gül Varol (Eds.). doi:10 .1007/978-3-031-73464-9_11 [44] Zeyi Liao, Lingbo Mo, Chejian Xu, Mintong Kang, Jiawei Zhang, Chaowei Xiao, Yuan Tian, Bo Li, and Huan Sun. 2025. EIA: Environmental Injection Attack on Generalist Web Agents for Privacy Leakage. arXiv preprint arXiv:2409.11295 
+
+(2025). doi:10 .48550/arXiv .2409 .11295 [45] Yi Liu, Gelei Deng, Yuekang Li, et al . 2023. Prompt Injection Attack against LLM-integrated Applications. arXiv preprint arXiv:2306.05499 (2023). doi:10 .48550/ arXiv .2306 .05499 [46] Yupei Liu, Yuqi Jia, Runpeng Geng, Jinyuan Jia, and Neil Zhenqiang Gong. 2024. Formalizing and Benchmarking Prompt Injection Attacks and Defenses. In 33rd USENIX Security Symposium .[47] Yupei Liu, Yuqi Jia, Jinyuan Jia, Dawn Song, and Neil Zhenqiang Gong. 2025. DataSentinel: A Game-Theoretic Detection of Prompt Injection Attacks. In 2025 IEEE Symposium on Security and Privacy . doi:10 .1109/SP61157 .2025 .00250 [48] Haochen Luo, Jindong Gu, Fengyuan Liu, and Philip Torr. 2024. An Image Is Worth 1000 Lies: Transferability of Adversarial Images across Prompts on Vision-Language Models. In The Twelfth International Conference on Learning Representations . https://openreview .net/forum?id =nc5GgFAvtk [49] Xinbei Ma, Yiting Wang, Yao Yao, Tongxin Yuan, Aston Zhang, Zhuosheng Zhang, and Hai Zhao. 2024. Caution for the Environment: Multimodal Agents Are Susceptible to Environmental Distractions. arXiv preprint arXiv:2408.02544 
+
+(2024). doi:10 .48550/arXiv .2408 .02544 [50] Bill Marczak and Donncha Ó Cearbhaill. 2022. Exploit archaeol-ogy: a forensic history of in-the-wild NSO Group exploits. https: //www .virusbulletin .com/conference/vb2022/abstracts/exploit-archaeology-forensic-history-wild-nso-group-exploits. In Proceedings of the Virus Bulletin Conference . Virus Bulletin. [51] Sami Marreed, Alon Oved, Avi Yaeli, Segev Shlomov, Ido Levy, Offer Akrabi, Aviad Sela, Asaf Adi, and Nir Mashkif. 2025. Towards Enterprise-Ready Computer Using Generalist Agent. arXiv preprint arXiv:2503.01861 (2025). doi:10 .48550/arXiv .2503 .01861 [52] MDN contributors. 2025. Content-Security-Policy: sandbox directive. https://developer .mozilla .org/en-US/docs/Web/HTTP/Reference/Headers/ Content-Security-Policy/sandbox. Accessed July 2025. [53] MDN contributors. 2025. <iframe> : The Inline Frame element. https: //developer .mozilla .org/en-US/docs/Web/HTML/Reference/Elements/iframe. Accessed July 2025. [54] Luoxi Meng, Henry Feng, Ilia Shumailov, and Earlence Fernandes. 2025. ceLL-Mate: Sandboxing Browser AI Agents. arXiv preprint arXiv:2512.12594 (2025). doi:10 .48550/arXiv .2512 .12594 [55] Milad Nasr, Nicholas Carlini, Chawin Sitawarin, et al . 2025. The Attacker Moves Second: Stronger Adaptive Attacks Bypass Defenses Against Llm Jailbreaks and Prompt Injections. https://arxiv.org/abs/2510.09023v1. [56] ChangSeok Oh, Chris Kanich, Damon McCoy, and Paul Pearce. 2022. Cart-Ology: Intercepting Targeted Advertising via Ad Network Identity Entanglement. In 
+
+Proceedings of the 2022 ACM SIGSAC Conference on Computer and Communica-tions Security . 2401–2414. doi:10 .1145/3548606 .3560641 [57] OpenAI. 2025. OpenAI Deep Research. https://openai .com/index/introducing-deep-research/. Announced February 2, 2025; Accessed August 2025. [58] OpenAI. 2025. OpenAI Operator. https://openai .com/index/introducing-operator/. Announced January 23, 2025; Accessed August 2025. [59] OWASP. [n. d.]. Cross-Site Scripting (XSS). https://owasp .org/www-community/attacks/xss/. Accessed August 2025. [60] Fábio Perez and Ian Ribeiro. 2022. Ignore Previous Prompt: Attack Techniques For Language Models. In NeurIPS ML Safety Workshop .[61] Perplexity. 2025. Perplexity Deep Research. https://www .perplexity .ai/hub/ blog/introducing-perplexity-deep-research. Announced 2025; Accessed August 2025. [62] J.H. Saltzer and M.D. Schroeder. 1975. The Protection of Information in Com-puter Systems. Proc. IEEE 63, 9 (1975). doi:10 .1109/PROC .1975 .9939 [63] Jiawen Shi, Zenghui Yuan, Guiyao Tie, Pan Zhou, Neil Zhenqiang Gong, and Lichao Sun. 2026. Prompt Injection Attack to Tool Selection in LLM Agents. In 
+
+Proceedings of the Network and Distributed System Security Symposium (NDSS) .doi:10 .48550/arXiv .2504 .19793 [64] Tianneng Shi, Jingxuan He, Zhun Wang, Linyu Wu, Hongwei Li, Wenbo Guo, and Dawn Song. 2025. Progent: Programmable Privilege Control for LLM Agents. arXiv preprint arXiv:2504.11703 (2025). doi:10 .48550/arXiv .2504 .11703 [65] Shoaib Ahmed Siddiqui, Radhika Gaonkar, Boris Köpf, et al . 2024. Permis-sive Information-Flow Analysis for Large Language Models. arXiv preprint arXiv:2410.03055 (2024). doi:10 .48550/arXiv .2410 .03055 [66] Ben Stock, Sebastian Lekies, Tobias Mueller, Patrick Spiegel, and Martin Johns. 2014. Precise Client-side Protection against DOM-based Cross-Site Scripting. In 23rd USENIX Security Symposium .[67] Georgios Syros, Evan Rose, Brian Grinstead, Christoph Kerschbaumer, William Robertson, Cristina Nita-Rotaru, and Alina Oprea. 2026. MUZZLE: Adaptive Agentic Red-Teaming of Web Agents Against Indirect Prompt Injection Attacks. arXiv preprint arXiv:2602.09222 (2026). doi:10 .48550/arXiv .2602 .09222 [68] Sijun Tan, Michael Luo, Colin Cai, et al . 2025. rLLM: A Frame-work for Post-Training Language Agents. https://pretty-radio-b75 .notion .site/rLLM-A-Framework-for-Post-Training-Language-Agents-21b81902c146819db63cd98a54ba5f31. [69] Lillian Tsai and Eugene Bagdasarian. 2025. Contextual Agent Security: A Policy for Every Purpose. In Proceedings of the Workshop on Hot Topics in Operating Systems . doi:10 .1145/3713082 .3730378 [70] Philipp Vogt, Florian Nentwich, Nenad Jovanovic, Engin Kirda, Christo-pher Krügel, and Giovanni Vigna. 2007. Cross Site Scripting Prevention with Dynamic Data Tainting and Static Analysis. In Proceedings of the Net-work and Distributed System Security Symposium, NDSS 2007 . The Internet Society. https://www .ndss-symposium .org/ndss2007/cross-site-scripting-prevention-dynamic-data-tainting-and-static-analysis/ [71] Eric Wallace, Kai Xiao, Reimar Leike, Lilian Weng, Johannes Heidecke, and Alex Beutel. 2024. The Instruction Hierarchy: Training LLMs to Prioritize Privileged Instructions. arXiv preprint arXiv:2404.13208 (2024). doi:10 .48550/ arXiv .2404 .13208 [72] Haowei Wang, Junjie Wang, Xiaojun Jia, Rupeng Zhang, Mingyang Li, Zhe Liu, Yang Liu, and Qing Wang. 2025. AdInject: Real-World Black-Box Attacks on Web Agents via Advertising Delivery. arXiv preprint arXiv:2505.21499 (2025). doi:10 .48550/arXiv .2505 .21499 [73] Reachal Wang, Yuqi Jia, and Neil Zhenqiang Gong. 2026. ObliInjection: Order-Oblivious Prompt Injection Attack to LLM Agents with Multi-source Data. In 
+
+Proceedings of the Network and Distributed System Security Symposium (NDSS) .[74] Ruofan Wang, Xingjun Ma, Hanxu Zhou, Chuanjun Ji, Guangnan Ye, and Yu-Gang Jiang. 2024. White-Box Multimodal Jailbreaks Against Large Vision-Language Models. In Proceedings of the 32nd ACM International Conference on Multimedia . doi:10 .1145/3664647 .3681092 [75] Xilong Wang, John Bloch, Zedian Shao, Yuepeng Hu, Shuyan Zhou, and Neil Zhenqiang Gong. 2025. EnvInjection: Environmental Prompt Injection Attack to Multi-modal Web Agents. arXiv preprint arXiv:2505.11717 (2025). doi:10 .48550/arXiv .2505 .11717 [76] Xilong Wang, Yinuo Liu, Zhun Wang, Dawn Song, and Neil Gong. 2026. Web-Sentinel: Detecting and Localizing Prompt Injection Attacks for Web Agents. (2026). doi:10 .48550/ARXIV .2602 .03792 [77] Zora Zhiruo Wang, Jiayuan Mao, Daniel Fried, and Graham Neubig. 2024. Agent Workflow Memory. arXiv preprint arXiv:2409.07429 (2024). doi:10 .48550/ arXiv .2409 .07429 [78] Yuxin Wen, Arman Zharmagambetov, Ivan Evtimov, Narine Kokhlikyan, Tom Goldstein, Kamalika Chaudhuri, and Chuan Guo. 2025. RL Is a Hammer and LLMs Are Nails: A Simple Reinforcement Learning Recipe for Strong Prompt Injection. arXiv preprint arXiv:2510.04885 (2025). doi:10 .48550/arXiv .2510 .04885 [79] Simon Willison. 2023. Delimiters won’t save you. https://simonwillison .net/ 2023/May/11/delimiters-wont-save-you/. Accessed July 2025. [80] Simon Willison. 2023. The Dual LLM pattern for building AI assistants that can resist prompt injection. https://simonwillison .net/2023/Apr/25/dual-llm-pattern/. Simon Willison’s Weblog; Accessed: July 2025. [81] Fangzhou Wu, Ethan Cecchetti, and Chaowei Xiao. 2024. System-Level Defense against Indirect Prompt Injection Attacks: An Information Flow Control Per-spective. arXiv preprint arXiv:2409.19091 (2024). doi:10 .48550/arXiv .2409 .19091 [82] Xinyi Wu, Geng Hong, Yueyue Chen, MingXuan Liu, Feier Jin, Xudong Pan, Jiarun Dai, and Baojun Liu. 2026. When Bots Take the Bait: Exposing and Mitigating the Emerging Social Engineering Attack in Web Automation Agent. 
+
+arXiv preprint arXiv:2601.07263 (2026). doi:10 .48550/arXiv .2601 .07263 [83] Zhen Xiang, Linzhi Zheng, Yanjie Li, et al . 2025. GuardAgent: Safeguard LLM Agents by a Guard Agent via Knowledge-Enabled Reasoning. In Proceedings of the 42nd International Conference on Machine Learning (Proceedings of Machine Learning Research, Vol. 267) . PMLR, 68316–68342. https://openreview .net/ forum?id =2nBcjCZrrP [84] Chejian Xu, Mintong Kang, Jiawei Zhang, Zeyi Liao, Lingbo Mo, Mengqi Yuan, Huan Sun, and Bo Li. 2025. AdvAgent: Controllable Blackbox Red-teaming on Web Agents. arXiv preprint arXiv:2410.17401 (2025). doi:10 .48550/ arXiv .2410 .17401 [85] Frank F. Xu, Yufan Song, Boxuan Li, et al . 2025. TheAgentCompany: Benchmarking LLM Agents on Consequential Real World Tasks. In The Thirty-ninth Annual Conference on Neural Information Processing Sys-tems Datasets and Benchmarks Track . https://proceedings .neurips .cc/ paper _ files/paper/2025/hash/0d744742f6fac4d1134c019b7cef3c8a-Abstract-Datasets_and_Benchmarks_Track .html [86] Haitao Xu, Daiping Liu, Haining Wang, and Angelos Stavrou. 2015. E-Commerce Reputation Manipulation: The Emergence of Reputation-Escalation-as-a-Service. In Proceedings of the 24th International Conference on World Wide Web . doi:10 .1145/2736277 .2741650 [87] Jianwei Yang, Hao Zhang, Feng Li, Xueyan Zou, Chunyuan Li, and Jianfeng Gao. 2023. Set-of-Mark Prompting Unleashes Extraordinary Visual Grounding in GPT-4V. arXiv preprint arXiv:2310.11441 (2023). doi:10 .48550/arXiv .2310 .11441 [88] Ke Yang, Yao Liu, Sapana Chaudhary, Rasool Fakoor, Pratik Chaudhari, George Karypis, and Huzefa Rangwala. 2025. AgentOccam: A Simple Yet Strong Baseline for LLM-Based Web Agents. arXiv preprint arXiv:2410.13825 (2025). doi:10 .48550/ arXiv .2410 .13825 [89] Pei Yang, Hai Ci, and Mike Zheng Shou. 2025. In-Context Defense in Com-puter Agents: An Empirical Study. arXiv preprint arXiv:2503.09241 (2025). doi:10 .48550/arXiv .2503 .09241 [90] Qiusi Zhan, Richard Fang, Henil Shalin Panchal, and Daniel Kang. 2025. Adap-tive Attacks Break Defenses Against Indirect Prompt Injection Attacks on LLM Agents. In Findings of the Association for Computational Linguistics: NAACL 2025 . doi:10 .18653/v1/2025 .findings-naacl .395 [91] Kaiyuan Zhang, Mark Tenenholtz, Kyle Polley, Jerry Ma, Denis Yarats, and Ninghui Li. 2025. BrowseSafe: Understanding and Preventing Prompt Injection Within AI Browser Agents. arXiv preprint arXiv:2511.20597 (2025). doi:10 .48550/ arXiv .2511 .20597 [92] Yao Zhang, Zijian Ma, Yunpu Ma, Zhen Han, Yu Wu, and Volker Tresp. 2024. WebPilot: A Versatile and Autonomous Multi-Agent System for Web Task Execution with Strategic Exploration. arXiv preprint arXiv:2408.15978 (2024). doi:10 .48550/arXiv .2408 .15978 [93] Yanzhe Zhang, Tao Yu, and Diyi Yang. 2024. Attacking Vision-Language Com-puter Agents via Pop-ups. arXiv preprint arXiv:2411.02391 (2024). doi:10 .48550/ arXiv .2411 .02391 [94] Boyuan Zheng, Zeyi Liao, Scott Salisbury, et al . 2025. WebGuard: Building a Generalizable Guardrail for Web Agents. arXiv preprint arXiv:2507.14293 (2025). doi:10 .48550/arXiv .2507 .14293 [95] Haizhong Zheng, Minhui Xue, Hao Lu, Shuang Hao, Haojin Zhu, Xiaohui Liang, and Keith Ross. 2018. Smoke Screener or Straight Shooter: Detecting Elite Sybil Attacks in User-Review Social Networks. In Proceedings 2018 Network and Distributed System Security Symposium . doi:10 .14722/ndss .2018 .23009 [96] Peter Yong Zhong, Siyuan Chen, Ruiqi Wang, McKenna McCall, Ben L. Titzer, Heather Miller, and Phillip B. Gibbons. 2025. RTBAS: Defending LLM Agents Against Prompt Injection and Privacy Leakage. arXiv preprint arXiv:2502.08966 
+
+(2025). doi:10 .48550/arXiv .2502 .08966 [97] Shuyan Zhou, Frank F. Xu, Hao Zhu, et al . 2024. WebArena: A Realistic Web Envi-ronment for Building Autonomous Agents. In The 12th International Conference on Learning Representations . https://openreview .net/forum?id =oKn9c6ytLx [98] Yifei Zhou, Qianlan Yang, Kaixiang Lin, Min Bai, Xiong Zhou, Yu-Xiong Wang, Sergey Levine, and Erran Li. 2024. Proposer-Agent-Evaluator(PAE): Autonomous Skill Discovery For Foundation Model Internet Agents. arXiv preprint arXiv:2412.13194 (2024). doi:10 .48550/arXiv .2412 .13194 [99] Andy Zou, Maxwell Lin, Eliot Krzysztof Jones, et al . 2025. Security Chal-lenges in AI Agent Deployment: Insights from a Large Scale Public Competi-tion. In The Thirty-ninth Annual Conference on Neural Information Processing Systems Datasets and Benchmarks Track . https://openreview .net/forum?id =
+
+UaXNN4eqH1 [100] Andy Zou, Zifan Wang, Nicholas Carlini, Milad Nasr, J. Zico Kolter, and Matt Fredrikson. 2023. Universal and Transferable Adversarial Attacks on Aligned Language Models. arXiv preprint arXiv:2307.15043 (2023). doi:10 .48550/ arXiv .2307 .15043 Action Parameters Description 
+
+Element-targeting actions 
+
+click bid, button, modifiers Click an element (left/middle/right; optional modifier keys). 
+
+dblclick bid, button, modifiers Double-click an element. 
+
+fill bid, value Fill an input, textarea, or contenteditable element. 
+
+clear bid Clear an input field. 
+
+select_option bid, options Select one or more values in a <select> element. 
+
+hover bid Hover over an element. 
+
+press bid, key_comb Focus an element and press a key combination. 
+
+focus bid Focus an element. 
+
+drag_and_drop from_bid, to_bid Drag one element onto another. 
+
+Navigation actions 
+
+tab_focus index Switch to a browser tab by index. 
+
+new_tab Open a new browser tab. 
+
+go_back Navigate back in browser history. 
+
+go_forward Navigate forward in browser history. 
+
+goto † url Navigate directly to a URL. 
+
+Control actions 
+
+noop wait_ms Wait for a specified duration (default 1000 ms). 
+
+send_msg_to_user text Finish the task and respond to the user. 
+
+report_infeasible reason Report that the task cannot be completed. 
+
+> †Exposed only in the WASP action set, not the standard WebArena action set.
+
+Table 4: Web agent action space. Element-targeting actions identify their target by BrowserGym element id ( bid ). The agent emits exactly one action per step. Table 5: Foundation models used. 
+
+model snapshot_slug provider gpt-5.4 gpt-5.4-2026-03-05 OpenAI gpt-5.4-mini gpt-5.4-mini-2026-03-17 OpenAI gpt-5.4-nano gpt-5.4-nano-2026-03-17 OpenAI gemini-3-flash-preview no public snapshot Google gpt-oss-20b no public snapshot OpenAI 
+
+Table 6: Evaluation model snapshots used. 
+
+model snapshot_slug provider gpt-5.4 gpt-5.4-2026-03-05 OpenAI gpt-5.4-mini gpt-5.4-mini-2026-03-17 OpenAI gpt-5.4-nano gpt-5.4-nano-2026-03-17 OpenAI

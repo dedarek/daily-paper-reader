@@ -1,0 +1,487 @@
+Title: Grounded Optimization: A Layered Engineering Framework for Reducing LLM Hallucination in Automated Personal Document Rewriting
+
+URL Source: https://arxiv.org/pdf/2607.01457v1
+
+Published Time: Fri, 03 Jul 2026 00:12:34 GMT
+
+Number of Pages: 13
+
+Markdown Content:
+# Grounded Optimization: A Layered Engineering Framework for Reducing LLM Hallucination in Automated Personal Document Rewriting 
+
+Shashank Indukuri ∗
+
+sinduku1@depaul.edu 
+
+Adarsh Agrawal ∗
+
+adagrawal@cs.stonybrook.edu 
+
+## Abstract 
+
+Large language models (LLMs) are increasingly applied to resume optimization for applicant tracking systems, introducing hallucination failures distinct from general text generation: anachronistic technology injection, cross-domain terminology contamination, structural mutation, and content fabrication. We present Grounded Optimization , a five-layer framework combining temporal context validation, deterministic contamination detection, structural invariant enforcement, prompt-level grounding, and an evaluator agent. In ablation experiments across three LLMs, four temperature settings, and six layer configurations on 25 synthetic resumes spanning 14 industries, undefended baselines produce 2.48–5.36 detected hallucinations per resume. Among detectors independent of the active defenses, temporal hallucinations are reduced by 50–95% across all conditions; overall detected hallucination rate falls to 0.04–0.24. Prompt-level grounding alone achieves zero detected hallucinations at low temperature with a capable instruction-following model; higher temperatures and weaker models reveal the need for the deterministic layers as a complement. We release the contamination taxonomy, evaluation code, and raw data. 
+
+## 1 Introduction 
+
+The use of large language models for document optimization has grown rapidly, with resume tailoring representing one of the most commercially active applications. Services that rewrite resumes to improve alignment with job descriptions and ATS scoring algorithms now process large volumes of documents. Yet the hallucination behaviors documented in LLM general text generation [ 1, 2]manifest in particularly harmful ways when applied to personal documents: 1. Temporal fabrication : An LLM optimizing a 2018 software engineering role may inject refer-ences to LangChain (released late 2022) or Mixtral (released December 2023), creating verifiably false claims about the candidate’s experience timeline. 2. Cross-domain contamination : When rewriting a role at an AWS-centric company, the model may introduce Azure or GCP terminology to match job description keywords, adding multi-cloud terminology absent from the original role. 3. Structural mutation : The model may silently merge, delete, or condense bullet points to reduce output length, removing genuine achievements in the process. 4. Content fabrication : The model may invent company names, inflate metrics, or add certifications the candidate never earned. 
+
+> ∗
+
+Equal contribution. Preprint. Under review. 
+
+> arXiv:2607.01457v1 [cs.CL] 1 Jul 2026
+
+These failures carry concrete consequences: candidates may unknowingly submit resumes containing false claims, exposing them to disqualification or termination. Unlike hallucination in chatbots or search summaries, where users can verify outputs interactively, resume optimization typically operates in batch mode with minimal human review. Hallucination mitigation has been studied extensively in open-domain question answering [ 3], sum-marization [ 4], and retrieval-augmented generation [ 5]. Prior work on hallucination in personal document optimization specifically is more limited. Concurrent system-level work has begun integrat-ing anti-hallucination mechanisms into resume-tailoring pipelines (e.g., [ 6]), but to our knowledge no published work characterizes the underlying hallucination modes as a taxonomy or systematically isolates the contribution of individual defense layers. The ground truth in this domain is not an external knowledge base but the candidate’s own career history, which the LLM receives as input and must enhance without distorting .We present Grounded Optimization , a five-layer defense-in-depth framework that addresses each hallucination mode through a distinct mechanism. The first two layers address the most common failures we observed: temporal validation (Section 3.1) prevents the model from injecting post-hoc technologies into historical roles by embedding release-date constraints in every prompt, and a deterministic contamination detector (Section 3.2) catches cloud-provider bleeding using a 257-service regex taxonomy without involving another LLM (which would introduce an additional hallucination surface). Structural enforcement (Section 3.3) handles bullet compression: it counts roles and bullet points before and after optimization and rejects outputs that lose too much. Prompt-level grounding (Section 3.4) embeds explicit immutability rules for education, certifications, and company names directly in the agent prompts, providing a first-line defense before deterministic checks are applied. Finally, an evaluator agent (Section 3.5) deploys a separate LLM instance as a quality gate that can reject and re-trigger the pipeline (partially independent; see Section 6.1 for an H2-specific coupling caveat). Our framework is implemented as a multi-agent system built on LangGraph [ 7] that processes resumes through five parallel specialized agents, each operating under the full defense stack. The system includes a fallback-merge mechanism that combines the best LLM output with preserved originals to retain all original content (Section 3.6). The contributions of this paper are: 1. A taxonomy of hallucination modes specific to personal document optimization, distinguishing temporal, cross-domain, structural, and content fabrication failures (Section 2). 2. A five-layer engineering framework combining deterministic validation, prompt engineering, and multi-agent adversarial checking, implemented and evaluated as a functional multi-agent system (Section 3). 3. A deterministic cloud-provider contamination detector covering 257 services across AWS, GCP, Azure, and on-premise stacks with two-tier confidence scoring (Section 3.2). 4. An ablation and sensitivity analysis across 16 experimental conditions (three LLMs, four tem-peratures, six layer configurations, 680 LLM invocations) characterizing per-layer contributions, with documented evaluation limitations (Section 4, Section 6.1). 
+
+## 2 Hallucination Taxonomy for Personal Documents 
+
+We identify four distinct hallucination modes in personal document optimization, each with unique detection requirements and consequences. 
+
+2.1 Temporal Fabrication (H1) 
+
+The LLM inserts references to technologies that did not exist during the claimed time period. In the technology sector, where new tools emerge rapidly and carry strong ATS keyword signals, this is a frequent failure mode in our experiments. A role from January 2019 to March 2021 gets rewritten to include “Implemented RAG pipelines using LangChain and vector databases,” despite LangChain’s release in late 2022 and the RAG paradigm [ 5 ], introduced in 2020 but widely adopted starting in late 22022. We attribute this to a training-data artifact: the model has no mechanism to learn which tools existed in which year relative to a particular person’s employment dates. 
+
+2.2 Cross-Domain Contamination (H2) 
+
+Cross-domain contamination proved to be the dominant failure mode in our experiments (79–89% of baseline incidents). The model introduces terminology from a technology ecosystem not present in the original role: an AWS-focused position acquires Azure or GCP references because the job description mentions multi-cloud. In one test, a role at an AWS-only company (“Managed data pipelines using AWS Glue and Athena”) was rewritten as “Orchestrated ETL workflows using Azure Data Factory and Synapse Analytics”—introducing Azure terminology absent from the original role. The model treats cloud services as interchangeable synonyms when optimizing for keyword coverage and has no awareness of organizational technology constraints. 
+
+2.3 Structural Mutation (H3) 
+
+Structural mutation is a subtler failure mode in which the model does not fabricate information but instead abbreviates it. A role with 8 bullet points may return with 4 or 5 “enhanced” entries that cover similar ground at a higher level of abstraction, while the most distinctive accomplishments—those that differentiate one candidate from another—are silently folded into generic summaries such as “Maintained and optimized production systems.” Unlike the other hallucination modes, structural mutation removes truth rather than adding falsehood, making it harder to detect through surface-level review. The root cause appears to be that LLMs internalize conciseness as a quality signal, causing “optimize” to become “condense” without explicit instruction. 
+
+2.4 Content Fabrication (H4) 
+
+Content fabrication is the most straightforward failure mode: the model invents concrete details such as fabricated company names, inflated metrics (“Reduced API latency by 90%” in a role that mentioned no performance numbers), and non-existent certifications. This occurs less frequently than contamination or temporal fabrication in our data but is the hardest to detect post-hoc, as fabricated metrics resemble plausible candidate accomplishments and require access to the candidate’s actual work history to verify. 
+
+## 3 Defense Framework 
+
+Our layered defense addresses each hallucination mode through a distinct layer, as shown in Figure 1. Two of the five layers operate at generation time: Layer 4 embeds immutability constraints directly in the agent prompts before the LLM call, making it the first defense to act on any given optimization cycle. Layers 1–3 and 5 operate post-generation, validating and potentially reverting the LLM’s output before it is accepted. The layers are numbered by their role in the validation pipeline; the execution order within a single cycle is L4 (prompt injection) → LLM call → L1–L3 (output validation) → L5 (evaluator gate). Failures at any post-generation layer trigger retry with augmented constraints or fallback to original content. 
+
+3.1 Layer 1: Temporal Context Validation 
+
+The temporal context layer prevents anachronistic technology injection (H1) by building a per-resume timeline and embedding it as a constraint in every agent prompt. Given a resume R with experience entries E = {e1, . . . , e n}, each with start/end dates, we construct a temporal context TC (R) containing the career span, a technology-to-year-range mapping derived from bullet-point scanning, and the current year. We maintain a curated mapping of technology release dates (e.g., LangChain →2022, Vertex AI →2021) that constrain which technologies may appear in which roles. The full timeline construction algorithm and release-date table are in Section A. The temporal context is serialized and injected into every agent prompt, instructing the LLM to verify technology existence during each role’s time period. 3Layer 1: Temporal Context Validation 
+
+> Technology timeline embedded in agent prompts
+> Layer 2: Cross-Domain Contamination Detection
+> Deterministic taxonomy + word-boundary matching
+> Layer 3: Structural Invariant Enforcement
+> Role count + bullet count validation
+> Layer 4: Prompt-Level Content Grounding
+> Immutability rules for education, certs, companies
+> Layer 5: Evaluator Agent QA Gate
+> Independent LLM adversarial validation
+> Retry with augmented constraints
+
+Figure 1: Five-layer defense-in-depth architecture. Each layer addresses a distinct hallucination mode. Failed validation at Layer 5 triggers a retry cycle with contamination warnings and structural constraints injected into the prompt. After 3 failed retries, the system falls back to a merge of the best LLM output with original content. 
+
+3.2 Layer 2: Cross-Domain Contamination Detection 
+
+The contamination detection layer addresses cross-domain bleeding (H2) through a fully deterministic, LLM-free mechanism. An initial LLM-based approach—asking the model to verify its own output for foreign cloud services—proved functional but added latency and cost per invocation. Because cloud service names form a finite, enumerable set, a deterministic regex-based approach is both sufficient and more efficient. We construct a taxonomy T of 257 cloud services across four ecosystems (AWS: 76, GCP: 53, Azure: 64, On-Premise: 64), plus a cloud-agnostic set of 69 provider-independent technologies. Each ecosystem entry consists of explicit provider keywords (e.g., “aws”) and service names (e.g., “sagemaker”). Detection uses two-tier word-boundary regex matching: Tier 1 attributes on a single explicit-keyword match; Tier 2 requires ≥2 service-name matches to handle ambiguity (e.g., “lambda” as AWS Lambda vs. the Python keyword). The full detection algorithm and ambiguity resolution are in Section C. The key design decision: we compare each role’s cloud signature before and after optimization, flagging only newly introduced providers: Contaminated (ei) = Clouds (eupdated  
+
+> i
+
+) \ Clouds (eoriginal  
+
+> i
+
+)̸ = ∅ (1) When contamination is detected, the role’s responsibilities are reverted to originals, a contamination warning is injected into the retry prompt, and optimization is retried with augmented constraints. 
+
+3.3 Layer 3: Structural Invariant Enforcement 
+
+Structural mutation (H3) is addressed through pre/post counting of semantic units with tolerance-aware validation. Before optimization, we record a structural signature Sig (R) = ( |E|, {| bi|} ), the number of ex-perience entries and bullet counts per entry. After optimization, we validate that |E′| ≥ | E| and 
+
+|b′
+
+> i
+
+| ≥ | bi| − 1 for each entry, accommodating minor restructuring while preventing significant content loss. When validation fails, the retry prompt includes explicit structural targets. After 3 failed attempts, a deterministic fallback merge ensures all original content is retained (Section D). 
+
+3.4 Layer 4: Prompt-Level Content Grounding 
+
+Content fabrication (H4) is addressed through explicit immutability declarations embedded in every agent prompt. While prompt-level constraints alone are insufficient at higher temperatures and on 4weaker models (Experiments 2–3), they serve as a strong first line of defense that significantly reduces the frequency of violations the subsequent layers must catch. The grounding constraints are organized into four categories: 1. Content Preservation : “Preserve the exact number of bullet points for each entry. DO NOT reduce or condense them.” 2. Factual Immutability : “DO NOT hallucinate, add, or modify educational details (institution name, location, degree information).” 3. Entity Integrity : “DO NOT create a new company or use placeholder names.” 4. Metric Realism : “Ensure metrics and numbers are realistic for the time period.” 
+
+3.5 Layer 5: Evaluator Agent QA Gate 
+
+The final layer deploys an independent LLM instance as an adversarial quality-control agent, imple-menting a generator-critic architecture [8] specialized for personal document validation. The evaluator receives the original resume, the rewritten resume, and the target job description, and returns (is_acceptable ∈ { 0, 1}, feedback ). It checks for content removal, JD alignment, and plausible ATS improvement. As a distinct model instance, it avoids generator-bias transfer; on rejection, feedback is injected into the next rewrite attempt. If the evaluator itself fails (timeout or malformed output), it defaults to rejection rather than silently accepting the candidate output. 
+
+3.6 Implementation 
+
+The framework is implemented as a multi-agent pipeline on LangGraph [ 7 ]. The system processes resumes through four stages (parse, score, rewrite, re-score) with up to 5 optimization cycles. Five specialized agents (Summary, Skills, Experience, Projects, Education) run in parallel; the Experience Agent receives the full defense stack because professional experience is where most hallucinations occur. A LangGraph AgentState preserves original data alongside optimized versions throughout, enabling fallback merge at any point. Full pipeline details are in Section E. 
+
+## 4 Evaluation 
+
+We evaluate the framework through three complementary experiments following evaluation method-ology from recent hallucination benchmarks [ 9 , 10 ]: (1) an ablation study measuring each defense layer’s contribution, (2) a multi-model generalization study across three LLMs, and (3) a temperature sensitivity analysis. All experiments use 25 synthetic resumes, 42 roles, 188 bullet points, and 5 job descriptions, with seed=42 for reproducibility. 
+
+4.1 Dataset 
+
+We construct a corpus of 25 synthetic resumes spanning 14 industries (technology, finance, healthcare, manufacturing, consulting, retail, education, energy, government, media, logistics, telecom, insurance, and real estate). Resumes contain 42 professional roles totaling 188 bullet points, ranging from 1 to 6 roles per resume and covering career histories from 2013 to 2026. Five adversarial job descriptions are designed to induce hallucination: a multi-cloud AI position requiring both AWS and Azure, a GCP ML role requesting RAG experience, an AWS full-stack role mentioning generative AI, an Azure data analytics role, and a generic senior role. Each resume is paired with one job description in round-robin assignment. 
+
+4.2 Evaluation Protocol 
+
+For each experiment, every resume–JD pair is processed under the specified configuration and the output is evaluated by four deterministic hallucination detectors (H1–H4) that compare each optimized role against its original: 1. H1 Temporal detector : Checks for technologies released after the role’s end date, using a curated mapping of technology release years. 52. H2 Contamination detector : Uses the cloud-provider taxonomy (Section 3.2) to identify newly introduced cloud services not in the original role. 3. H3 Structural detector : Compares bullet-point counts, flagging any loss of >1 bullet. 4. H4 Fabrication detector : Checks for company name changes and title mutations exceeding 50% word overlap. 
+
+Known detector–defense coupling (H2). The H2 detector and the Layer 2 defense share the same underlying detect_role_contamination function from the cloud taxonomy module. When Layer 2 is active in a configuration, any contamination it detects is reverted before the H2 detector evaluates the output; the detector and the defense therefore cannot disagree by construction. H2 counts in L2-active configurations are thus a tautological consequence of L2’s revert behavior and should not be interpreted as independent empirical measurements. We retain these counts in the tables for completeness but discuss the implication in Section 6.1 and treat them accordingly when interpreting results. 
+
+4.3 Metrics 
+
+We report Hallucination Rate (HR) : mean detected hallucination incidents per resume, with standard deviation ( σ) and 95% confidence interval. 
+
+4.4 Experiment 1: Ablation Study 
+
+We test six defense configurations with GPT-4.1-nano at temperature=0 to isolate each layer’s contribution:                                                  
+
+> Detected Incidents by Type Defense Configuration Detect. Rate ↓Std Dev 95% CI Temporal Contam. †Structural Fabrication
+> No defense (baseline) 2.48 3.84 ±1.50 755 00L4 only (prompt grounding) 0.00 0.00 ±0.00 0000L1+L4 (+ temporal) 0.12 0.43 ±0.17 2001L1+L2+L4 (+ contamination) 0.08 0.27 ±0.11 1010L1+L2+L3+L4 (+ structural) 0.16 0.37 ±0.14 1003
+> Full (L1+L2+L3+L4+L5) 0.12 0.33 ±0.13 1002
+> †Contamination counts under L2-active configs are mechanically zero by construction (Section 6.1).
+
+Table 1: Ablation study on 25 resumes (GPT-4.1-nano, t=0). Contamination ( †) counts when Layer 2 is active are mechanically zero by construction (see Section 6.1) and are not independent measurements. The undefended baseline produces 62 detected hallucination incidents (2.48 per resume). Prompt-level grounding alone (L4) achieves zero detected hallucinations in this single (model, temperature) configuration; the temperature and multi-model experiments demonstrate this does not generalize. 
+
+Observation: The L4-only result is informative: with a strong instruction-following model at t=0, prompt grounding alone produces zero detected hallucinations. This is consistent with the view that modern LLMs can respect explicit behavioral constraints at low temperature. Experiments 2 and 3 show the result does not generalize across models or temperatures. L4-only (HR=0.00) also outperforms the Full framework (HR=0.12) at this single configuration. Inspection of the 3 residual incidents under Full reveals 1 H1 (a 2019 role received a post-2022 technology reference despite Layer 1 constraints) and 2 H4 (title reformulations such as “Senior Data Analyst” →“Lead Data Analyst” crossing the 50% word-overlap threshold). These H4 cases are likely false positives of our coarse fabrication detector. Excluding them, Full achieves HR=0.04, consistent with L4-only. The L4-vs-Full gap is therefore most likely an artifact of H4 detector sensitivity rather than evidence that additional layers harm performance. 
+
+4.5 Experiment 2: Multi-Model Generalization 
+
+We test the baseline and full framework across three LLMs of varying capability at t=0: 
+
+Observation: The framework is applicable across model families (OpenAI, Meta/Groq). GPT-4o-mini produces 2.2 × more baseline detected hallucinations than GPT-4.1-nano, and Llama-3.1-8B 6Detected Incidents by Type Model Defense Detect. Rate ↓ Std Dev Temporal Contam. † Structural Fabrication Reduction (%) †                                                
+
+> GPT-4.1-nano Baseline 2.48 3.84 755 00—GPT-4.1-nano Full 0.12 0.33 100295.2 GPT-4o-mini Baseline 5.36 5.62 20 106 08—GPT-4o-mini Full 0.04 0.20 100099.3
+> Llama-3.1-8B Baseline 4.44 5.61 19 88 04—Llama-3.1-8B Full 0.12 0.33 100297.3
+> †Contamination and reduction figures inherit the H2 detector–defense coupling (Section 6.1).
+
+Table 2: Multi-model evaluation at t=0. Contamination ( †) counts under the Full configuration are mechanically zero by construction (see Section 6.1). Less capable models produce 2–4 × more baseline detected hallucinations. Reduction percentages are computed against detected-HR and inherit the H2 caveat; we report them for engineering reference but do not claim elimination in an independent-evaluator sense. 1.8 × more. Under the Full configuration, detected-HR falls to near zero on our current metrics. H2 counts of zero under Full are structurally guaranteed (Section 6.1); the non-tautological observations are (i) the large baseline H2 counts across all three models, which show the defense target is real, and (ii) the reductions in H1, H3, and H4 which are measured by detectors distinct from any active defense component. 
+
+4.6 Experiment 3: Temperature Sensitivity 
+
+We vary the sampling temperature from 0 to 1.0 with GPT-4.1-nano:                                                                         
+
+> Detected Incidents by Type Temp. Defense Detect. Rate ↓Std Dev Temporal Contam. †Structural Fabrication Reduction (%) †
+> 0.0 Baseline 2.48 3.84 755 00—0.0 Full 0.12 0.33 100295.2 0.3 Baseline 2.12 2.89 745 01—0.3 Full 0.16 0.46 100392.5 0.7 Baseline 1.72 2.91 834 01—0.7 Full 0.16 0.37 200290.7 1.0 Baseline 1.80 3.63 836 01—1.0 Full 0.24 0.43 400286.7
+> †Contamination and reduction figures inherit the H2 detector–defense coupling (Section 6.1).
+
+Table 3: Temperature sensitivity (GPT-4.1-nano). Contamination ( †) counts under Full are mechani-cally zero by construction (see Section 6.1). Baseline detected-hallucinations decrease slightly at higher temperatures in this data; we are cautious interpreting this trend given σ > μ on all baselines. Residual violations under Full are H1 (temporal) and H4 (minor fabrication); H1 residuals grow from 1 at t=0 to 4 at t=1.0, consistent with reduced prompt compliance under higher stochasticity. 
+
+Observation: Detected-HR under Full increases from 0.12 at t=0 to 0.24 at t=1.0, driven almost entirely by H1 (temporal) residuals (1 → 4) which are measured by a detector independent of any active defense layer. The H1 trend is the most interpretable signal in this experiment because it is free of the detector–defense coupling that affects H2. The graceful degradation of H1 detected-count under increasing stochasticity suggests prompt compliance weakens with temperature, motivating deterministic layers as a complement rather than a replacement for prompt-based grounding. 
+
+4.7 Cross-Experiment Summary 
+
+Taken together, the three experiments reveal a clear interaction: prompt-level grounding (L4) is sufficient at low temperature with a strong model, but its effectiveness degrades predictably with both increasing temperature (H1 residuals: 1 → 4) and decreasing model capability (baseline HR: 
+
+2.48 → 5.36 across models). The deterministic layers (L1–L3) provide the most value precisely where prompt compliance is weakest — high temperature and weaker models — rather than as a uniform improvement over prompt grounding alone. The remaining residuals under defended configurations 7are almost entirely H1 (temporal) and likely-false-positive H4 (minor title reformulations), suggesting that further gains require either a stronger temporal enforcement mechanism or a semantics-aware fabrication detector. 
+
+## 5 Related Work 
+
+LLM hallucination. Hallucination has been extensively studied across summarization, translation, and dialogue [ 1, 2 , 11 ]. Detection methods include sampling consistency (SelfCheckGPT [ 3 ]) and fine-grained factuality scoring (FActScore [ 9 ]). These approaches target general knowledge 
+
+hallucination where ground truth exists in external corpora. Personal document optimization is different in kind: the ground truth is the input document itself, and hallucination manifests as distortion of the user’s own data. 
+
+Constrained generation and multi-agent systems. Constrained decoding [ 12 , 13 ] enforces token-level constraints; our structural enforcement operates at the semantic-unit level (roles, bullet points). Multi-agent debate [ 14 ], self-reflection [ 15 ], and critic-generator frameworks [ 8] improve LLM reliability through adversarial checking. Our evaluator agent extends this paradigm to personal document QA, where the critic checks content preservation rather than general quality. A related pattern appears in code generation, where deterministic catalog selection and access-control gating before LLM SQL generation reduce execution errors [ 16 ]; both settings suggest deterministic layers around generation can complement prompt-level approaches. 
+
+Taxonomy-driven LLM evaluation. Recent benchmarks structure LLM behavioral evaluation around explicit hazard or failure-mode taxonomies. The MLCommons AI Safety Benchmark v0.5 [ 17 ]introduces a 13-hazard taxonomy for general-purpose chat assistants. Our four-mode hallucination taxonomy (H1–H4) is narrower in scope but follows a similar methodological pattern: structured failure-mode definitions paired with category-specific detectors and per-category reporting. 
+
+Resume processing. Prior work focuses on parsing and screening [ 18 ], matching [ 19 ], scoring [ 20 ], and end-to-end LLM-based resume generation [ 21 ]. Recent concurrent work on resume-tailoring systems has begun incorporating anti-hallucination guardrails as a system component [ 6]. Our work differs in framing: rather than building a single tailored system, we characterize the hallucination behaviors specific to this domain as a taxonomy and isolate the empirical contribution of individual defense layers. 
+
+## 6 Limitations and Discussion 
+
+6.1 H2 Detector–Defense Coupling 
+
+The H2 detector and Layer 2 defense share the same detect_role_contamination function. Because Layer 2 reverts contaminated output before the detector runs, H2 counts under L2-active configurations are mechanically zero by construction; we flag these with † throughout. The large baseline H2 counts (measured without any active defense) confirm the defense target is real, but we cannot independently verify Layer 2 eliminates contamination rather than merely hiding it from our own detector. An independent NLI-based evaluator on the existing 680 outputs is the highest-priority extension. Other limitations are more conventional: we do not compare against SelfCheckGPT, FActScore, or CRITIC (our H1–H4 detectors are task-specific); per-resume counts are zero-inflated and heavy-tailed (σ > μ on all baselines); the 25-resume synthetic dataset and 257-service taxonomy miss real-world distributions and long-tail platforms (Salesforce, SAP); and the framework detects presence but not magnitude hallucinations. 
+
+Future work. An independent NLI-based H2 evaluator on the existing 680 outputs is the highest-priority extension. Beyond that: comparison with external hallucination detectors (SelfCheck-GPT, FActScore) and commodity guardrail frameworks (e.g., NeMo Guardrails, Guardrails AI) as alternative enforcement backends, human annotation on real resumes, and extension to other 8personal documents. All code, taxonomy, and raw data are available at https://github.com/ shashank-indukuri/grounded-optimization .
+
+## References 
+
+[1] Ziwei Ji, Nayeon Lee, Rita Frieske, Tiezheng Yu, Dan Su, Yan Xu, Etsuko Ishii, Ye Jin Bang, Andrea Madotto, and Pascale Fung. Survey of hallucination in natural language generation. 
+
+ACM Computing Surveys , 55(12):1–38, 2023. [2] Yue Zhang, Yafu Li, Leyang Cui, Deng Cai, Lemao Liu, Tingchen Fu, Xinting Huang, Enbo Zhao, Yu Zhang, Yulong Chen, et al. Siren’s song in the ai ocean: A survey on hallucination in large language models. arXiv preprint arXiv:2309.01219 , 2023. [3] Potsawee Manakul, Adian Liusie, and Mark JF Gales. Selfcheckgpt: Zero-resource black-box hallucination detection for generative large language models. In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing , pages 9004–9017, 2023. [4] Wojciech Kry´ sci´ nski, Bryan McCann, Caiming Xiong, and Richard Socher. Evaluating the factual consistency of abstractive text summarization. In Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing , pages 9332–9346, 2020. [5] Patrick Lewis, Ethan Perez, Aleksandra Piktus, Fabio Petroni, Vladimir Karpukhin, Naman Goyal, Heinrich Küttler, Mike Lewis, Wen-tau Yih, Tim Rocktäschel, et al. Retrieval-augmented generation for knowledge-intensive nlp tasks. Advances in Neural Information Processing Systems , 33:9459–9474, 2020. [6] Kumar Abhinav. Career-aware resume tailoring via multi-source retrieval-augmented generation with provenance tracking: A case study. arXiv preprint arXiv:2605.05257 , 2026. [7] LangChain. Langgraph: Building stateful, multi-actor applications with llms. https:// github.com/langchain-ai/langgraph , 2024. [8] Zhibin Gou, Zhihong Shao, Yeyun Gong, Yelong Shen, Yujiu Yang, Nan Duan, and Weizhu Chen. Critic: Large language models can self-correct with tool-interactive critiquing. In 
+
+Proceedings of the Twelfth International Conference on Learning Representations , 2024. [9] Sewon Min, Kalpesh Krishna, Xinxi Lyu, Mike Lewis, Wen-tau Yih, Pang Wei Koh, Mohit Iyyer, Luke Zettlemoyer, and Hannaneh Hajishirzi. Factscore: Fine-grained atomic evaluation of factual precision in long form text generation. In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing , pages 12076–12100, 2023. [10] Junyi Li, Xiaoxue Cheng, Wayne Xin Zhao, Jian-Yun Nie, and Ji-Rong Wen. Halueval: A large-scale hallucination evaluation benchmark for large language models. In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing , pages 6449–6464, 2023. [11] Lei Huang, Weijiang Yu, Weitao Ma, Weihong Zhong, Zhangyin Feng, Haotian Wang, Qiang-long Chen, Weihua Peng, Xiaocheng Feng, Bing Qin, and Ting Liu. A survey on hallucination in large language models: Principles, taxonomy, challenges, and open questions. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics , 2024. [12] J Edward Hu, Huda Khayrallah, Ryan Culkin, Patrick Xia, Tongfei Chen, Matt Post, and Benjamin Van Durme. Improved lexically constrained decoding for translation and monolingual rewriting. In Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics , pages 839–850, 2019. [13] Ximing Lu, Peter West, Rowan Zellers, Ronan Le Bras, Chandra Bhagavatula, and Yejin Choi. Neurologic decoding: (un)supervised neural text generation with predicate logic constraints. In Proceedings of the 2021 Conference of the North American Chapter of the Association for Computational Linguistics , pages 4288–4299, 2021. [14] Yilun Du, Shuang Li, Antonio Torralba, Joshua B Tenenbaum, and Igor Mordatch. Improv-ing factuality and reasoning in language models through multiagent debate. arXiv preprint arXiv:2305.14325 , 2023. 9[15] Noah Shinn, Federico Cassano, Ashwin Gopinath, Karthik Narasimhan, and Shunyu Yao. Reflexion: Language agents with verbal reinforcement learning. Advances in Neural Information Processing Systems , 36, 2023. [16] Adarsh Agrawal and Shashank Indukuri. Schema-first retrieval: Embedding catalogs for natural language analytics. arXiv preprint arXiv:2606.28387 , 2026. [17] Bertie Vidgen, Adarsh Agrawal, Ahmed M. Ahmed, Victor Akinwande, Namir Al-Nuaimi, Najla Alfaraj, et al. Introducing v0.5 of the AI safety benchmark from MLCommons. arXiv preprint arXiv:2404.12241 , 2024. [18] Ankit Kumar Sinha, M Amir Khusru Akhtar, and Anand Kumar. Resume screening using natural language processing and machine learning: A systematic review. In Machine Learning and Information Processing , pages 207–218. Springer, 2021. [19] Yao Deng, Hang Lei, Xiao Li, and Yihong Lin. An improved deep neural network model for job matching. In 2018 International Conference on Algorithms and Architectures for Parallel Processing , pages 86–96. Springer, 2018. [20] Vikas Mittal, Palak Mehta, Devesh Relan, and Garima Shakhla. Methodology for resume parsing and job domain prediction. Journal of Statistics and Management Systems , 23(7): 1263–1274, 2020. [21] Saurabh Bhausaheb Zinjad, Amrita Bhattacharjee, Amey Bhilegaonkar, and Huan Liu. Resume-flow: An llm-facilitated pipeline for personalized resume generation and refinement. arXiv preprint arXiv:2402.06221 , 2024. 
+
+## A Temporal Context Validation Details 
+
+A.1 Timeline Construction 
+
+Given a resume R with professional experience entries E = {e1, . . . , e n}, where each entry ei has start date si and end date ti, we construct: TC (R) = 
+
+
+
+career_span : [ smin , t max ]
+
+tech_timeline : {(τ, [first_used , last_used ]) }
+
+current_year : ynow 
+
+ (2) where τ ranges over technologies mentioned in existing bullet points, and first/last used years are derived from the dates of roles containing τ .
+
+A.2 Release Date Constraints             
+
+> Technology Release Year Constraint
+> LangChain 2022 Cannot appear in pre-2022 roles LlamaIndex 2022 Cannot appear in pre-2022 roles Vertex AI 2021 Cannot appear in pre-2021 roles Mixtral 2023 Cannot appear in pre-2023 roles RAG (paradigm) 2022 Cannot appear in pre-2022 roles
+
+Table 4: Example technology release date constraints embedded in temporal context. 10 A.3 Timeline Construction Algorithm Algorithm 1 Temporal Context Construction 
+
+Require: Resume R with experience entries E
+
+Ensure: Temporal context TC (R) 
+
+> 1:
+
+total_months ← 0 
+
+> 2:
+
+tech_timeline ← {}  
+
+> 3:
+
+for ei ∈ E do  
+
+> 4:
+
+Parse si, t i from ei.dates  
+
+> 5:
+
+total_months += ( ti − si) in months  
+
+> 6:
+
+for responsibility r ∈ ei.bullets do  
+
+> 7:
+
+for technology τ detected in r do  
+
+> 8:
+
+Update tech_timeline [τ ].first_used  
+
+> 9:
+
+Update tech_timeline [τ ].last_used  
+
+> 10:
+
+end for  
+
+> 11:
+
+end for  
+
+> 12:
+
+end for  
+
+> 13:
+
+return TC (R) = {total_months , tech_timeline , y now }
+
+## B Recency-Bounded Optimization 
+
+An additional grounding mechanism limits the optimization scope: only roles within the most recent 7 years are processed. The 7-year threshold was determined empirically: beyond this point, the marginal benefit of optimization diminished while hallucination risk for older roles increased. Older roles are passed through untouched, removing them from the optimization scope and therefore from this framework’s hallucination risk. 
+
+Eprocess = {ei ∈ E : months (ei) ≤ 84 }, Epreserve = E \ Eprocess (3) The recency split operates chronologically from the most recent role, accumulating months until the 7-year threshold is reached. 
+
+## C Contamination Detection Details 
+
+C.1 Two-Tier Detection Algorithm Algorithm 2 Two-Tier Cloud Provider Detection 
+
+Require: Text x, Taxonomy T
+
+Ensure: Detected providers P 
+
+> 1:
+
+P ← ∅  
+
+> 2:
+
+for (j, K j , S j ) ∈ T do  
+
+> 3:
+
+if ∃k ∈ Kj : WORD MATCH (k, x ) then  
+
+> 4:
+
+P ← P ∪ { j}; continue  
+
+> 5:
+
+end if  
+
+> 6:
+
+m ← |{ s ∈ Sj : WORD MATCH (s, x )}|  
+
+> 7:
+
+if m ≥ 2 then  
+
+> 8:
+
+P ← P ∪ { j} 
+
+> 9:
+
+end if  
+
+> 10:
+
+end for  
+
+> 11:
+
+return P if P̸ = ∅ else {Cloud-Agnostic }
+
+The WORD MATCH function uses compiled word-boundary regex patterns ( \bterm \b) with case-insensitive matching, ensuring that “S3” matches the AWS service but not substrings like “MS365.” 11 C.2 Ambiguity Resolution 
+
+Certain terms require contextual disambiguation. For example, “Glue” could refer to AWS Glue (an ETL service) or general adhesive. We handle ambiguous terms by requiring co-occurrence with provider context:  
+
+> 1
+
+if service in [ " glue " , " power bi " , " databricks " ]:  
+
+> 2
+
+if service == " glue " and " aws " not in text_lower :  
+
+> 3
+
+continue # Not AWS Glue without AWS context  
+
+> 4
+
+if service == " databricks " and provider == " Azure " \ 
+
+> 5
+
+and " azure " not in text_lower :  
+
+> 6
+
+continue # Not Azure Databricks without context 
+
+Listing 1: Ambiguity resolution for context-dependent terms 
+
+## D Structural Enforcement Details 
+
+D.1 Retry Prompt Template 
+
+When structural validation fails, the retry prompt includes explicit targets:  
+
+> 1
+
+CRITICAL RETRY INSTRUCTION - ATTEMPT { attempt }:  
+
+> 2
+
+You MUST return EXACTLY { role_count } roles :  
+
+> 3
+
+- role_0 : Senior Engineer at CompanyA : 6 bullets  
+
+> 4
+
+- role_1 : Engineer at CompanyB : 5 bullets  
+
+> 5
+
+DO NOT skip any roles . Process ALL roles from input . 
+
+Listing 2: Structural retry injection 
+
+D.2 Fallback Merge Algorithm 
+
+After 3 failed validation attempts, the system executes a deterministic merge: 
+
+Algorithm 3 Fallback Merge Strategy 
+
+Require: Original roles E, Best LLM output roles E′
+
+Ensure: Merged roles M with zero content loss 
+
+1: map ← { (title i, company i) → e′ 
+
+> i
+
+: e′ 
+
+> i
+
+∈ E′}
+
+2: M ← [] 
+
+3: for ei ∈ E do 
+
+4: key ← (title i, company i)
+
+5: if key ∈ map then 
+
+6: e′ 
+
+> i
+
+← map [key ]
+
+7: if |b′
+
+> i
+
+| < |bi| then 
+
+8: b′ 
+
+> i
+
+← b′ 
+
+> i
+
++ bi[|b′
+
+> i
+
+| :] 
+
+9: end if 
+
+10: M. append (e′
+
+> i
+
+)
+
+11: else 
+
+12: M. append (ei)
+
+13: end if 
+
+14: end for 
+
+15: return M
+
+By construction, no role or bullet point can be dropped by this merge, even when the LLM consistently fails structural validation. 12 E System Architecture Details 
+
+E.1 Pipeline Stages 
+
+The system processes resumes through a four-stage state machine: 1. Parse : LLM-based PDF-to-JSON conversion, producing structured resume data with typed fields (contact info, experience entries with dates and bullet points, education, skills, projects, certifications). 2. Score : ATS scoring against the target job description, producing section-level feedback and an aggregate score. 3. Rewrite : Multi-agent parallel optimization with all five defense layers active. 4. Re-Score : The optimized resume is scored again; if the score has not improved sufficiently, the rewrite stage is repeated (up to 5 cycles). 
+
+E.2 Agent Specialization 
+
+Five specialized agents run in parallel: • Summary Agent : Optimizes the professional summary • Skills Agent : Aligns skills with job requirements • Experience Agent : Rewrites professional experience (full defense stack) • Projects Agent : Enhances project descriptions • Education Agent : Validates (but does not modify) education entries The Experience Agent receives the heaviest defense treatment because professional experience is where most hallucinations occur. It alone executes the retry-validation-fallback loop described in Section 3.3. 
+
+E.3 State Management 
+
+The system maintains a LangGraph AgentState that carries the resume through all stages, preserving the original data alongside optimized versions. This enables the fallback merge at any point and provides full diff-based auditability of every change. 
+
+## F Qualitative Examples 
+
+Cross-model contamination (GPT-4o-mini) : Optimizing a GCP-only ML Engineer role for a multi-cloud JD, GPT-4o-mini injected 7 Azure terms (“Azure ML Studio,” “Cosmos DB,” “Azure Monitor”) and 4 AWS terms (“SageMaker,” “Glue,” “Redshift,” “CloudWatch”) into a single role, introducing AWS and Azure terminology absent from the original GCP-only role. The deterministic detector identified all 11 foreign terms and reverted the output. 
+
+Temporal fabrication at high temperature : At t=1.0, GPT-4.1-nano rewrote a 2017–2019 bank analyst role to include “leveraged vector databases for semantic search,” a technology paradigm that emerged in 2022. At t=0, the same model respected the temporal constraint. This demonstrates the temperature-dependent reliability of prompt-level constraints. 
+
+Intern hallucination across models : A software intern (Python Flask, pytest, 3 months) was opti-mized for a GCP ML Engineer position. All three models injected cloud services (GCP: “Cloud Run,” “Vertex AI”; AWS: “Lambda,” “SageMaker”) at baseline, fabricating cloud expertise for a candidate with zero cloud experience. The framework correctly identified and reverted all contamination. 13
