@@ -1,0 +1,536 @@
+Title: Uncertainty-Aware Abstention in Large Language Models with Provable Alignment Guarantees
+
+URL Source: https://arxiv.org/pdf/2607.04430v1
+
+Published Time: Tue, 07 Jul 2026 02:19:39 GMT
+
+Number of Pages: 22
+
+Markdown Content:
+# Uncertainty-Aware Abstention in Large Language Models with Provable Alignment Guarantees 
+
+Sijin Dong 1* and Hiroyuki Shinnou 1
+
+1Ibaraki University, Japan. *Corresponding author(s). E-mail(s): dong8529278@gmail.com; 
+
+Abstract 
+
+Large language models (LLMs) are increasingly used in question answering (QA) systems, but they can still produce hallucinated or misaligned responses without reliable confidence estimates. Uncertainty quantification (UQ) enables selective answering, where a system responds only when its prediction appears reliable and abstains otherwise. However, uncertainty scores alone are often heuristic, and thresholding them does not provide statistical guarantees on the error rate among accepted answers. We propose CIC , a confidence-interval-based calibra-tion framework that converts arbitrary uncertainty scores into risk-controlled selective answering rules. Using a held-out calibration set, CIC assigns each generated response an uncertainty score and a binary error label based on an application-specific alignment criterion. For each candidate threshold, CIC esti-mates the error rate among accepted answers and constructs a high-probability upper confidence bound using Hoeffding-style or Clopper–Pearson intervals. It then selects the threshold with the highest answering rate whose upper bound remains below a user-specified risk level α. Under exchangeability, CIC guaran-tees with probability at least 1 − δ that the selected non-null threshold controls the accepted-answer error rate at level α. Experiments on closed-ended and open-ended QA benchmarks across seven LLMs and multiple uncertainty estimators show that CIC achieves valid risk control while maintaining strong answering effi-ciency. These results demonstrate that CIC provides a practical and statistically grounded mechanism for reliable LLM deployment in QA workflows. 
+
+Keywords: large language models, question answering, selective answering, uncertainty quantification, upper confidence bound 
+
+1
+
+> arXiv:2607.04430v1 [cs.CL] 5 Jul 2026
+
+# 1 Introduction 
+
+Large language models (LLMs) have achieved remarkable progress in natural language understanding and generation [1, 2], and are increasingly deployed as question answer-ing (QA) systems, conversational assistants [3], and decision-support tools [4]. Despite their strong empirical performance, LLMs can still generate hallucinated, unsupported, or semantically misaligned responses [5–10]. This issue is particularly problematic in reliability-sensitive applications, where an incorrect answer may be more harmful than no answer at all. Therefore, beyond improving the average accuracy of LLMs, it is crucial to develop principled mechanisms that determine when a model output should be trusted and when the system should abstain [8, 11–17]. Uncertainty quantification (UQ) provides a natural route toward this goal [18]. Given a query and a generated response, an uncertainty estimator assigns a score intended to reflect the reliability of the output. Such scores can be used for selec-tive answering: the system accepts a response when its uncertainty is sufficiently low and abstains otherwise. A wide range of uncertainty signals have been proposed for LLMs, including entropy-based scores, sampling-based disagreement measures, and semantic-consistency metrics [19–22]. However, these scores are often heuristic. They may correlate with correctness on average, but they do not perfectly separate correct from incorrect answers. As a result, choosing an uncertainty threshold by intuition or empirical accuracy alone does not provide a statistical guarantee on the error rate among the answers that the system actually returns [23–25]. This limitation motivates the central question of this work: given an arbitrary uncertainty score for an LLM output, can we calibrate a test-time answering rule that accepts as many responses as possible while provably controlling the risk among accepted answers? This question differs from standard accuracy evaluation, which measures model performance over all test samples, regardless of whether the system chooses to answer. It also differs from classical split conformal prediction [26–28], which typically constructs prediction sets with coverage guarantees. In many QA deployments, however, the system is expected to return a single answer when con-fident and abstain otherwise [23]. The relevant reliability target is therefore not set coverage [22, 29–31], but the error rate conditioned on acceptance. In this paper, we propose CIC , a confidence-interval-based calibration framework for risk-controlled selective answering with LLMs. We consider a frozen LLM equipped with any user-chosen uncertainty estimator. On a held-out calibration set, each gen-erated response is evaluated by an application-specific alignment criterion, producing a binary label that indicates whether the response is aligned with the ground truth. CIC then links the uncertainty score of each response to its empirical correctness and learns an uncertainty threshold for deployment. Figure 1 provides an overview of the proposed calibration and selective deployment pipeline. The key idea is simple: for any candidate threshold, the system accepts calibra-tion examples whose uncertainty scores fall below the threshold, and estimates the error rate among these accepted examples. Since this empirical error rate is computed from finite calibration data, directly using it may lead to unreliable threshold choices. CIC therefore constructs a high-probability upper confidence bound on the threshold-conditioned error rate, using either a Hoeffding-style confidence bound or an exact 2Fig. 1 Overview of the CIC framework for risk-controlled selective answering. CIC uses a held-out calibration set to associate each LLM response with an uncertainty score and an alignment label. It then scans candidate uncertainty thresholds, computes an upper confidence bound on the error rate among accepted responses, and selects the largest threshold satisfying the target risk level α. During deployment, the calibrated threshold acts as an uncertainty gate: responses below the threshold are accepted, while high-uncertainty responses are abstained from, yielding finite-sample risk control under exchangeability. 
+
+Clopper–Pearson confidence interval [32]. The final threshold is chosen as the largest candidate threshold whose upper confidence bound does not exceed a user-specified risk level α. This choice maximizes the answering rate among certified thresholds while maintaining a finite-sample safety constraint. At deployment time, the calibrated threshold acts as an uncertainty gate. For a new query, the LLM generates an answer and the uncertainty estimator computes its score. The system returns the answer only if the score is below the calibrated threshold; otherwise, it abstains. Under an exchangeability assumption between calibration and deployment data, CIC guarantees that, with probability at least 1 − δ, the selected threshold, if non-null, controls the acceptance-conditioned error rate at the target level 
+
+α. In the one-answer-per-query setting, this quantity is equivalent to the marginal false discovery rate of the selective answering policy. We evaluate CIC on both closed-ended and open-ended QA benchmarks across multiple LLMs and uncertainty estimators. The experimental results show that CIC consistently controls the error rate among accepted answers across a range of user-specified risk levels, while preserving strong answering efficiency. These results demonstrate that confidence-interval calibration can serve as a practical statistical layer on top of heuristic LLM uncertainty scores, enabling more reliable deployment of LLM-based QA systems. Our main contributions are summarized as follows: 
+
+• We formulate risk-controlled selective answering for LLM-based QA as the prob-lem of controlling the acceptance-conditioned error rate under an uncertainty-thresholding policy. 
+
+• We propose CIC, a confidence-interval-based calibration framework that converts arbitrary uncertainty scores into statistically certified abstention rules. 3• We establish finite-sample, high-probability guarantees for the calibrated thresh-old under exchangeability, with both Hoeffding-style and Clopper–Pearson upper confidence bounds. 
+
+• We empirically validate CIC on closed-ended and open-ended QA benchmarks across multiple LLMs, showing reliable risk control with strong answering efficiency. 
+
+# 2 Related Work 
+
+Uncertainty Quantification. 
+
+Uncertainty quantification (UQ) aims to assess the reliability of model predictions and provide users with signals indicating when a model output is likely to be incorrect [18]. For LLM-based generation, recent studies have developed various uncertainty estima-tors, including semantic entropy (SE) [20], shift attention to relevance (SAR) [19], and word-sequence entropy (WSE) [21]. These methods provide useful ranking signals for identifying unreliable responses and can be naturally used for selective answer-ing. However, LLM uncertainty estimates remain largely heuristic: hallucinated or unsupported responses may still be produced with high confidence, leading to low uncertainty despite being incorrect [24, 25]. Therefore, directly thresholding such scores does not provide a statistical guarantee on the error rate among accepted answers. In contrast, our work treats UQ scores as black-box reliability signals and calibrates them into risk-controlled decision rules with finite-sample guarantees. 
+
+Split Conformal Prediction. 
+
+Split conformal prediction (SCP) provides distribution-free and model-agnostic cov-erage guarantees by calibrating nonconformity scores on a held-out calibration set [27, 28]. It has been widely used to construct prediction sets that contain the ground-truth label with user-specified probability, including applications to classifica-tion [26] and segmentation [33]. Recent work has extended conformal methods to LLMs and natural language processing [34], including admission coverage [22, 29, 30, 35], conformal factuality [36], and conformal alignment [23]. These approaches mainly focus on coverage-style guarantees, often through set-valued prediction or conformal-ized output selection. Our setting is different: instead of constructing a prediction set that covers an admissible answer, we study abstention-aware point prediction, where the system either returns a single LLM response or abstains. Accordingly, our target is to control the acceptance-conditioned error rate among retained outputs. 
+
+Selective Prediction. 
+
+Selective prediction allows a model to abstain from answering when its prediction is considered unreliable, which is especially important in high-stakes or reliability-sensitive applications. For LLM-based QA, selective answering can reduce harmful hallucinations by returning responses only when the model is sufficiently confident. However, a practical selective system should not merely improve average accuracy after filtering; it should provide a user-specified reliability guarantee for the subset of answers that are actually returned. Recent studies have explored abstention and risk control for foundation models, showing that uncertainty-based selection can improve 4reliability when combined with proper statistical calibration [24, 25, 37]. Our work follows this direction but focuses on a simple and general confidence-interval-based calibration rule. Given any uncertainty score, CIC estimates the threshold-conditioned error rate on a calibration set, constructs an upper confidence bound, and selects the largest threshold satisfying the target risk level. This yields a deployable selective answering policy with finite-sample, high-probability control of the error rate among accepted responses. 
+
+# 3 Methodology 
+
+3.1 Notation and Problem Formulation 
+
+Let ( X, Y ⋆) ∼ P denote an input–ground-truth pair, where X ∈ X is a query and 
+
+Y ⋆ ∈ Y is its reference answer. We consider a frozen deployed LLM L, which produces a response ˆY = L(X; ξ),
+
+where ξ denotes the model’s generation randomness; deterministic decoding is a special case. To evaluate whether the generated answer is acceptable for deployment, we introduce an application-specific alignment criterion 
+
+A : Y × Y → { 0, 1},
+
+where A(Y ⋆, ˆY ) = 1 indicates that the generated answer is aligned with the ground truth, and A(Y ⋆, ˆY ) = 0 otherwise. We define the corresponding error indicator as 
+
+E = 1 − A (Y ⋆, ˆY ) ∈ { 0, 1}. (1) Given a user-chosen uncertainty measure M, we compute an uncertainty score 
+
+U = U(X, ˆY ; M) ∈ R, (2) where smaller values indicate more reliable predictions. For a threshold t ∈ R, we define the thresholding gate 
+
+gt(X, ˆY ) = 1{U ≤ t}. (3) A prediction is accepted when gt(X, ˆY ) = 1, and otherwise the system abstains. Our target is to control the selection-conditioned error rate under threshold t,defined as 
+
+R(t) := P(E = 1 | U ≤ t) = E[E · 1{U ≤ t}]
+
+E[1{U ≤ t}] , whenever P(U ≤ t) > 0.
+
+This quantity measures the error proportion among accepted predictions. In the one-prediction-per-query selective answering setting, R(t) also coincides with the marginal false discovery rate (mFDR) of the thresholding policy. 5Let 
+
+π(t) := P(U ≤ t)denote the acceptance probability. The deployment objective is to learn a threshold that accepts as many samples as possible while ensuring 
+
+R(t) ≤ α
+
+for a user-specified risk level α ∈ (0 , 1). We assume access to a held-out calibration set 
+
+Dcal = {(Xi, Y ⋆i )}Ni=1 ,
+
+which is exchangeable with future deployment data. Running the frozen LLM on Dcal 
+
+yields 
+
+{(Xi, Y ⋆i , ˆYi, U i, E i)}Ni=1 ,
+
+where ˆYi = L(Xi; ξi), Ui = U(Xi, ˆYi; M), Ei = 1 − A (Y ⋆i , ˆYi).
+
+3.2 UCB-Based Risk Calibration 
+
+For any threshold t, define the calibration acceptance count 
+
+n(t) = 
+
+> N
+
+X
+
+> i=1
+
+1{Ui ≤ t}, (4) and the number of false discoveries among accepted samples 
+
+F D (t) = 
+
+> N
+
+X
+
+> i=1
+
+1{Ui ≤ t, E i = 1 }. (5) The empirical selection-conditioned error rate is 
+
+bR(t) = 
+
+ 
+
+> F D (t)
+> n(t)
+
+, n(t) > 0,
+
+1, n(t) = 0 .
+
+To obtain a finite-sample safety certificate, we construct a one-sided UCB for R(t). We consider two instantiations. 
+
+Hoeffding-style UCB. 
+
+For confidence level 1 − γ,
+
+BH(t; γ) = 
+
+bR(t) + 
+
+q log(1 /γ )2 n(t) , n(t) > 0,
+
+1, n(t) = 0 .
+
+6Clopper–Pearson-style UCB. 
+
+For confidence level 1 − γ,
+
+BCP (t; γ) = 
+
+
+
+BetaInv(1 − γ; F D (t) + 1 , n (t) − F D (t)) , n(t) > 0,
+
+1, n(t) = 0 ,
+
+where BetaInv( q; a, b ) denotes the q-quantile of the Beta( a, b ) distribution. The Clopper–Pearson bound is exact for binomial proportions and is often less conservative than Hoeffding when the accepted subset is small. To handle adaptive threshold selection rigorously, we consider a pre-specified finite threshold grid 
+
+T = {t1 < t 2 < · · · < t K },
+
+chosen before observing calibration outcomes. For example, T may be a uniform grid over the score range, or a fixed quantile grid obtained from a pilot split. For each candidate threshold t ∈ T , we compute a UCB B(t; δ/K ), where B can be either BH or BCP , and δ ∈ (0 , 1) is the target miscoverage probability. We then select the largest threshold whose UCB is below the desired risk level: ˆt = max 
+
+n
+
+t ∈ T : B(t; δ/K ) ≤ α
+
+o
+
+. (6) If the feasible set is empty, we return NULL , indicating that the requested risk level is unattainable under the current model and uncertainty signal. At deployment time, for a new query Xtest , the model outputs ˆYtest and uncertainty score Utest . The system returns the answer only if 
+
+Utest ≤ ˆt; (7) otherwise, it abstains. 
+
+3.3 Framework Summary 
+
+Our framework converts an arbitrary uncertainty score into a statistically certified decision rule for selective answering. The procedure consists of three stages: First, on a held-out calibration set, we compute for each sample an uncertainty score and an alignment label, thereby linking uncertainty to empirical correctness. Second, for each candidate threshold, we evaluate the accepted subset induced by that threshold and construct an upper confidence bound on the corresponding selection-conditioned error rate. Third, we choose the largest threshold whose UCB remains below the user-specified target risk level, and deploy this threshold as a test-time uncertainty gate. This design preserves the flexibility of heuristic uncertainty estimators while adding a finite-sample safety layer on top of them. 73.4 Theoretical Guarantees 
+
+We now formalize the validity of the proposed calibration rule. 
+
+Assumption 3.1 (Exchangeability) The calibration tuples 
+
+{(Ui, E i)}Ni=1 
+
+and a future deployment pair ( UN +1 , E N +1 ) are exchangeable. Equivalently, the calibration and deployment data are identically distributed, and the deployed model together with its decoding randomness is fixed across samples. 
+
+Theorem 3.2 (Fixed-threshold validity) Under Assumption 1, fix any threshold t ∈ R such that π(t) = P(U ≤ t) > 0. Let 
+
+n(t) = 
+
+> N
+
+X
+
+> i=1
+
+1{Ui ≤ t}, F D (t) = 
+
+> N
+
+X
+
+> i=1
+
+1{Ui ≤ t, E i = 1 }.
+
+Then conditional on n(t) = n > 0,
+
+F D (t) | n(t) = n ∼ Binomial( n, R (t)) . (8) 
+
+Consequently, for any γ ∈ (0 , 1) ,
+
+P(R(t) ≤ BCP (t; γ)) ≥ 1 − γ, (9) 
+
+and 
+
+P(R(t) ≤ BH(t; γ)) ≥ 1 − γ. (10) 
+
+Proof. 
+
+For each calibration point, define three mutually exclusive categories: 
+
+Ci =
+
+
+
+0, Ui > t (rejected) ,
+
+1, Ui ≤ t, E i = 0 (accepted and correct) ,
+
+2, Ui ≤ t, E i = 1 (accepted and incorrect) .
+
+Because ( Ui, E i) are i.i.d., the category variables {Ci}Ni=1 are i.i.d. multinomial with probabilities 
+
+P(Ci = 2) = π(t)R(t), P(Ci = 1) = π(t)(1 − R(t)) , P(Ci = 0) = 1 − π(t).
+
+Let N2 = F D (t) and N1 + N2 = n(t). Standard multinomial conditioning yields 
+
+N2 | (N1 + N2 = n) ∼ Binomial( n, R (t)) .
+
+This proves the first claim. The Clopper–Pearson bound is the exact one-sided (1 − γ) upper confidence bound for a binomial success probability, hence 
+
+P(R(t) ≤ BCP (t; γ) | n(t) = n) ≥ 1 − γ (11) 8for every n > 0, and therefore also unconditionally. For the Hoeffding bound, conditional on n(t) = n > 0, the accepted error indicators are i.i.d. Bernoulli with mean R(t). Applying Hoeffding’s inequality to their empirical mean bR(t) gives 
+
+P R(t) > bR(t) + 
+
+r log(1 /γ )2n n(t) = n
+
+!
+
+≤ γ. (12) Again, averaging over n yields the unconditional statement. □                               
+
+> Theorem 3.3 (Adaptive threshold guarantee) Under Assumption 1, let T={t1, . . . , t K}
+> be a fixed finite threshold grid, and let
+> ˆt= max
+> n
+> t∈ T :B(t;δ/K )≤α
+> o
+> ,(13)
+> where Bis either BHor BCP . Then
+> P ˆt=NULL or R(ˆ t)≤α≥1−δ. (14)
+> Equivalently, with probability at least 1−δ, every non-null threshold returned by the algorithm satisfies the desired selection-conditioned risk guarantee.
+
+Proof. 
+
+For each fixed t ∈ T , Theorem 3.2 gives 
+
+P(R(t) ≤ B(t; δ/K )) ≥ 1 − δ/K. (15) Define the simultaneous validity event 
+
+E = \
+
+> t∈T
+
+{R(t) ≤ B(t; δ/K )} . (16) By the union bound, 
+
+P(E) ≥ 1 − X
+
+> t∈T
+
+δK = 1 − δ. (17) On the event E, every candidate threshold satisfying B(t; δ/K ) ≤ α also satisfies 
+
+R(t) ≤ B(t; δ/K ) ≤ α. (18) Therefore, if the algorithm returns a non-null threshold ˆ t, then necessarily 
+
+R(ˆ t) ≤ α. (19) If no threshold is feasible, the algorithm returns NULL , which is also covered by the theorem statement. Hence 
+
+P ˆt = NULL or R(ˆ t) ≤ α ≥ 1 − δ. (20) 9Algorithm 1 Upper Confidence Bound Computation and Threshold Calibration  
+
+> 1:
+
+Input: Deployed LLM L, N calibration data points {(xi, y ∗ 
+
+> i
+
+, ˆyi)}Ni=1 , uncertainty measure M, alignment criterion A, risk level α, significance level δ 
+
+> 2:
+
+Output: An FDR-controlled threshold ˆ t 
+
+> 3:
+
+Quantify the uncertainty score of ˆ yi for all i ∈ [N ]: ui ← U (xi; G);  
+
+> 4:
+
+Evaluate whether ˆ yi is aliged with y∗ 
+
+> i
+
+based on A for all i ∈ [N ]: ai ← 1{A(y∗ 
+
+> i
+
+, ˆyi) = 1}; 
+
+> 5:
+
+Sort uncertainty scores u(1) ≤ · · · ≤ u(N ), with corresponding a(1) , . . . , a (N ); 
+
+> 6:
+
+Initialize ˆ t ← NULL ; 
+
+> 7:
+
+for i = 1 to N do  
+
+> 8:
+
+Let t ← u(i); 
+
+> 9:
+
+Count the number of accepted answers: n ← PNj=1 1{u(j) ≤ t}; 
+
+> 10:
+
+Count the number of misaligned answers among all accepted ones (i.e., false discovery): F D ← PNj=1 1{u(j) ≤ t ∧ a(j) = 0 }; 
+
+> 11:
+
+Compute the Hoeffding-style (1 − δ)-upper confidence bound: B ← F D n +
+
+q log(1 /δ )2n ; 
+
+> 12:
+
+Remark: Or compute the Clopper–Pearson-style exact (1 − δ)-upper confi-dence bound: B ← BetaInv(1 − δ; F D + 1 , n − F D );  
+
+> 13:
+
+if B ≤ α then  
+
+> 14:
+
+Update ˆ t ← t; 
+
+> 15:
+
+end if  
+
+> 16:
+
+end for  
+
+> 17:
+
+if ˆt = NULL then  
+
+> 18:
+
+Return “Risk level α is unattainable”  
+
+> 19:
+
+else  
+
+> 20:
+
+Return ˆt 
+
+> 21:
+
+end if 
+
+□
+
+Proposition 3.4 (Maximal acceptance among certified thresholds) Let 
+
+Tsafe = {t ∈ T : B(t; δ/K ) ≤ α}. (21) 
+
+If Tsafe is non-empty, then the selected threshold 
+
+ˆt = max Tsafe (22) 
+
+maximizes the acceptance probability π(t) over all certified candidate thresholds: 
+
+π(ˆ t) = max 
+
+> t∈T safe
+
+π(t). (23) 
+
+Proof. 
+
+For any t1 ≤ t2, we have 
+
+1{U ≤ t1} ≤ 1{U ≤ t2}, (24) hence π(t1) ≤ π(t2). Therefore, among all thresholds in Tsafe , the largest one has the largest acceptance probability. □
+
+10 3.5 Practical Remarks 
+
+Choice of UCB. 
+
+The Hoeffding-style bound is closed-form and simple, while the Clopper–Pearson bound is exact for binomial proportions and is generally preferable when the accepted subset is small. In practice, both can be implemented with the same calibration pipeline. 
+
+Unattainable risk levels. 
+
+If no threshold satisfies the UCB constraint, the target risk level α is unattainable for the current model–uncertainty pair at confidence level 1 − δ. This is an intrinsic limitation of the underlying model quality and uncertainty discriminability, rather than a failure of the calibration procedure itself. 
+
+On implementation with empirical score grids. 
+
+For theoretical strictness, the candidate threshold grid should be fixed in advance. In practice, one may scan all unique calibration scores for finer resolution; however, the exact guarantee in Theorem 3.3 is most cleanly stated for a pre-specified finite grid, or alternatively with an additional split / simultaneous testing correction. 
+
+Interpretation. 
+
+Our method does not require the uncertainty score itself to be calibrated. Instead, it treats the uncertainty estimator as a ranking signal, and calibrates a statistically valid operating threshold on top of it. In this sense, the proposed framework converts arbitrary heuristic uncertainty into a deployable abstention policy with finite-sample reliability guarantees. 
+
+Implementation. 
+
+Since the selection-conditioned risk is near-monotonic, i.e., it tends to decrease as the threshold increases, we adopt fixed-sequence testing instead of Bonferroni correction (i.e., δ instead of δ/K ) [24, 38]. The pseudocode for our calibration framework is presented by Algorithm 1. 
+
+# 4 Experiments 
+
+4.1 Experimental Settings 
+
+Base Models. 
+
+We evaluate CIC on seven widely used instruction-tuned LLMs with different model families and scales, including Qwen2.5-3B-Instruct, Qwen2.5-7B-Instruct, Qwen2.5-14B-Instruct [39], OpenChat-3.5 [40], Vicuna-7B-v1.5, Vicuna-13B-v1.5 [41], and LLaMA-3.1-8B-Instruct [42]. These models cover both relatively small and stronger instruction-following LLMs, allowing us to examine whether the proposed calibration framework is robust across different base error rates and uncertainty-quality regimes. 11 Table 1 Test-time FDR (mean ± std across 100 splits) on CommonsenseQA.                                                                                                                                                                                                                                                                                                               
+
+> LLMs UCBs/ α0.05 0.10 0.15 0.20 0.25 Base ER FDR Fail FDR Fail FDR Fail FDR Fail FDR Fail Qwen2.5-3B-Instruct UCB-HFD -100 0.074 ±0.009 00.128 ±0.008 00.180 ±0.009 00.230 ±0.009 00.239 UCB-CP 0.040 ±0.008 34 0.090 ±0.008 00.139 ±0.009 00.188 ±0.009 00.237 ±0.007 0Qwen2.5-7B-Instruct UCB-HFD 0.024 ±0.004 89 0.079 ±0.008 00.131 ±0.008 00.183 ±0.008 00.211 ±0.004 00.212 UCB-CP 0.043 ±0.006 00.092 ±0.007 00.142 ±0.008 00.192 ±0.008 00.211 ±0.004 00.212 OpenChat-3.5 UCB-HFD 0.023 ±0.006 70.079 ±0.007 00.131 ±0.008 00.180 ±0.005 00.182 ±0.004 00.182 UCB-CP 0.043 ±0.006 00.092 ±0.007 00.140 ±0.008 00.182 ±0.004 00.182 ±0.004 00.182 Vicuna-7b-v1.5 UCB-HFD -100 -100 0.121 ±0.020 97 0.156 ±0.021 30.220 ±0.014 00.410 UCB-CP -100 0.080 ±0.024 66 0.113 ±0.029 70.178 ±0.016 00.233 ±0.012 00.410 LLaMA-3.1-8B-Instruct UCB-HFD -100 0.074 ±0.008 00.128 ±0.008 00.180 ±0.009 00.231 ±0.009 00.271 UCB-CP 0.041 ±0.008 00.090 ±0.008 00.140 ±0.008 00.190 ±0.009 00.238 ±0.008 00.271 Vicuna-13b-v1.5 UCB-HFD -100 -100 0.117 ±0.014 00.174 ±0.011 00.227 ±0.010 00.347 UCB-CP 0.055 ±0.010 86 0.071 ±0.023 00.135 ±0.014 00.185 ±0.011 00.237 ±0.010 00.347 Qwen2.5-14B-Instruct UCB-HFD 0.023 ±0.005 19 0.080 ±0.006 00.131 ±0.007 00.168 ±0.004 00.168 ±0.004 00.168 UCB-CP 0.044 ±0.006 00.092 ±0.007 00.141 ±0.007 00.168 ±0.004 00.168 ±0.004 00.168
+
+Benchmarks. 
+
+Following prior work [24, 25], we conduct experiments on two representative QA bench-marks: CommonsenseQA [43] and TriviaQA [44]. CommonsenseQA is a closed-ended commonsense reasoning benchmark, where each question is associated with a set of candidate answers and the model is expected to select the correct one. TriviaQA is an open-ended question answering benchmark that requires models to generate free-form answers based on factual knowledge. Together, these two datasets allow us to evaluate CIC under both constrained answer selection and open-ended generation settings. 
+
+Uncertainty Estimators. 
+
+We use semantic entropy as the main uncertainty estimator for LLM outputs [20]. For each input question, we sample multiple responses from the base LLM and estimate semantic-level uncertainty by measuring the dispersion of generated answers after accounting for semantic equivalence. Unless otherwise specified, we use 10 sampled responses per question. The resulting uncertainty score is used as the ranking signal for selective answering, where lower uncertainty indicates a more reliable model response. 
+
+Alignment Evaluation. 
+
+For CommonsenseQA, correctness is evaluated by comparing the model-selected answer with the ground-truth option. For TriviaQA, because the model output is free-form, we evaluate whether the generated answer is semantically aligned with the reference answer. Following prior work [19, 21], we use sentence similarity with a threshold of 0.6 to determine whether a response should be treated as correct. The resulting binary correctness label is then converted into an error indicator and used for confidence-interval calibration. 
+
+Calibration Protocol. 
+
+For each dataset and model, we randomly split the data into calibration and test subsets. The calibration set is used only to select the uncertainty threshold, while the 12 Table 2 Test-time FDR (mean ± std across 100 splits) at various user-specified risk levels on TriviaQA with seven LLMs, utilizing semantic entropy (10 samples per question). We employ sentence similarity with a threshold of 0.6 for correctness evaluation.                                                                                                                                                                           
+
+> LLMs UCBs/ α0.05 0.1 0.15 0.2 0.25 Base ER FDR Fail FDR Fail FDR Fail FDR Fail FDR Fail Qwen2.5-3B-Instruct UCB-HFD –100 0.064 ±0.012 00.124 ±0.008 00.163 ±0.004 00.163 ±0.004 00.163 UCB-CP 0.038 ±0.004 34 0.086 ±0.010 00.136 ±0.008 00.163 ±0.004 00.163 ±0.004 0Qwen2.5-7B-Instruct UCB-HFD –100 0.077 ±0.007 00.125 ±0.004 00.125 ±0.004 00.125 ±0.004 00.125 UCB-CP 0.037 ±0.007 40.091 ±0.007 00.125 ±0.004 00.125 ±0.004 00.125 ±0.004 0OpenChat-3.5 UCB-HFD –100 0.078 ±0.008 00.118 ±0.004 00.118 ±0.004 00.118 ±0.004 00.118 UCB-CP 0.039 ±0.009 00.092 ±0.008 00.118 ±0.004 00.118 ±0.004 00.118 ±0.004 0Vicuna-7b-v1.5 UCB-HFD –100 0.065 ±0.012 00.126 ±0.009 00.169 ±0.004 00.169 ±0.004 00.169 UCB-CP 0.057 ±0.000 99 0.086 ±0.009 00.138 ±0.009 00.169 ±0.004 00.169 ±0.004 0LLaMA-3.1-8B-Instruct UCB-HFD 0.025 ±0.002 52 0.078 ±0.006 00.115 ±0.003 00.115 ±0.003 00.115 ±0.003 00.115 UCB-CP 0.042 ±0.006 00.090 ±0.007 00.115 ±0.003 00.115 ±0.003 00.115 ±0.003 0Vicuna-13b-v1.5 UCB-HFD –100 0.077 ±0.008 00.116 ±0.004 00.116 ±0.004 00.116 ±0.004 00.116 UCB-CP 0.037 ±0.009 00.090 ±0.007 00.116 ±0.004 00.116 ±0.004 00.116 ±0.004 0Qwen2.5-14B-Instruct UCB-HFD –100 0.079 ±0.006 00.088 ±0.003 00.088 ±0.003 00.088 ±0.003 00.088 UCB-CP 0.040 ±0.007 00.088 ±0.004 00.088 ±0.003 00.088 ±0.003 00.088 ±0.003 0
+
+test set is used only for evaluation. Following prior work, we repeat the calibration-test split 100 times and report the mean and standard deviation over 100 trials. By default, we use a calibration-test split ratio of 0.5. We evaluate multiple user-specified risk levels, α ∈ { 0.05 , 0.10 , 0.15 , 0.20 , 0.25 }.
+
+Compared UCBs. 
+
+We instantiate CIC with two upper confidence bounds: a Hoeffding-style UCB, denoted as UCB-HFD, and a Clopper–Pearson-style UCB, denoted as UCB-CP. UCB-HFD provides a simple closed-form bound, while UCB-CP gives an exact binomial confi-dence upper bound and is often more suitable when the accepted subset is small. For each risk level, CIC selects the largest threshold whose UCB does not exceed α. If no threshold satisfies the constraint, CIC returns no feasible threshold; we report the number of such failed calibration trials as “Fail”. 
+
+Evaluation Metrics. 
+
+We report two main metrics. First, we evaluate the empirical false discovery rate (FDR), defined as the proportion of incorrect responses among accepted outputs on the test set. This corresponds to the acceptance-conditioned error rate studied in our theoretical analysis. Second, we report power, defined as the proportion of test samples accepted by the calibrated threshold. A reliable selective answering system should keep FDR below the target risk level while achieving high power. 
+
+4.2 Empirical Results 
+
+Risk Control on CommonsenseQA. 
+
+Table 1 reports the test-time FDR on CommonsenseQA under different risk levels. Across most models and risk levels, both UCB-HFD and UCB-CP successfully keep the empirical FDR below the user-specified target α. This confirms that CIC can convert heuristic uncertainty scores into statistically reliable selective answering rules. As α increases, the calibrated threshold becomes less conservative, and the observed FDR correspondingly increases toward the target level. This trend is expected: a larger 13 Table 3 Test-time Power (mean across 100 splits) at various user-specified risk levels on TriviaQA with seven LLMs, utilizing semantic entropy (10 samples per question).                                                                                                                                                                   
+
+> LLMs UCBs/ α0.05 0.1 0.15 0.2 0.25 Power Fail Power Fail Power Fail Power Fail Power Fail Qwen2.5-3B-Instruct UCB-HFD –100 0.381 00.769 01.000 01.000 0UCB-CP 0.238 34 0.517 00.845 01.000 01.000 0Qwen2.5-7B-Instruct UCB-HFD –100 0.741 00.999 01.000 01.000 0UCB-CP 0.390 40.833 01.000 01.000 01.000 0OpenChat-3.5 UCB-HFD –100 0.889 01.000 01.000 01.000 0UCB-CP 0.670 00.929 01.000 01.000 01.000 0Vicuna-7b-v1.5 UCB-HFD –100 0.425 00.802 01.000 01.000 0UCB-CP 0.299 99 0.567 00.857 01.000 01.000 0LLaMA-3.1-8B-Instruct UCB-HFD 0.534 52 0.904 01.000 01.000 01.000 0UCB-CP 0.716 00.937 01.000 01.000 01.000 0Vicuna-13b-v1.5 UCB-HFD –100 0.835 01.000 01.000 01.000 0UCB-CP 0.567 00.891 01.000 01.000 01.000 0Qwen2.5-14B-Instruct UCB-HFD –100 0.970 01.000 01.000 01.000 0UCB-CP 0.621 00.999 01.000 01.000 01.000 0
+
+risk budget allows the system to accept more uncertain responses, leading to higher answering coverage but also a higher error rate among accepted outputs. The results also show that the feasibility of strict risk control depends on the underlying model and uncertainty estimator. For very small risk levels such as α =0.05, some model–UCB combinations fail to find a feasible threshold in a subset of calibration splits. This does not indicate a failure of the calibration procedure; rather, it means that the given model and uncertainty signal cannot certify such a strict risk level with the available calibration data. In contrast, when the target risk level is moderately relaxed, CIC usually finds feasible thresholds and maintains valid empirical FDR control. 
+
+Risk Control on TriviaQA. 
+
+Table 2 presents the test-time FDR results on TriviaQA. Compared with Common-senseQA, TriviaQA involves open-ended generation and semantic answer matching, making the evaluation more challenging. Nevertheless, CIC still achieves reliable risk control across the evaluated LLMs. For most models, the empirical FDR remains below or close to the target risk level across all tested values of α. This demonstrates that CIC is not limited to closed-ended answer selection, but can also be applied to open-ended QA when an appropriate alignment criterion is available. We further observe that when the base model already has a relatively low error rate, the FDR may saturate at the base error rate for larger α. In such cases, the calibrated threshold can accept nearly all test samples while still satisfying the target risk constraint. This explains why some entries at larger risk levels have FDR values close to the base error rate and power close to one. 
+
+Answering Power on TriviaQA. 
+
+Table 3 reports the answering power on TriviaQA. The results show a clear monotonic trend: as the target risk level α increases, CIC accepts a larger fraction of test samples. 14 Table 4 Test-time Power (mean across 100 splits) at various user-specified risk levels on CommonsenseQA with seven LLMs, 
+
+LLMs UCBs/ α Risk level ( α)0.05 0.10 0.15 0.20 0.25 Qwen2.5-3B-Instruct UCB-HFD - 0.502 0.774 0.895 0.984 UCB-CP 0.176 0.623 0.805 0.909 0.995 Qwen2.5-7B-Instruct UCB-HFD 0.345 0.720 0.858 0.952 1.000 UCB-CP 0.572 0.766 0.882 0.970 1.000 OpenChat-3.5 UCB-HFD 0.488 0.802 0.921 0.999 1.000 UCB-CP 0.655 0.839 0.940 1.000 1.000 LLaMA-3.1-8B-Instruct UCB-HFD - 0.551 0.740 0.860 0.941 UCB-CP 0.391 0.608 0.770 0.874 0.955 Vicuna-13b-v1.5 UCB-HFD - - 0.384 0.617 0.763 UCB-CP 0.041 0.132 0.468 0.646 0.794 Qwen2.5-14B-Instruct UCB-HFD 0.446 0.833 0.942 1.000 1.000 UCB-CP 0.661 0.865 0.959 1.000 1.000 
+
+At strict risk levels, the method abstains more frequently to maintain reliability; at relaxed risk levels, it returns more answers and often reaches full or near-full power. This behavior reflects the central trade-off in selective answering: lower risk requires more abstention, while higher risk permits broader coverage. Comparing the two UCB variants, UCB-HFD and UCB-CP exhibit different con-servativeness patterns. UCB-CP is often more effective when the accepted subset is small, because it directly models the binomial error proportion and can produce sharper confidence bounds in low-count regimes. However, the relative advantage varies across models and datasets, depending on the calibration sample size, base error rate, and discriminative quality of the uncertainty estimator. 
+
+Answering Power on CommonsenseQA. 
+
+Table 4 reports the answering power on CommonsenseQA. The same risk–coverage trade-off can be observed. For stronger models or settings where semantic entropy better separates correct from incorrect predictions, CIC achieves high power even under relatively strict risk levels. For weaker models or less discriminative uncertainty scores, the method becomes more conservative and may abstain from a larger fraction of samples. This is desirable in reliability-sensitive deployment, because the system should avoid answering when the calibration data cannot certify the desired error level. Across both datasets, the empirical results support the main design principle of CIC: uncertainty scores need not be perfectly calibrated by themselves, as long as they 15 Fig. 2 Sensitivity analysis under different calibration-test split ratios on CommonsenseQA using Qwen2.5-3B-Instruct. The x-axis reports the calibration:test split ratio, where 1:1, 2:3, 3:7, 1:4, and 1:9 correspond to calibration proportions of 0.5, 0.4, 0.3, 0.2, and 0.1, respectively. The dashed line indicates the target alignment proportion of 0.90. 
+
+provide a useful ranking signal. The confidence-interval calibration layer then converts this ranking signal into a threshold with finite-sample risk control. 
+
+Sensitivity to Calibration-Test Split Ratios. 
+
+We further evaluate the robustness of CIC under different calibration-test split ratios. By default, we use a 1:1 split between calibration and test data. To examine whether the empirical reliability is sensitive to the calibration size, we additionally vary the calibration-test ratio from 1:1 to 2:3, 3:7, 1:4, and 1:9, corresponding to calibration proportions of 0.5, 0.4, 0.3, 0.2, and 0.1, respectively. We conduct this sensitivity study on CommonsenseQA using Qwen2.5-3B-Instruct. As shown in Figure 2, CIC remains stable across all evaluated split ratios. The empirical alignment proportion stays above the target level of 0.90, with values ranging from 0.9190 to 0.9290. Although smaller calibration sets may in principle lead to wider confidence intervals and more conservative threshold selection, the observed performance does not degrade substantially in this experiment. These results suggest that CIC is empirically robust to moderate changes in the calibration-test split ratio. 
+
+Discussion. 
+
+Overall, the experiments demonstrate three key findings. First, CIC provides reliable control of the error rate among accepted answers across closed-ended and open-ended QA benchmarks. Second, the calibrated threshold naturally adapts to the user-specified risk level, yielding a smooth trade-off between reliability and answer-ing efficiency. Third, infeasible cases mainly occur under very strict risk requirements, especially when the base model error rate is high or the uncertainty estimator has limited discriminative power. These findings are consistent with the theoretical interpretation of CIC: the method can certify reliable thresholds when the model– uncertainty pair supports the desired risk level, and otherwise correctly reports that the requested risk level is unattainable. 16 5 Conclusion 
+
+In this paper, we proposed CIC , a confidence-interval-based calibration framework for risk-controlled selective answering with large language models. Instead of assum-ing that heuristic uncertainty scores are intrinsically calibrated, CIC treats them as black-box ranking signals and learns a statistically certified abstention threshold from a held-out calibration set. By estimating the error rate among accepted responses and constructing a high-probability upper confidence bound, CIC selects the largest threshold satisfying a user-specified risk level, thereby balancing answering efficiency and deployment reliability. Theoretically, we established finite-sample, high-probability guarantees under exchangeability, showing that the selected threshold, if feasible, controls the acceptance-conditioned error rate at the target level. Empirically, experiments on both closed-ended and open-ended QA benchmarks demonstrate that CIC achieves reliable risk control across multiple LLMs and uncertainty settings, while maintaining strong answering power. The sensitivity analysis further suggests that the framework remains stable under different calibration-test split ratios. Overall, CIC provides a simple, model-agnostic, and practically deployable statis-tical layer for converting heuristic LLM uncertainty estimates into reliable selective answering policies. Future work may extend this framework to multi-answer gener-ation, multi-risk constraints, adaptive threshold selection with sharper simultaneous guarantees, and more complex deployment scenarios such as retrieval-augmented generation and human-AI collaborative decision-making. 
+
+# Declarations 
+
+Ethics approval and consent to participate 
+
+Not applicable. 
+
+Consent for publication 
+
+Not applicable. 
+
+Clinical trial number 
+
+Not applicable. 
+
+Funding 
+
+The authors received no specific funding for this work. 
+
+Author contributions 
+
+Sijin Dong conceived the study, developed the methodology, conducted the experi-ments, analyzed the results, and wrote the manuscript. Hiroyuki Shinnou supervised the study and reviewed and revised the manuscript. All authors read and approved the final manuscript. 17 Conflict of interest 
+
+The authors declare that they have no conflict of interest or competing interests. 
+
+Data availability 
+
+The datasets used in this study are publicly available benchmarks. CommonsenseQA and TriviaQA are available from their respective public repositories. Additional experimental details are provided in the manuscript. 
+
+# References 
+
+[1] Wang, S., Xu, T., Li, H., Zhang, C., Liang, J., Tang, J., Yu, P.S., Wen, Q.: Large language models for education: A survey and outlook. IEEE Signal Processing Magazine 42 (6), 51–63 (2026) [2] Jiang, J., Wang, F., Shen, J., Kim, S., Kim, S.: A survey on large language models for code generation. ACM Transactions on Software Engineering and Methodology 35 (2), 1–72 (2026) [3] Eldem, A., Eldem, H.: The development and evaluation of agricultural question-answering systems based on large language models. Scientific Reports 16 (1), 5357 (2026) [4] Song, Z., Xu, N., Ding, H.: Decision-making framework for autonomous vehicles in complex scenarios using large language models. Automotive Innovation, 1–21 (2026) [5] Bi, J., Yan, D., Wang, Y., Huang, W., Chen, H., Wan, G., Ye, M., Xiao, X., Schuetze, H., Tresp, V., Ma, Y.: CoT-Kinetics: A Theoretical Modeling Assessing LRM Reasoning Process (2025) [6] Huang, X., Rishabh, Franke, G., Yang, Z., Bai, J., Bai, W., Bi, J., Ding, Z., Duan, Y., Fan, C., Fan, W., Gao, X., Guo, R., He, Y., He, Z., Hu, X., Johnson, N., Li, B., Lin, F., Lin, S., Liu, T., Ma, Y., Shen, H., Sun, H., Wang, B., Wang, F., Wang, H., Wang, H., Wang, Y., Wang, Y., Wang, Z., Wang, Z., Wu, Y., Xiao, Z., Xie, C., Yang, F., Yang, J., Ye, Q., Ye, Z., Zeng, G., Zhang, Y.E., Zhang, Z., Zhu, Z., Ghanem, B., Torr, P., Li, G.: Loong: Synthesize Long Chain-of-Thoughts at Scale through Verifiers (2025) [7] Wan, G., Fu, L., Liu, H., Jin, Y., Leong, H.Y., Jiang, E.H., Geng, H., Bi, J., Ma, Y., Tang, X., Prakash, B.A., Sun, Y., Wang, W.: Beyond Magic Words: Sharpness-Aware Prompt Evolving for Robust Large Language Models with TARE (2025) [8] Tian, Y., Chen, S., Xu, Z., Wang, Y., Bi, J., Han, P., Wang, W.: Reinforcement Mid-Training (2025) 18 [9] Rong, X., Huang, W., Liang, J., Bi, J., Xiao, X., Li, Y., Du, B., Ye, M.: Back-door cleaning without external guidance in mllm fine-tuning. arXiv preprint arXiv:2505.16916 (2025) [10] Wang, Y., Bi, J., Ma, Y., Pirk, S.: Ascd: Attention-steerable contrastive decoding for reducing hallucination in mllm. arXiv preprint arXiv:2506.14766 (2025) [11] Bi, J., Wang, Y., Chen, H., Xiao, X., Hecker, A., Tresp, V., Ma, Y.: LLaVA steering: Visual instruction tuning with 500x fewer parameters through modality linear representation-steering. In: Che, W., Nabende, J., Shutova, E., Pilehvar, M.T. (eds.) Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pp. 15230–15250 (2025) [12] Bi, J., Wang, Y., Yan, D., Aniri, Huang, W., Jin, Z., Ma, X., Hecker, A., Ye, M., Xiao, X., Schuetze, H., Tresp, V., Ma, Y.: PRISM: Self-Pruning Intrinsic Selection Method for Training-Free Multimodal Data Selection (2025) [13] Jiang, K., Jiang, N., Du, Y., Ren, Y., Li, Y., Gao, Y., Bi, J., Ma, Y., Liu, Q., Wang, X., Jia, Y., Jiang, H., Hu, Y., Li, B., Liu, L.: MINED: Probing and Updat-ing with Multimodal Time-Sensitive Knowledge for Large Multimodal Models (2025) [14] Jiang, K., Jiang, H., Jiang, N., Gao, Z., Bi, J., Ren, Y., Li, B., Du, Y., Liu, L., Li, Q.: KORE: Enhancing Knowledge Injection for Large Multimodal Models via Knowledge-Oriented Augmentations and Constraints (2025) [15] Zhang, G., Bi, J., Gu, J., Chen, Y., Tresp, V.: Spot! revisiting video-language models for event understanding. arXiv preprint arXiv:2311.12919 (2023) [16] Peng, T., Du, Y., Ji, P., Dong, S., Jiang, K., Ma, M., Tian, Y., Bi, J., Li, Q., Du, W., Xiao, F., Cui, L.: Can Visual Input Be Compressed? A Visual Token Compression Benchmark for Large Multimodal Models (2025) [17] Li, Z., Wu, X., Wang, Z., Li, J., Tian, Y., Bi, J., Ma, Y., Ye, Y., Zhang, C.: Graph is a Substrate Across Data Modalities (2026) [18] Gawlikowski, J., Tassi, C.R.N., Ali, M., Lee, J., Humt, M., Feng, J., Kruspe, A., Triebel, R., Jung, P., Roscher, R., et al. : A survey of uncertainty in deep neural networks. Artificial intelligence review 56 , 1513–1589 (2023) [19] Duan, J., Cheng, H., Wang, S., Zavalny, A., Wang, C., Xu, R., Kailkhura, B., Xu, K.: Shifting attention to relevance: Towards the predictive uncertainty quantification of free-form large language models. In: Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pp. 5050–5063 (2024) [20] Kuhn, L., Gal, Y., Farquhar, S.: Semantic uncertainty: Linguistic invariances 19 for uncertainty estimation in natural language generation. In: The Eleventh International Conference on Learning Representations (2023) [21] Wang, Z., Duan, J., Yuan, C., Chen, Q., Chen, T., Zhang, Y., Wang, R., Shi, X., Xu, K.: Word-sequence entropy: Towards uncertainty estimation in free-form medical question answering applications and beyond. Engineering Applications of Artificial Intelligence 139 , 109553 (2025) [22] Wang, Z., Duan, J., Cheng, L., Zhang, Y., Wang, Q., Shi, X., Xu, K., Shen, H.T., Zhu, X.: Conu: Conformal uncertainty in large language models with cor-rectness coverage guarantees. In: Findings of the Association for Computational Linguistics: EMNLP 2024, pp. 6886–6898 (2024) [23] Gui, Y., Jin, Y., Ren, Z.: Conformal alignment: Knowing when to trust foundation models with guarantees. Advances in Neural Information Processing Systems 37 ,73884–73919 (2024) [24] Wang, Z., Duan, J., Wang, Q., Zhu, X., Chen, T., Shi, X., Xu, K.: Coin: Uncertainty-guarding selective question answering for foundation models with provable risk guarantees. Proceedings of the AAAI Conference on Artificial Intelligence 40 (40), 33764–33772 (2026) [25] Wang, Z., Chen, T., Zhang, Y., Shen, H.T., Shi, X., Xu, K., et al.: Lec: Lin-ear expectation constraints for false-discovery control in selective prediction and routing systems. arXiv preprint arXiv:2512.01556 (2025) [26] Angelopoulos, A.N., Bates, S., Jordan, M., Malik, J.: Uncertainty sets for image classifiers using conformal prediction. In: International Conference on Learning Representations (2021) [27] Angelopoulos, A.N., Bates, S.: Conformal prediction: A gentle introduction. Foundations and Trends in Machine Learning 16 (4), 494–591 (2023) [28] Angelopoulos, A.N., Barber, R.F., Bates, S.: Theoretical foundations of conformal prediction. arXiv preprint arXiv:2411.11824 (2024) [29] Wang, Z., Wang, Q., Zhang, Y., Chen, T., Zhu, X., Shi, X., Xu, K.: Sconu: Selective conformal uncertainty in large language models. In: Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pp. 19052–19075 (2025) [30] Wang, Q., Geng, T., Wang, Z., Wang, T., Fu, B., Zheng, F.: Sample then identify: A general framework for risk control and assessment in multimodal large language models. In: The Thirteenth International Conference on Learning Representations (2025) [31] Li, Y., Hu, A., Ye, Y., Tong, S., Wang, Z., Fu, B.: Set-valued prediction for 20 large language models with feasibility-aware coverage guarantees. arXiv preprint arXiv:2603.22966 (2026) [32] Clopper, C.J., Pearson, E.S.: The use of confidence or fiducial limits illustrated in the case of the binomial. Biometrika 26 (4), 404–413 (1934) [33] Tan, B., Wang, Z., Duan, J., Xu, K., Shen, H.T., Shi, X., Shen, F.: Confor-mal lesion segmentation for 3d medical images. arXiv preprint arXiv:2510.17897 (2025) [34] Campos, M., Farinhas, A., Zerva, C., Figueiredo, M.A., Martins, A.F.: Confor-mal prediction for natural language processing: A survey. Transactions of the Association for Computational Linguistics 12 , 1497–1516 (2024) [35] Quach, V., Fisch, A., Schuster, T., Yala, A., Sohn, J.H., Jaakkola, T.S., Barzilay, R.: Conformal language modeling. In: The Twelfth International Conference on Learning Representations (2024) [36] Mohri, C., Hashimoto, T.: Language models with conformal factuality guarantees. In: Proceedings of the 41st International Conference on Machine Learning, pp. 36029–36047 (2024) [37] Jia, Z., Ye, Y., Jia, S., Qian, Y., Wang, H., Chen, B., Tang, D., Yu, J., Wang, Z.: Balancerag: Joint risk calibration for cascaded retrieval-augmented generation. arXiv preprint arXiv:2605.20084 (2026) [38] Jung, J., Brahman, F., Choi, Y.: Trust or escalate: LLM judges with provable guarantees for human agreement. In: The Thirteenth International Conference on Learning Representations (2025) [39] Bai, J., Bai, S., Chu, Y., Cui, Z., Dang, K., Deng, X., Fan, Y., Ge, W., Han, Y., Huang, F., et al.: Qwen technical report. arXiv preprint arXiv:2309.16609 (2023) [40] Wang, G., Cheng, S., Zhan, X., Li, X., Song, S., Liu, Y.: Openchat: Advanc-ing open-source language models with mixed-quality data. In: International Conference on Learning Representations, vol. 2024, pp. 57021–57040 (2024) [41] Zheng, L., Chiang, W.-L., Sheng, Y., Zhuang, S., Wu, Z., Zhuang, Y., Lin, Z., Li, Z., Li, D., Xing, E., et al. : Judging llm-as-a-judge with mt-bench and chat-bot arena. Advances in neural information processing systems 36 , 46595–46623 (2023) [42] Touvron, H., Lavril, T., Izacard, G., Martinet, X., Lachaux, M.-A., Lacroix, T., Rozi` ere, B., Goyal, N., Hambro, E., Azhar, F., et al.: Llama: Open and efficient foundation language models. arXiv preprint arXiv:2302.13971 (2023) [43] Talmor, A., Herzig, J., Lourie, N., Berant, J.: CommonsenseQA: A question 21 answering challenge targeting commonsense knowledge. In: Burstein, J., Doran, C., Solorio, T. (eds.) Proceedings of the 2019 Conference of the North Ameri-can Chapter of the Association for Computational Linguistics: Human Language Technologies, Volume 1 (Long and Short Papers), pp. 4149–4158 (2019) [44] Joshi, M., Choi, E., Weld, D., Zettlemoyer, L.: TriviaQA: A large scale dis-tantly supervised challenge dataset for reading comprehension. In: Barzilay, R., Kan, M.-Y. (eds.) Proceedings of the 55th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pp. 1601–1611 (2017) 22

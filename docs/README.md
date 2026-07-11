@@ -6,47 +6,35 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-10
-- 运行时间：2026-07-10 06:18:23 UTC
+- 最新运行日期：2026-07-11
+- 运行时间：2026-07-11 04:54:43 UTC
 - 运行状态：成功
-- 本次总论文数：9
-- 精读区：4
-- 速读区：5
+- 本次总论文数：5
+- 精读区：3
+- 速读区：2
 
 ### 今日简报（AI）
-今日精读两篇9.0分论文，聚焦语言模型安全对齐与Web代理提示注入防护；速读三篇涉及幻觉减少、知识库投毒和合同工程。最值得关注的方向包括利用潜在人格特质提升模型安全性，以及Prismata框架限制跨站提示注入。建议普通读者优先了解这两篇精读论文，以掌握当前LLM安全领域的前沿防护思路。
-- 详情：[/202607/10/README](/202607/10/README)
+今日精读两篇安全方向高分论文，速读两篇相关综述，聚焦大模型安全漏洞与防御。最值得关注的是嵌入攻击利用与新式无推理安全护栏机制。建议优先精读这两篇高分文献，重点关注推理无关模型的防护策略。
+- 详情：[/202607/11/README](/202607/11/README)
 
 ### 精读区论文标签
-1. [Efficient Safety Alignment of Language Models via Latent Personality Traits](/202607/10/2607.07918v1-efficient-safety-alignment-of-language-models-via-latent-personality-traits)  
+1. [Safety Targeted Embedding Exploit via Refinement](/202607/11/2607.01859v1-safety-targeted-embedding-exploit-via-refinement)  
    标签：评分：9.0/10、query:llm-security
-   evidence：通过潜在人格特质对齐防御对抗攻击
-2. [Prismata: Confining Cross-Site Prompt Injection in Web Agents](/202607/10/2607.08147v1-prismata-confining-cross-site-prompt-injection-in-web-agents)  
+   evidence：利用低资源语言绕过安全训练的提示注入攻击方法
+2. [DT-Guard: Intent-Driven Reasoning-Active Training for Reasoning-Free LLM Safety Guardrail](/202607/11/2607.06326v1-dt-guard-intent-driven-reasoning-active-training-for-reasoning-free-llm-safety-guardrail)  
    标签：评分：9.0/10、query:llm-security
-   evidence：通过上下文最小权限防御网页代理中的跨站提示注入
-3. [Token-Flow Firewall: Semantic Runtime Auditing for Persistent AI Agents](/202607/10/2607.08395v1-token-flow-firewall-semantic-runtime-auditing-for-persistent-ai-agents)  
-   标签：评分：9.0/10、query:llm-security
-   evidence：针对持久化AI代理的语义运行时审计
-4. [Multi-Agent Firewall Architecture for Privacy Protection of Sensitive Data in Interactions with Language Models](/202607/10/2607.08282v1-multi-agent-firewall-architecture-for-privacy-protection-of-sensitive-data-in-interactions-with-language-models)  
+   evidence：基于意图驱动的推理主动训练安全护栏
+3. [Knowledge Base Poisoning Attacks and Defense for Policy-Aware LLM-RAG Framework](/202607/11/2607.04379v1-knowledge-base-poisoning-attacks-and-defense-for-policy-aware-llm-rag-framework)  
    标签：评分：8.0/10、query:llm-security
-   evidence：面向LLM交互隐私保护的多智能体防火墙
+   evidence：提出CLD-KB防御RAG知识库投毒，为LLM系统提供安全措施
 
 ### 速读区论文标签
-1. [Grounded Optimization: A Layered Engineering Framework for Reducing LLM Hallucination in Automated Personal Document Rewriting](/202607/10/2607.01457v1-grounded-optimization-a-layered-engineering-framework-for-reducing-llm-hallucination-in-automated-personal-document-rewriting)  
-   标签：评分：7.0/10、query:llm-security
-   evidence：减少LLM幻觉以提升内容安全
-2. [Knowledge Base Poisoning Attacks and Defense for Policy-Aware LLM-RAG Framework](/202607/10/2607.04379v1-knowledge-base-poisoning-attacks-and-defense-for-policy-aware-llm-rag-framework)  
-   标签：评分：7.0/10、query:llm-security
-   evidence：针对LLM-RAG知识库投毒的防御方法
-3. [From Prompts to Contracts: Harness Engineering for Auditable Enterprise LLM Agents](/202607/10/2607.08028v1-from-prompts-to-contracts-harness-engineering-for-auditable-enterprise-llm-agents)  
-   标签：评分：7.0/10、query:llm-security
-   evidence：为企业LLM智能体提供可审计的工程方法
-4. [Distributed Attacks in Persistent-State AI Control](/202607/10/2607.02514v2-distributed-attacks-in-persistent-state-ai-control)  
+1. [Uncertainty-Aware Abstention in Large Language Models with Provable Alignment Guarantees](/202607/11/2607.04430v1-uncertainty-aware-abstention-in-large-language-models-with-provable-alignment-guarantees)  
    标签：评分：6.0/10、query:llm-security
-   evidence：研究编码智能体中的提示注入攻击
-5. [Out of Sight: Compression-Aware Content Protection against Agentic Crawlers](/202607/10/2607.08180v1-out-of-sight-compression-aware-content-protection-against-agentic-crawlers)  
+   evidence：风险控制的选择性回答作为输出护栏
+2. [Large Language Models (LLMs) and Generative AI in Cybersecurity and Privacy: A Survey of Dual-Use Risks, AI-Generated Malware, Explainability, and Defensive Strategies](/202607/11/2607.06963v1-large-language-models-llms-and-generative-ai-in-cybersecurity-and-privacy-a-survey-of-dual-use-risks-ai-generated-malware-explainability-and-defensive-strategies)  
    标签：评分：6.0/10、query:llm-security
-   evidence：针对LLM代理爬虫的压缩感知内容保护
+   evidence：关于LLM安全包括防御策略的综述
 
 
 <div class="dpr-home-promo-card">
