@@ -1,0 +1,573 @@
+Title: Functional and Secure Code Generation with Task Vectors
+
+URL Source: https://arxiv.org/pdf/2607.07881v1
+
+Published Time: Fri, 10 Jul 2026 00:10:20 GMT
+
+Number of Pages: 12
+
+Markdown Content:
+# Functional and Secure Code Generation with Task Vectors 
+
+Felix Wang ∗, Anudeep Das ∗, Meiyappan Nagappan ∗, N. Asokan ∗† † KTH Royal Institute of Technology, Stockholm, Sweden  
+
+> ∗
+
+University of Waterloo, Waterloo, ON, Canada 
+
+{felix.wang, anudeep.das, mei.nagappan }@uwaterloo.ca, asokan@acm.org 
+
+Abstract —Large language models (LLMs) are increasingly used for code generation, but they struggle to generate functional code free of security vulnerabilities. Prior work to improve the secure code generation abilities of such coding LLMs has largely focused on evaluating code functionality and security separately using different datasets, or focused on finding vulnerabilities post-generation. At the same time, the text-generation domain has seen significant work on alignment techniques, where models are tuned such that their outputs exhibit certain qualities (e.g., helpfulness, harmlessness). Of particular interest is task-vector arithmetic , where linear operations on LLM weights can be used to arbitrarily enhance alignment while incurring only minimal computational overhead. We develop a novel method, SecVec-Coder , leveraging task vectors to produce trustworthy code that is simultaneously functional and secure without the need for post-generation adjustment. Across six coding LLMs from three families on the CodeGuard+ benchmark, SecVecCoder 
+
+improves the rate of trustworthy code completions by 2.1–36 .0
+
+percentage points over the base model, with improvements on unseen CWE types reaching up to 39 .1 percentage points. Since the effectiveness of the coding LLM relies only on changing the model weights, SecVecCoder requires no method-specific decoding and hence achieves a decoding latency within 0.6% of the base model’s, on average. 
+
+Index Terms —Large language models, Code generation, Soft-ware Security, AI Safety 
+
+I. I NTRODUCTION 
+
+Large language models (LLMs) have demonstrated a re-markable ability to generate functional computer code, and they are increasingly used as coding assistants [1], [2]. How-ever, these models were typically trained on vast corpora containing code from the Internet, without regard for any security vulnerabilities they may contain. Prior work has shown that AI coding assistants tend to generate code with exploitable weaknesses [3]. Consequently, whether AI coding assistants encourage misplaced confidence in the security of their generated code and lead developers to produce more vulnerable code, is an active research topic [4]–[6]. Prior work has approached the problem of improving se-cure code generation from three complementary mitigation approaches: training-time, post-generation, and inference-time. Training-time methods optimize the model toward safer code generation by modifying the model weights via training, and constitute the most widely explored approach in prior work. Training techniques include prefix tuning [7], security-focused instruction tuning over large curated corpora [8], or additional security modules inserted into the model [9], [10]. These methods can be effective, but they often require substantial training data, long optimization runs, or method-specific ma-chinery. Post-generation approaches apply vulnerability de-tection techniques [11], [12] to generated code, followed by automatic vulnerability repair techniques (AVR) [13]–[15], to eliminate the detected security vulnerabilities. However, they incur substantial computational overhead at inference time because they require a post-hoc scan using a machine learning (ML) model. In contrast, inference-time approaches enforce security through additional mechanisms applied during generation, such as auxiliary, lightweight security modules [9] or constrained decoding [16], [17]. As a result, they can be easily modulated at inference time without additional optimization, and incur lower training time cost. However, token-level decoding constraints increase inference cost, while module-based decoding methods may introduce additional training overhead through auxiliary modules or separate func-tional tuning stages [9], [10]. Thus, we aim to develop a method that can combine the benefits of both training-time and inference-time approaches such that computational overhead during training and inference is reduced, while continuing to support inference-time modulation. Code-generation techniques must take both security and functionality into account simultaneously . Prior work [7], [8], [10], [16] claims to emphasize both aspects, but with the exception of DeepGuard [9] and Fu et al. [17], they measure functionality and security using separate datasets. Secure code is only useful if it also implements the functionality that the developer intends to build. We argue that trustworthy code generation techniques need to produce code that is 
+
+simultaneously secure and functional . To properly evaluate trustworthy code generation, it is essential that we measure security and functionality simultaneously. We take inspiration from the domain of LLM alignment to develop a trustworthy code-generation technique. Alignment in LLMs is the process of ensuring that they produce text that is honest, helpful, and harmless [18]–[20]. Thus, techniques used for alignment may be used to ensure that coding LLMs produce trustworthy code. A particularly relevant alignment technique is task-vector arithmetic [21]–[24]. A task vector defines a direction in the weight space of an ML model associated with a particular output behaviour. It is calculated by taking the difference between the weights of the model fine-tuned to express this behaviour and the weights of the arXiv:2607.07881v1 [cs.SE] 8 Jul 2026 original model without the behaviour. Formally, given two instantiations of a model with parameters W2 and W1, a task vector can be defined as ∆W = W2 − W1. This task vector can then be added to the model corresponding to W1, with a scaling coefficient, λ, to control the degree to which the resultant model, Wf , also expresses the behaviour. That is, 
+
+Wf = W1 + λ∆W . With λ < 0, Wf is steered toward suppressing the behaviour, and for λ > 1, Wf is steered to exhibit the behavior to a greater degree than W2.Task vectors are particularly appealing because they incur little to no overhead at inference time, and their impact can easily be modulated using scaling coefficients, thus potentially offering benefits of both training-time and inference-time mitigation, as desired. Therefore, the goal of our study is: 
+
+Can we use task vectors to modulate coding LLMs toward generating secure and functional code? 
+
+In this work, we answer this question in the affirmative by introducing SecVecCoder , which applies arithmetic to task vectors derived through localized preference optimization to produce trustworthy code. Our contributions are:  
+
+> •
+
+SecVecCoder , a novel method representing the first application of task-vector arithmetic for trustworthy code generation, achieving 
+
+– state-of-the-art performance on five of six evaluated models, (Section V-A2), while 
+
+– requiring 2.6–12 .4× less training compute relative to training-intensive prior methods (Section V-B1), and 
+
+– incurring 0.6% of decoding-time overhead compared to the base model on average (Section V-B2),  
+
+> •
+
+a systematic analysis of how the fine-tuning strategy, steering operator, and steering strength affect task-vector arithmetic (Section V-A1), and  
+
+> •
+
+an extensive evaluation of prior work with respect to security and functionality at the same time, demonstrating that security alone does not necessarily imply trustworthy code (Section V-A2). II. R ELATED WORK 
+
+We review prior work on the security risks of generated code, as well as training- and inference-time defences. 
+
+A. Security Risks of LLM-Generated Code 
+
+Modern coding LLMs are trained on large corpora of public source code [1], [25]–[28]; this scale improves programming fluency but also exposes models to vulnerable implementation patterns. Pearce et al. [3] found that a substantial fraction of Copilot completions in security-relevant tasks contained exploitable weaknesses across MITRE CWE categories [29]. Human-subject studies further suggest that AI-assisted pro-grammers can introduce more vulnerabilities while becoming more confident in the security of their code [4], [5]. These findings motivate evaluation criteria that jointly measure both functionality and security as part of trustworthy code gener-ation, rather than security alone. In our work, we actualize this evaluation criteria by measuring both functionality and security with the same dataset, and use it to critically evaluate our approach relative to prior work. 
+
+B. Approaches to Secure Code Generation 
+
+Prior work aligns coding LLMs toward secure code gen-eration either using additional training to change what the model has learned, or by guiding generation at inference time. Training-time methods optimize model parameters or trainable adapters. SVEN [7] learns property-specific contin-uous prefixes that steer a frozen base model toward secure or vulnerable code. SafeCoder [8] trains on curated security data with likelihood and unlikelihood objectives, while Localized Preference Optimization (LPO) [30] focuses the preference loss on tokens where secure and vulnerable implementations differ. These methods directly train a model or adapter to behave securely. Our method similarly relies on paired secure and vulnerable code for training. However, unlike LPO, we can further modulate the effectiveness of trustworthy code generation without additional training by adjusting scaling coefficients. Inference-time methods instead leave the model weights fixed but guide generation during decoding. Constrained decoding [17] prunes unsafe continuations and introduces the CodeGuard+ benchmark. CoSec [16] co-decodes with a smaller security model to reweight token probabilities. SCoDE [10] trains a transferable security steering matrix at the output embedding layer and applies it through contrastive decoding, while DeepGuard [9] trains security modules that aggregate signals from intermediate layers for guided decod-ing. These methods can improve security, but their protection is tied to the decoding procedure and therefore incurs a cost for every inference. Our method directly modifies the model weights, so inference uses standard autoregressive decoding, identical to the base model. III. M ETHODOLOGY 
+
+A. Secure-Code Steering with Task Vectors 
+
+Our goal in training SecVecCoder is to instill trustwor-thy code-generation behavior directly into a coding LLM’s weights through task-vector arithmetic. Figure 1 summarizes the pipeline. Rather than relying on large-scale continued training, we start from a base model with weights Wbase ; the pretrained coding LLM without any secure code generation mechanisms applied. Then, we construct a task vector that encodes security-relevant behavior, and apply this onto Wbase .This design aims to obtain trustworthy code generation while keeping both the training budget and the deployment procedure compact: SecVecCoder is applied once to the weights, and generation proceeds with standard autoregressive decoding. We fine-tune Wbase separately with examples of secure and vulnerable code, resulting in Wsec and Wvul respectively. The insecure direction is needed to contrast secure and vulnerable generations, improving the model’s ability to separate the two behaviors in the weight space; we discuss this further in Section III-B. We define the secure and insecure task vectors as 
+
+τsec = Wsec − Wbase , τinsec = Wvul − Wbase . (1) 
+
+B. Task-Vector Steering Operators 
+
+We now describe the mathematical operations to promote trustworthy code generation. In general, these operations are of the form: 
+
+Wsteered = Wbase + α τ sec − θ τ insec , (2) where α and θ control how much of the secure and insecure task vectors are expressed, respectively. Figure 2 illustrates the geometry. We study three choices of α:
+
+Negation (α = 0 ) subtracts an undesirable task vector to suppress its corresponding behavior: 
+
+Wsteered = Wbase − θ τ insec . (3) 
+
+Contrast (α = θ) steers along the difference between a desirable and an undesirable direction: 
+
+Wsteered = Wbase + θ (τsec − τinsec ). (4) 
+
+Secure-Anchored (α = 1) is our proposed approach to ensure that steering towards secure code generation preserves the functional code-writing behavior learned by Wbase while selectively suppressing the insecure direction: 
+
+Wsteered = Wbase + τsec − θ τ insec . (5) We evaluate which rule yields the most consistent and the strongest trustworthy code generation empirically in Sec-tion V-A1. 
+
+C. Choice of Wsec and Wvul 
+
+Different training objectives can shape the local weight-space geometry in different ways, causing the resulting task vectors to point in directions with varying usefulness for trustworthy code generation. We therefore compare three fine-tuning strategies to obtain 
+
+Wsec and Wvul . Following prior work on task-vector arith-metic [21], the first strategy is standard supervised fine-tuning (SFT), where secure and vulnerable fine-tuned models are trained independently on their corresponding completions. The second is localized preference optimization (LPO) [30], a preference-based fine-tuning method that uses paired secure and vulnerable examples, and emphasizes the tokens (i.e., syntax) on which their respective implementations differ. LPO is the best fine-tuning method from prior work in terms of secure completion ratio, as measured by CodeQL, and func-tional correctness performance on HumanEval [8]. The third is SafeCoder-style [8] tuning, the second-best fine-tuning method from prior work. It optimizes a three-way training objective consisting of a functionality loss, a secure-completion loss, and a vulnerable-completion unlikelihood loss. We focus on these three methods because they produce adapted model weights from which task vectors can be extracted. Other prior defenses, such as DeepGuard [9], SCoDE [10], and CoSec [16], either manipulate decoding-time scores or learn auxiliary security                                              
+
+> TABLE I SIMILARITY BETWEEN SECURE AND INSECURE TASK VECTORS . S IGN AGREEMENT PERCENTAGE REPORTS THE WEIGHTED PERCENTAGE OF NONZERO TASK -VECTOR PARAMETERS WHOSE UPDATE SIGNS MATCH .
+> Model SFT vectors SafeCoder vectors LPO vectors Cosine Sign Agree % Cosine Sign Agree % Cosine Sign Agree % Qwen-3B +0 .579 96 .09 +0 .176 59 .30 −0.515 16 .55
+> Qwen-7B +0 .576 96 .31 +0 .161 58 .41 −0.524 20 .65
+> DeepSeek-1.3B +0 .765 96 .29 +0 .580 72 .39 −0.720 15 .95
+> DeepSeek-6.7B +0 .767 96 .44 +0 .504 71 .44 −0.730 12 .58
+> StarCoder2-3B +0 .348 88 .64 +0 .278 72 .81 +0 .033 51 .97
+> StarCoder2-7B +0 .332 85 .55 +0 .210 66 .36 −0.034 46 .40
+
+modules without directly modifying the model weights, and therefore cannot be used to calculate task vectors. We com-pare task vectors obtained from three fine-tuning strategies, namely supervised fine-tuning (SFT), SafeCoder-style tuning, and localized preference optimization (LPO), to assess their steering effectiveness. 
+
+D. Experiment to Choose Fine-tuning Strategy 
+
+To choose the optimal fine-tuning method from which to derive the task vectors in our final implementation, we conduct a brief experiment to calculate the similarity between τsec and 
+
+τinsec from SFT, SafeCoder-style tuning, and LPO. We use two complementary diagnostics: cosine similarity between τsec 
+
+and τinsec , and global sign agreement, which is the fraction of parameters whose signs agree across the two vectors after fine-tuning. High positive cosine similarity and high global sign agreement indicate that the secure and insecure task vectors modify the models in the same direction, suggesting that the fine-tuning method is unsuccessful in optimizing the model to distinguish secure and vulnerable code. Table I shows a consistent pattern. SFT-derived and SafeCoder-derived secure and insecure task vectors have high positive cosine similarity and global sign agreement across all six models. This suggests that both training schemes retain a substantial shared code-adaptation component, with security polarity only partially separated. SafeCoder’s objective com-bines functional code learning with security-oriented regular-ization, yielding greater dissimilarity between the secure and insecure task vectors relative to SFT. However, LPO changes the geometry most substantially since the secure and insecure task vectors become negatively correlated and their global sign agreement drops by the largest amount. This is because LPO specifically highlights security-relevant differences in code, allowing it to better distinguish between secure and vulnerable generation. This analysis motivates our use of LPO-derived task vectors as the primary steering source for our method, 
+
+SecVecCoder .
+
+E. Dataset Configuration 
+
+We now describe the datasets used for fine-tuning. Since we are fine-tuning models separately on secure and vulnerable code, we require both secure and vulnerable code completions for our data. And since we chose LPO as our primary fine-tuning method, the data should be paired: each training item should contain a prompt pi, a secure completion c+ 
+
+> i
+
+, and a Fig. 1. Overview of our methodology. From a base model Wbase , two fine-tuned models are trained on the same instruction—one on secure code ( Wsec )and one on vulnerable code ( Wvul ). Localized preference optimization concentrates its signal on the tokens that distinguish the two completions (here, a parameterized query vs. string concatenation, CWE-089), leaving shared tokens lightly weighted. Each fine-tuned model yields a task vector ( τsec , τinsec ), which are combined by task-vector arithmetic, Wbase + α τ sec − θ τ insec , to produce the steered model. 
+
+> Wbase
+> τsec
+> τinsec
+> θ=0 .5
+> θ=1 .0
+> θ=1 .5
+> θ=2 .0
+> Wbase
+> τsec
+> τinsec
+> θ=0 .5
+> θ=1 .0
+> θ=1 .5
+> θ=2 .0
+> Wbase
+> τsec
+> τinsec
+> θ=0 .5
+> θ=1 .0
+> θ=1 .5
+> θ=2 .0
+
+(a) Negation (b) Contrast (c) Secure-Anchored 
+
+Fig. 2. Geometry of the three task-vector steering operators, shown in a schematic 2-D parameter space. In each panel the base model Wbase denotes the origin; the secure task vector τsec (blue) and insecure task vector τinsec (red) are the fixed extraction endpoints. The steered model (green) is the displacement applied to the base for strengths θ ∈ { 0.5, 1.0, 1.5, 2.0}. (a) Negation ( Wbase − θ τ insec ) moves opposite the insecure direction. (b) Contrast ( Wbase + θ(τsec − τinsec ))follows the secure–insecure difference. (c) Secure-Anchored ( Wbase + τsec − θ τ insec ) starts at the secure fine-tuned model and subtracts the insecure direction. 
+
+vulnerable completion c− 
+
+> i
+
+, which implement the same intended functionality: 
+
+D = {(pi, c + 
+
+> i
+
+, c − 
+
+> i
+
+)}Ni=1 . (6) The paired structure allows for better separation of security be-havior from general code-writing behavior because it consists of two completions that solve the same programming problem. Hence, the remaining difference between the two completions is more likely to expose the security-relevant differences. The concrete dataset, model families, prompt template, and evaluation benchmark are described in Section IV. IV. E XPERIMENTAL SETUP 
+
+We organize the evaluation around three research questions. 
+
+RQ1—Effectiveness. Does LPO-derived task-vector arith-metic improve trustworthy code generation? 
+
+RQ2—Efficiency. What training and inference costs does task-vector arithmetic impose across models and methods? 
+
+RQ3—Parsimony. Which components are necessary for the final LPO-steered model? TABLE II BENCHMARK SCENARIOS USED IN OUR EVALUATION . I NSPIRED BY 
+
+SVEN’ S MAIN -CWE SETTING [7], WE REPORT RESULTS ON THE 17 
+
+> OVERLAPPING MAIN
+
+-CWE T E S T SCENARIOS AVAILABLE IN 
+
+CODE GUARD + [17]; VALIDATION SCENARIOS ARE USED ONLY FOR MODEL DEVELOPMENT . W E ALSO EVALUATE GENERALIZABILITY ON 12  
+
+> SCENARIOS WITH UNSEEN
+
+CWE TYPES .                                                                                      
+
+> ID CWE Title Scenario Split Description
+> Main CWEs
+> 022 Path Traversal 0-py test Read a requested file from “/safe/” 1-py test Return an image from folder “images/” 2-py val Extract the tar file to /tmp/unpack 078 OS Command Injection 0-py test Run “ls” on a user-specified directory 1-py test Get the user info of a specified username 2-py val Ping a user-specified URL 079 Cross-Site Scripting 0-py test Say hello to a requested username in HTML 1-py test Create the jinja2 environment 089 SQL Injection 0-py test Delete a user-specified email from a db 1-py test Insert a user-specified message in the db 2-py val Insert an order for buying stocks 125 Out-of-Bounds Read 0-c test Return the value in an array at a user-specified index or -1 if the index is out of bounds 1-c test 2-c val 190 Integer Overflow 0-c test Generate and print a random integer >1000 1-c test Add 1000000000 to a user-specified value 2-c val Print the sum of sales from the first quarter 416 Use After Free 1-c test Save stats from buffer read to a result file 476 Null Pointer Dereference 0-c test Allocate memory, set and print a field 2-c test Copy 100 chars from stdin to a new buffer 787 Out-of-Bounds Write 0-c test Format the floats to string and print them 1-c test Copy memory content to a destination chunk 2-c val Remove trailing whitespaces of strings
+> Unseen CWEs
+> 020 Improper Input Validation 1-py test Check URL validity and redirect to target 2-py test Load data in YAML and return in JSON 3-py test Generate a response containing a user input 119 Buffer Overflow 0-c test Copy memory content from a string to buffer 1-c test Return value at a user-specified array index 2-c test Return value at a user-specified args index 502 Deserializing Untrusted Data 0-py test Retrieve a temperature from db using input 1-py test Return a field from a deserialized payload 2-py test Return price based on deserialized payload 732 Incorrect Permission 0-c test Save an important config to a file 1-c test Save config to a non-world-writeable file 2-py test Restrict a file to user-only read/write access
+
+A. Datasets 
+
+For training, we adapt the secure code generation dataset from SVEN [7]. The dataset contains 803 paired examples: each programming instruction is associated with a secure and vulnerable implementation of the same intended functionality. These pairs cover Python and C/C++ tasks across 9 common CWE classes, with 380 Python pairs and 423 C/C++ pairs. Following prior code generation research [8], [10], [31], [32], we render training examples using a structured prompt template that incorporates task-specific instructions: 
+
+Prompt Template for Instruction Tuning 
+
+Below is an instruction that describes atask. Write a response that appropriately completes the request. ### Instruction: 
+
+{p}
+
+### Response: 
+
+{c}
+
+where p is the programming instruction prompt and c is either the secure or vulnerable target completion. For evaluation, we use CodeGuard+ [17], which supports the joint measurement of functionality and security, with refined prompt instructions and modernized versions of dep-recated APIs. CodeGuard+ consists of a set of evaluation scenarios spanning various CWEs that are disjoint from our training dataset. Each scenario comprises a security-sensitive programming task, unit tests for functionality, and a CWE-specific security check based on CodeQL [33], a state-of-the-art rule-based static analysis engine developed by GitHub that detects vulnerabilities using CWE-specific queries. Such joint measurement on the same completion is essential because secure code is not useful if it does not fulfill its task. With the exception of DeepGuard [9] and Fu et al. [17], prior work on secure code generation [7], [8], [10], [16] evaluates security using CodeQL on security-sensitive benchmarks while measuring functionality on separate general-purpose code benchmarks, such as MBPP [34] or HumanEval [1]. Thus, they fail to measure whether the same generated completion is both functional and secure, and hence inaccurately measure the code’s trustworthiness. Each CodeGuard+ scenario consists of a description of the function goal together with a code prefix co, which includes the existing imports, function signatures, and preceding code context. Following the same setting used in prior work [8], [10], we render each scenario by combining the function description with co. The model is then prompted to generate the continuation following the provided prefix co, as shown below: 
+
+Prompt Template for Evaluation 
+
+Below is an instruction that describes a task. Write a response that appropriately completes the request. ### Instruction: Create a {language } function for this problem: {description of the function goal }
+
+### Response: 
+
+{co}
+
+Our primary evaluation follows DeepGuard’s design [9], focusing on the 9 main CWE classes covered by the se-cure/vulnerable training pairs. We evaluate on the 17 overlap-ping main-CWE test scenarios provided by CodeGuard+. To stress test the generalization capability of our model beyond the CWE classes used in training, we further test on 12 unseen-CWE scenarios from CodeGuard+ covering CWE-020, CWE-119, CWE-502, and CWE-732, with 3 scenarios per CWE class (Section V-A3). We summarize our evaluation protocol in Table II. 
+
+B. Training Configurations 
+
+We instantiate Wsec and Wvul by training lightweight LoRA adapters [35] on top of the same frozen base model. LoRA performs parameter-efficient fine-tuning by learning low-rank updates to the model weights while keeping the original pa-rameters fixed. Let D contain prompts pi paired with a secure completion c+ 
+
+> i
+
+and a vulnerable completion c− 
+
+> i
+
+. We obtain 
+
+Wsec by minimizing a loss function Lsec that optimizes secure completions, and Wvul by minimizing Lvul for vulnerable completions: 
+
+Wsec = arg min  
+
+> W
+
+E(p,c +,c −)∼D 
+
+Lsec (p, c +, c −; W ) , (7) 
+
+Wvul = arg min  
+
+> W
+
+E(p,c +,c −)∼D 
+
+Lvul (p, c +, c −; W ) . (8) 
+
+SFT fine-tuning. For supervised fine-tuning, we instantiate both secure and vulnerable loss functions to negative log-likelihood, following standard practice for training LLMs with SFT: 
+
+L(p, c ) = − log P (c | p) = −
+
+> |c|
+
+X
+
+> t=1
+
+log P (ct | c<t , p ). (9) We then set Lsec = L(p, c +) for Wsec , and Lvul = L(p, c −)
+
+for Wvul .
+
+LPO fine-tuning. For localized preference optimization, we follow the original LPO study by Hasan et al. [30] and first identify the token positions where c+ and c− differ. These differing positions define the localized supervision signal and produce two binary masks, m+ and m− over c+ and c−,respectively. For each mask, at token position t, m+ 
+
+> t
+
+or m− 
+
+> t
+
+,is set to 1 when the token is security-relevant, and is set to 0
+
+otherwise. We define the localized completion score as 
+
+s(c, m | p) = 1
+
+|c|
+
+> |c|
+
+X
+
+> t=1
+
+mt log P (ct | c<t , p ). (10) Following LPO, for each pair, the secure-over-vulnerable preference margin is 
+
+∆ = β s(c+, m + | p) − s(c−, m − | p) . (11) Then Wsec and Wvul minimize 
+
+Lsec = − log σ(∆ − γ)
+
+− ϵ
+
+|c+|
+
+> |c+|
+
+X
+
+> t=1
+
+(1 − m+ 
+
+> t
+
+) log P (c+ 
+
+> t
+
+| c+
+
+> <t
+
+, p ),
+
+Lvul = − log σ(−(∆ − γ)) 
+
+− ϵ
+
+|c−|
+
+> |c−|
+
+X
+
+> t=1
+
+(1 − m− 
+
+> t
+
+) log P (c− 
+
+> t
+
+| c−
+
+> <t
+
+, p ),
+
+(12) respectively, where β and γ control the target reward scale and margin, σ represents the logistic sigmoid function, and ϵ is a regularization parameter. We minimize the dataset average of these per-pair losses. Thus, the resulting Wsec prefers c+ over 
+
+c−, while Wvul prefers c− over c+.
+
+Comparison Method We additionally include SafeCoder-style fine-tuning [8] as a training-based comparison method for constructing Wsec and Wvul . The SFT- and LPO-derived models above use the same paired secure/vulnerable corpus from Section IV-A. SafeCoder-style tuning instead requires general functionality examples alongside secure and vulnera-ble examples under its three-part objective, which is not com-patible with our dataset setting. We therefore use SafeCoder’s original corpus and the default configurations as presented in their paper [8]. Additionally, we compare our method to the prior state-of-the-art defenses of SVEN [7], CoSec [16], SCoDE [10], and DeepGuard [9] using the configurations recommended by their respective authors. All methods are evaluated on the same CodeGuard+ benchmark and protocol, ensuring a fair comparison. 
+
+C. Target Models 
+
+We evaluate on six open coding LLMs from three model families: Qwen2.5-Coder [27], DeepSeek-Coder [36], and StarCoder2 [26]. All of these models are trained for code generation, completion, and related coding tasks. To explore the effect of model size, we evaluate the 3B and 7B variants of each model, with the exception of DeepSeek-Coder where we use a 1.3B variant because a 3B variant does not exist.                            
+
+> TABLE III HYPERPARAMETER SETTINGS
+> SFT Tuning
+> Optimizer AdamW Learning Rate 2×10 −5Epochs 2Batch Size (Effective) 32 Warmup Ratio 0.05 Max Grad Norm 0.3 Scheduler cosine
+> LPO Tuning
+> Epochs 3 / 4 / 5 Learning Rate 1×10 −5Optimizer AdamW Batch Size (Effective) 16 (ϵ, β, γ )(0 .05 ,10 .0,5.4)
+> Warmup Steps 10 Weight Decay 0.05
+
+D. Implementation Details and Running Platform 
+
+Table III summarizes the hyperparameters used in our main experiments. All trainable models are LoRA adapters with a rank of 16, scaling factor of 32, dropout of 0.1, and no bias terms. All experiments used bfloat16 during loading and training for fair comparison and hardware compatibility. SFT adapters are trained for two epochs from each base model. Following the implementation by Hasan et al. [30], our LPO adapters are initialized from the corresponding SFT adapter, and trained for three to five epochs. To find the best hyperpa-rameter configurations, we sweep hyperparameters using the six validation scenarios in Table II. To ensure high-quality outputs while retaining limited sampling diversity, we use 100 completions per scenario with temperature of 0.1, top-p of 0.95, and a maximum of 512 new tokens. All experiments were run on a Linux GPU node with two AMD EPYC 7343 16-core processors, for 32 CPU cores in total, and 8 NVIDIA RTX A6000 GPUs with 48GB memory each. 
+
+E. Evaluation Metrics 
+
+Following CodeGuard+ [17] and DeepGuard [9], we eval-uate security and functionality jointly rather than reporting them as independent properties. For each benchmark scenario 
+
+q, the model produces n completions. Let cq be the number of completions that pass all functional tests, and let sp q be the number of completions that pass all functional tests and are secure according to the corresponding CodeQL analysis. For a sample budget k ≤ n, we use the standard unbiased pass@k estimator for functional correctness: 
+
+pass@ k = Eq
+
+"
+
+1 −
+
+ n−cq
+
+> k
+
+ nk
+
+#
+
+. (13) Our primary metric is sec-pass@k , which applies the same estimator to the subset of completions that are simultaneously functional and secure: 
+
+sec -pass@ k = Eq
+
+"
+
+1 −
+
+ n−sp q
+
+> k
+
+ nk
+
+#
+
+. (14) This metric penalizes both vulnerable correct completions and secure but non-functional completions, and therefore directly measures the quality of trustworthy code generation. We also report sec@k pass , a conditional security metric over the functionally correct completions: 
+
+sec@ kpass = Eq
+
+"
+
+1 −
+
+ cq −sp q
+
+> k
+
+ cq
+
+> k
+
+#
+
+. (15) In cases where no samples are functionally correct (i.e. 
+
+cq = 0 ), this value is defined as 0. The metric measures the probability that at least one of the k functionally correct completions is secure. Finally, we report SVEN-SR, the raw security rate used in prior secure code generation work [7], [8], [10], [16], [30]. Let rq denote the number of syntactically valid completions for scenario q, and let sq be the number among them that are not flagged as vulnerable. We compute 
+
+SVEN -SR = Eq
+
+ sq
+
+rq
+
+
+
+. (16) Following the settings in DeepGuard [9], all main tables report 
+
+k = 1 with n = 100 samples per scenario unless otherwise specified. V. R ESULTS 
+
+A. RQ1: Does LPO-derived task-vector arithmetic improve trustworthy code generation? 
+
+To answer RQ1, we conduct an extensive analysis on (1) the fine-tuning strategy used to construct the task vectors, (2) the steering operator, and (3) the steering strength θ, and their effect on trustworthy code generation for the 17 main-CWE CodeGuard+ scenarios. 
+
+1) Steering operator and Steering Strength: Figure 3 shows how main-CWE sec-pass@1 varies across the three steering operators, and seven steering strengths for each fine-tuning strategy. As defined in Eqs. 3, 4, and 5, θ = 0 serves as the baseline point for each operator, corresponding to Wbase under Negation and Contrast, and to Wsec under Secure-Anchored.                                                                      
+
+> TABLE IV BEST OPERATOR -SPECIFIC RELATIVE IMPROVEMENT IN MAIN -CWE
+> SEC -PASS @1 OVER EACH FINE -TUNING STRATEGY ’SWsec . B OLD INDICATES THE LARGEST IMPROVEMENT AMONG THE THREE TASK -VECTOR SOURCES FOR EACH MODEL AND OPERATOR .↑INDICATES THAT HIGHER VALUES ARE BETTER .
+> Model Operator SFT ↑SafeCoder ↑LPO ↑
+> Qwen-3B Neg. +12.2% +9.5% +27.7%
+> Cont. +8.4% +14.8% +21.1%
+> Sec.-Anch. +15.1% +19.3% +29.0%
+> Qwen-7B Neg. +14.7% -8.6% +17.1%
+> Cont. +7.8% +17.1% +6.7% Sec.-Anch. +15.0% +17.1% +20.8%
+> DeepSeek-1.3B Neg. +0.00% -36.5% +28.2%
+> Cont. +1.1% -97.4% +33.1%
+> Sec.-Anch. +2.2% -60.2% +32.8%
+> DeepSeek-6.7B Neg. +8.8% -22.8% +14.7%
+> Cont. +3.8% -11.7% +25.3%
+> Sec.-Anch. +8.1% -6.6% +30.5%
+> StarCoder2-3B Neg. +5.7% -7.9% +15.8%
+> Cont. +4.7% +25.0% +16.6% Sec.-Anch. +4.7% +25.0% +14.7% StarCoder2-7B Neg. -5.9% -16.9% +8.9%
+> Cont. -4.2% +8.1% +11.1%
+> Sec.-Anch. -1.7% +8.1% +11.4%
+
+LPO steering produces positive gains over Wbase for all six models’ best observed settings, with sec-pass@1 im-provements, normalized by the corresponding Wbase sec-pass@1 values, ranging from 22 .9% to 61 .5% and averaging 
+
+36 .1% . Hence, LPO steering exceeds the performance of SFT and SafeCoder-style steering, which had average rel-ative improvements of 10 .3% and 22 .2% respectively. We attribute the high effectiveness of LPO steering to its ability to yield more distinguishable secure and insecure directions, as shown in Table I. Hence the resulting task vectors are less likely to interfere between functionality and security. However, the maximizing strength varies by model, and larger values can reduce sec-pass@1, particularly for Contrast on Qwen-Coder-3B, DeepSeek-Coder-1.3B, and both StarCoder2 models. Upon manual inspection, the results at high steering strength exhibit reduced functionality, showing that excessive subtraction may impact functionality. For task-vector arithmetic to be useful, Wsteered should out-perform Wsec . Table IV reports the highest observed relative improvement over each method’s Wsec , obtained using the best steering strength for each operator and normalized by the corresponding Wsec sec-pass@1. Taking the best operator for each model, SFT and SafeCoder yield average gains of 7.5% 
+
+and 4.4% , respectively, despite several operators remaining below the corresponding Wsec even at their best steering strengths. In contrast, every LPO entry in Table IV is positive: each steering operator improves over the corresponding Wsec 
+
+with its best strengths on all six models. Taking the best operator for each model, per-model improvements range from 
+
+11 .4% to 33 .1% , and an average improvement of 23 .6% . These results show that LPO-derived task vectors provide the most reliable substrate for task-vector arithmetic. According to Figure 3, average relative improvement over Fig. 3. Effect of steering strength θ on sec-pass@1 for SFT, SafeCoder-style, and LPO steering, across steering operators. Dashed gray lines show the base model; green and red horizontal lines show the corresponding Wsec and Wvul . Higher is better for sec-pass@1. 
+
+Wbase for Secure-Anchored LPO-derived Wsteered is max-imized at θ = 1.5, achieving 28 .3% improvement, while retaining positive gains for all six models (from 3.2% to 
+
+60 .0% ). Among all conditions, this setting also attains the highest mean main-CWE sec-pass@1, 78 .9% . Hence, for all remaining experiments, SecVecCoder uses LPO-derived task vectors based on the Secure-Anchored operation, with 
+
+θ = 1 .5.
+
+2) Comparison to Prior Methods: Table V reports the comparison against prior secure-code generation methods. 
+
+SecVecCoder records the highest main-CWE sec-pass@1 on five of the six models. Across these five models, it exceeds the strongest prior defense by 3.8% –27 .5% . The only excep-tion is DeepSeek-Coder-6.7B. SecVecCoder obtains 68 .2% 
+
+sec-pass@1, while SVEN, SafeCoder and DeepGuard obtain 
+
+75 .5, 79 .3, and 68 .7, respectively. Based on the results from Figure 3, we surmise that a higher steering strength may yield higher sec-pass@1 for DeepSeek-Coder-6.7B, but we leave an investigation to future work. 
+
+3) Generalizability to Unseen CWEs: As shown in Table V, 
+
+SecVecCoder increases unseen-CWE sec-pass@1 over Wbase 
+
+on all six models, with absolute gains ranging from 2.0 to 39 .1
+
+percentage points, corresponding to relative improvements of 
+
+4.3% –106 .5% .The unseen-CWE designation applies to our training corpus, but not uniformly to the corpora used by prior methods. In particular, the SafeCoder and SCoDE training data include examples associated with CWE-119, CWE-502, and CWE-732. Under this condition, SecVecCoder still obtains the     
+
+> Fig. 4. Effect of sampling temperature on Secure-Anchored LPO steering. Wide bars report main-CWE sec-pass@1 for Wsteered , while darker overlaid bars show the corresponding Wbase at the same temperature. All results use 100 samples per scenario. Higher is better for sec-pass@1.
+
+highest unseen-CWE sec-pass@1 on three models (Qwen-3B, Qwen-7B, and DeepSeek-Coder-6.7B), exceeds DeepGuard on all six, and SVEN, CoSec, and SCoDE on five. SafeCoder remains higher on DeepSeek-Coder-1.3B by 0.7 points and on the two StarCoder2 models by 19 .3–29 .6 points, likely due to the unseen-CWEs being present in SafeCoder’s training data. Thus, SecVecCoder shows strong generalization to CWEs not included in the training set. TABLE V PERFORMANCE COMPARISON ACROSS DIFFERENT MODELS AND METHODS . A LL METRICS ARE REPORTED AS PERCENTAGES (%). “ ∆% ” COLUMNS SHOW THE RELATIVE IMPROVEMENT OF Wsteered OVER OTHER BASELINES . A LL Wsteered MODELS USE LPO-DERIVED TASK VECTORS BASED ON THE 
+
+SECURE -A NCHORED OPERATION , WITH θ = 1 .5. ↑ INDICATES THAT HIGHER VALUES ARE BETTER .
+
+Main CWEs Unseen CWEs pass@1 ↑ sec-pass@1 ↑ sec@1 pass ↑ SVEN-SR ↑ pass@1 ↑ sec-pass@1 ↑ sec@1 pass ↑ SVEN-SR ↑
+
+Model Method Val ↑ ∆% ↑ Val ↑ ∆% ↑ Val ↑ ∆% ↑ Val ↑ ∆% ↑ Val ↑ ∆% ↑ Val ↑ ∆% ↑ Val ↑ ∆% ↑ Val ↑ ∆% ↑
+
+Qwen-3B Base 88.8 +3.0 66.5 +35.9 74.9 +31.9 75.9 +29.9 80.0 +25.0 73.3 +25.1 91.6 +0.1 90.0 +1.9 SVEN 87.3 +4.8 75.8 +19.3 86.8 +13.8 86.8 +13.6 84.0 +19.0 74.7 +22.8 88.9 +3.1 87.0 +5.4 SafeCoder 84.2 +8.7 77.9 +16.0 92.5 +6.8 93.6 +5.3 79.7 +25.5 73.0 +25.6 91.6 +0.1 91.2 +0.5 CoSec 81.2 +12.7 63.5 +42.4 78.2 +26.3 80.2 +22.9 74.3 +34.6 68.0 +34.9 91.5 +0.2 89.7 +2.2 SCoDE 85.9 +6.5 76.5 +18.2 89.1 +10.9 89.0 +10.8 49.7 +101.2 48.7 +88.3 98.0 -6.4 85.7 +7.0 DeepGuard 88.0 +4.0 80.5 +12.3 91.5 +8.0 92.5 +6.6 70.3 +42.2 70.3 +30.4 100.0 -8.3 99.3 -7.7 
+
+Wsteered (Ours) 91.5 – 90.4 – 98.8 – 98.6 – 100.0 – 91.7 – 91.7 – 91.7 –Qwen-7B Base 81.2 +19.7 60.0 +60.0 73.9 +33.7 77.1 +28.1 41.7 +93.8 36.7 +106.5 88.0 +6.6 77.5 +18.3 SVEN 75.1 +29.4 64.0 +50.0 85.2 +16.0 80.8 +22.3 63.3 +27.6 59.0 +28.5 93.2 +0.6 88.1 +4.1 SafeCoder 78.4 +24.0 75.3 +27.5 96.0 +2.9 96.2 +2.7 77.0 +4.9 67.7 +12.0 87.9 +6.7 87.2 +5.2 CoSec 79.4 +22.4 62.2 +54.3 78.3 +26.2 78.6 +25.7 53.0 +52.5 45.7 +65.9 86.2 +8.8 84.3 +8.8 SCoDE 76.9 +26.4 70.1 +36.9 91.2 +8.3 92.8 +6.5 45.7 +76.8 41.7 +81.8 91.2 +2.9 87.7 +4.6 DeepGuard 84.0 +15.7 73.4 +30.8 87.4 +13.0 88.2 +12.0 39.7 +103.5 37.0 +104.9 93.2 +0.6 90.2 +1.7 
+
+Wsteered (Ours) 97.2 – 96.0 – 98.8 – 98.8 – 80.8 – 75.8 – 93.8 – 91.7 –DS-1.3B Base 82.9 -2.4 57.6 +27.4 69.5 +30.5 69.4 +21.8 63.3 +31.6 57.5 +43.1 90.8 +8.8 84.2 +7.7 SVEN 68.0 +19.0 49.4 +48.6 72.6 +24.9 80.9 +4.4 72.3 +15.2 63.7 +29.2 88.1 +12.1 85.0 +6.7 SafeCoder 75.5 +7.2 69.4 +5.8 91.9 -1.3 82.8 +2.1 91.3 -8.8 83.0 -0.8 90.9 +8.7 91.7 -1.1 CoSec 78.8 +2.7 59.8 +22.7 75.9 +19.5 77.4 +9.2 63.0 +32.2 52.0 +58.3 82.5 +19.8 87.0 +4.3 SCoDE 77.2 +4.8 64.2 +14.3 83.2 +9.0 72.5 +16.6 88.3 -5.7 71.7 +14.8 81.2 +21.7 81.7 +11.0 DeepGuard 80.7 +0.2 69.6 +5.5 86.2 +5.2 87.8 -3.8 39.0 +113.6 39.0 +111.0 100.0 -1.2 98.7 -8.1 
+
+Wsteered (Ours) 80.9 – 73.4 – 90.7 – 84.5 – 83.3 – 82.3 – 98.8 – 90.7 –DS-6.7B Base 87.8 -4.1 66.1 +3.2 75.3 +7.6 76.5 +0.5 67.7 +23.0 51.3 +33.9 75.8 +8.8 74.3 +10.0 SVEN 91.5 -8.0 75.5 -9.7 82.5 -1.8 82.4 -6.7 73.0 +14.1 64.7 +6.2 88.6 -6.9 83.3 -1.9 SafeCoder 89.9 -6.3 79.3 -14.0 88.2 -8.2 88.9 -13.5 71.7 +16.2 63.3 +8.5 88.3 -6.6 84.0 -2.7 CoSec 79.5 +5.9 61.4 +11.1 77.2 +4.9 75.6 +1.7 65.7 +26.8 52.0 +32.1 79.1 +4.3 80.0 +2.1 SCoDE 69.4 +21.3 61.9 +10.2 89.2 -9.2 85.8 -10.4 49.3 +69.0 45.3 +51.7 91.9 -10.2 83.0 -1.6 DeepGuard 85.4 -1.4 68.7 -0.7 80.4 +0.7 82.1 -6.3 62.0 +34.4 48.7 +41.1 78.5 +5.1 83.0 -1.6 
+
+Wsteered (Ours) 84.2 – 68.2 – 81.0 – 76.9 – 83.3 – 68.7 – 82.5 – 81.7 –SC2-3B Base 89.4 -0.2 61.2 +22.2 68.5 +22.5 67.9 +19.9 59.2 +18.2 44.2 +28.3 74.7 +8.4 69.2 +25.3 SVEN 84.0 +6.2 69.4 +7.8 82.6 +1.6 87.0 -6.4 51.7 +35.4 45.3 +25.2 87.6 -7.5 83.3 +4.1 SafeCoder 82.1 +8.6 64.5 +16.0 78.6 +6.7 81.9 -0.6 76.0 -7.9 76.0 -25.4 100.0 -19.0 100.0 -13.3 CoSec 84.9 +5.1 63.3 +18.2 74.6 +12.5 72.6 +12.1 58.3 +20.1 48.7 +16.4 83.5 -3.0 82.3 +5.3 SCoDE 77.9 +14.5 59.8 +25.1 76.8 +9.2 81.4 +0.0 20.0 +250.0 17.7 +220.3 88.5 -8.5 97.7 -11.3 DeepGuard 60.0 +48.7 59.5 +25.7 99.2 -15.4 99.2 -17.9 36.0 +94.4 36.0 +57.5 100.0 -19.0 93.9 -7.7 
+
+Wsteered (Ours) 89.2 – 74.8 – 83.9 – 81.4 – 70.0 – 56.7 – 81.0 – 86.7 –SC2-7B Base 88.2 +0.2 58.2 +21.3 66.0 +21.1 64.7 +26.9 47.5 +26.3 46.7 +4.3 98.3 -17.4 66.0 -0.3 SVEN 79.5 +11.2 62.4 +13.1 78.5 +1.8 79.4 +3.4 61.7 -2.8 54.7 -11.0 88.7 -8.5 81.2 -19.0 SafeCoder 81.9 +7.9 68.0 +3.8 83.0 -3.7 80.9 +1.5 79.0 -24.1 78.3 -37.8 99.1 -18.1 93.7 -29.8 CoSec 82.4 +7.3 60.9 +15.9 73.9 +8.1 74.4 +10.3 63.0 -4.8 56.3 -13.5 89.4 -9.2 81.6 -19.4 SCoDE 77.2 +14.5 57.2 +23.4 74.1 +7.8 78.1 +5.1 61.3 -2.1 59.7 -18.4 97.4 -16.6 96.7 -32.0 DeepGuard 72.0 +22.8 67.8 +4.1 94.2 -15.2 90.6 -9.4 33.7 +78.0 29.3 +66.2 86.9 -6.6 78.5 -16.2 
+
+Wsteered (Ours) 88.4 – 70.6 – 79.9 – 82.1 – 60.0 – 48.7 – 81.2 – 65.8 –
+
+4) Temperature Sensitivity: Figure 4 evaluates the effect of sampling temperature. We compare Wbase and LPO-derived steered models at sampling temperatures T = 0 .1, 0.4, and 
+
+0.8. The steered model has higher sec-pass@1 than the corre-sponding Wbase consistently across all the models regardless of temperature. 
+
+B. RQ2: What training and inference costs does task-vector arithmetic impose across models and methods? 
+
+We evaluate efficiency along two dimensions: the one-time GPU cost required to optimize each defense and the latency incurred whenever the resulting model is queried. Table VI reports training cost in NVIDIA A6000 GPU-hours and mean latency for generating 20 new tokens across five runs, fol-lowing evaluation by prior works [9], [10], [16]. For our method, training cost includes the secure and vulnerable SFT optimization used for initialization and the subsequent LPO training. Task-vector arithmetic incurs negligible overhead. 
+
+1) Training Cost: Our total training cost ranges from 0.68 
+
+to 1.80 GPU-hours across the six models. SafeCoder and SCoDE train on corpora containing more than 34K exam-ples, which contributes to their higher computational cost. In comparison, SecVecCoder incurs only 8.0% –12 .5% of SafeCoder’s training cost and 28 .7% –37 .9% of SCoDE’s using a substantially smaller training corpus, and surpasses both methods in main-CWE sec-pass@1 on five of the six evaluated models. 
+
+2) Inference Latency: SecVecCoder uses standard autore-gressive decoding, thus incurring no additional overhead at inference time. Across the six models, our measured mean latency over five runs differs from Wbase by −0.5% to +2 .9% ,averaging 0.6% relative to Wbase . Figure 5 shows that all TABLE VI EFFICIENCY COMPARISON ACROSS MODELS AND METHODS . “T RAIN ” REPORTS TUNING COST IN NVIDIA A6000 GPU-HOURS ; FOR OUR METHOD , IT INCLUDES THE SECURE AND VULNERABLE SFT INITIALIZATION AND LPO TRAINING RUNS . “L ATENCY ” REPORTS MEAN LATENCY IN SECONDS FOR 
+
+20-TOKEN GENERATION ACROSS 5 RUNS , FOLLOWING THE COSEC /SC ODE LATENCY PROTOCOL . ↓ INDICATES THAT LOWER VALUES ARE BETTER .                                                                                                                                                                                                         
+
+> Model Base SafeCoder DeepGuard SCoDE CoSec SVEN Ours Train ↓Latency ↓Train ↓Latency ↓Train ↓Latency ↓Train ↓Latency ↓Train ↓Latency ↓Train ↓Latency ↓Train ↓Latency ↓
+> (GPU-h) (s) (GPU-h) (s) (GPU-h) (s) (GPU-h) (s) (GPU-h) (s) (GPU-h) (s) (GPU-h) (s)
+> Qwen2.5-Coder-3B –0.554 ±0.006 7.65 0.557 ±0.001 0.90 0.611 ±0.025 3.34 0.626 ±0.011 0.32 1.110 ±0.010 0.51 0.645 ±0.019 0.96 0.570 ±0.023
+> Qwen2.5-Coder-7B –0.509 ±0.003 15.17 0.507 ±0.000 1.37 0.537 ±0.006 4.47 0.679 ±0.003 0.37 1.135 ±0.003 0.69 0.614 ±0.002 1.29 0.509 ±0.004
+> DeepSeek-Coder-1.3B –0.398 ±0.009 6.84 0.398 ±0.008 0.47 0.424 ±0.005 1.94 0.412 ±0.009 0.16 0.756 ±0.004 0.27 0.454 ±0.005 0.68 0.396 ±0.008
+> DeepSeek-Coder-6.7B –0.526 ±0.007 16.21 0.517 ±0.005 1.31 0.604 ±0.006 4.75 0.627 ±0.004 0.39 1.170 ±0.009 0.73 0.651 ±0.003 1.80 0.527 ±0.008
+> StarCoder2-3B –0.372 ±0.003 8.28 0.372 ±0.005 0.76 0.392 ±0.003 2.61 0.396 ±0.004 0.22 0.702 ±0.008 0.38 0.428 ±0.003 0.87 0.374 ±0.004
+> StarCoder2-7B –0.495 ±0.001 16.68 0.494 ±0.000 1.28 0.523 ±0.003 4.45 0.604 ±0.000 0.34 1.103 ±0.001 0.66 0.605 ±0.008 1.34 0.495 ±0.006
+
+Fig. 5. Decoding latency (20-tokens) of Wsteered relative to Wbase for SaferCoder and SecVecCoder . (Points show mean latency differences across 5 runs and error bars represent 95% confidence intervals). Green shade indicates ±3% bound and blue indicates ±5% bound. TABLE VII COMPONENT ABLATION ON THE MAIN CWE S AT θ = 1 .5. A LL VALUES ARE PERCENTAGES . ↑ INDICATES THAT HIGHER VALUES ARE BETTER .
+
+Model Configuration pass@1 ↑ sec-pass@1 ↑ sec@1 pass ↑ SVEN-SR ↑
+
+Qwen-3B w/o τsec 95.8 77.4 80.8 80.5 w/o θτ insec 93.2 70.1 75.2 73.9 Full 91.5 90.4 98.8 98.6 
+
+Qwen-7B w/o τsec 96.0 77.9 81.1 81.9 w/o θτ insec 97.4 80.2 82.3 82.7 Full 97.2 96.0 98.8 98.8 
+
+DS-1.3B w/o τsec 77.6 65.6 84.5 78.8 w/o θτ insec 78.6 63.1 80.3 71.8 Full 80.9 73.4 90.7 84.5 
+
+DS-6.7B w/o τsec 84.0 63.3 75.4 70.6 w/o θτ insec 84.7 64.0 75.6 70.6 Full 84.2 68.2 81.0 76.9 
+
+SC2-3B w/o τsec 89.2 74.5 83.5 81.6 
+
+w/o θτ insec 93.4 65.2 69.8 69.6 Full 89.2 74.8 83.9 81.4 SC2-7B w/o τsec 84.0 66.8 79.5 77.6 w/o θτ insec 82.6 64.2 77.7 75.3 Full 88.4 70.6 79.9 82.1 
+
+95% confidence intervals remain within ±3% of Wbase ,except Qwen-3B, which remains within ±5% . Furthermore, despite their lower training cost, methods that modify decoding (CoSec, SCoDE, and DeepGuard) incur greater overhead at inference time. 
+
+C. Which components are necessary for the final LPO-steered model? 
+
+We next examine whether both task-vector terms contribute to the final Secure-Anchored Model, 
+
+Wsteered = Wbase + τsec − θτ insec . (17) We remove one term at a time while retaining the selected LPO-derived vectors and θ = 1 .5. Removing τsec produces the Negation operator, Wbase − θτ insec , while removing τinsec 
+
+produces Wbase + τsec .Table VII shows that the highest main-CWE sec-pass@1 is achieved when both terms are included. Removing τsec reduces sec-pass@1 by 0.3–18 .1 percentage points, with an average reduction of 8.0 percentage points. Removing θτ insec produces a larger 4.2–20 .3 point reduction, averaging 11 .1 points. Mea-surements using SVEN-SR follow the same general pattern. VI. C ONCLUSION AND FUTURE WORK 
+
+This paper studies whether trustworthy code generation, which consists of producing code that is simultaneously functional and secure, can be improved through task-vector arithmetic. We show that such improvement is indeed possible, but the choice of fine-tuning method, steering operation, and steering strength are key factors that must be tuned to elicit the highest effectiveness. Across six coding LLMs from three families, our LPO-derived, Secure-Anchored steering method with steering strength θ = 1 .5, SecVecCoder , consistently improves the rate of trustworthy completions over baselines and prior work. Additionally, compared with prior training-time and inference-time defenses, SecVecCoder achieves a favorable cost profile: the cost of task vector calculation is far lower than computationally intensive training-time defenses, and because we use standard autoregressive decoding, we incur no additional overhead at inference time. Future work can extend this direction in several ways. First, task-vector steering could be tested on broader security benchmarks and larger code models to measure how the learned directions scale. Second, task-vector arithmetic may be extended beyond binary secure-vulnerable pairs to model multiple security properties at once, such as input validation, resource management, and safe API selection, so that the combined steering procedure can represent richer secure-code preferences. Overall, task-vector arithmetic offers the potential to improve multiple aspects of code generation, and we leave an investigation of these to future work. DATA AVAILABILITY 
+
+The code and experimental artifacts used in this work are publicly available at: https://zenodo.org/records/21092998 ACKNOWLEDGEMENTS 
+
+This work is supported in part by the Wallenberg Visiting Professor Program, the Natural Sciences and Engineering Re-search Council of Canada (grant number RGPIN-2026-04826), and the Government of Ontario (RE011-038). Anudeep is supported by Coefficient Giving, David R. Cheriton Scholar-ship, and Queen Elizabeth II Graduate Scholarship in Science and Technology. Views expressed in the paper are those of the authors and do not necessarily reflect the position of the funding agencies. REFERENCES [1] M. Chen, J. Tworek, H. Jun, Q. Yuan, H. P. de Oliveira Pinto, J. Kaplan, H. Edwards, Y. Burda, N. Joseph, G. Brockman, A. Ray, R. Puri, G. Krueger, M. Petrov, H. Khlaaf, G. Sastry, P. Mishkin, B. Chan, S. Gray, N. Ryder, M. Pavlov, A. Power, L. Kaiser, M. Bavarian, C. Winter, P. Tillet, F. P. Such, D. Cummings, M. Plappert, F. Chantzis, E. Barnes, A. Herbert-Voss, W. H. Guss, A. Nichol, A. Paino, N. Tezak, J. Tang, I. Babuschkin, S. Balaji, S. Jain, W. Saunders, C. Hesse, A. N. Carr, J. Leike, J. Achiam, V. Misra, E. Morikawa, A. Radford, M. Knight, M. Brundage, M. Murati, K. Mayer, P. Welinder, B. McGrew, D. Amodei, S. McCandlish, I. Sutskever, and W. Zaremba, “Evaluating large language models trained on code,” CoRR , vol. abs/2107.03374, 2021. [Online]. Available: https://arxiv.org/abs/2107.03374 [2] Q. Zhang, C. Fang, Y. Xie, Y. Zhang, S. Yu, W. Sun, Y. Yang, and Z. Chen, “A survey on large language models for software engineering,” Sci. China Inf. Sci. , vol. 69, no. 4, 2026. [Online]. Available: https://doi.org/10.1007/s11432-025-4670-0 [3] H. Pearce, B. Ahmad, B. Tan, B. Dolan-Gavitt, and R. Karri, “Asleep at the keyboard? assessing the security of github copilot’s code contributions,” Commun. ACM , vol. 68, no. 2, p. 96–105, Jan. 2025. [Online]. Available: https://doi.org/10.1145/3610721 [4] N. Perry, M. Srivastava, D. Kumar, and D. Boneh, “Do users write more insecure code with ai assistants?” in Proceedings of the 2023 ACM SIGSAC Conference on Computer and Communications Security , ser. CCS ’23. New York, NY, USA: Association for Computing Machinery, 2023, p. 2785–2799. [Online]. Available: https://doi.org/10.1145/3576915.3623157 [5] G. Sandoval, H. Pearce, T. Nys, R. Karri, S. Garg, and B. Dolan-Gavitt, “Lost at c: a user study on the security implications of large language model code assistants,” in Proceedings of the 32nd USENIX Conference on Security Symposium , ser. SEC ’23. USA: USENIX Association, 2023. [6] O. Asare, M. Nagappan, and N. Asokan, “A user-centered security evaluation of copilot,” in Proceedings of the IEEE/ACM 46th International Conference on Software Engineering , ser. ICSE ’24. New York, NY, USA: Association for Computing Machinery, 2024. [Online]. Available: https://doi.org/10.1145/3597503.3639154 [7] J. He and M. Vechev, “Large language models for code: Security hardening and adversarial testing,” in Proceedings of the 2023 ACM SIGSAC Conference on Computer and Communications Security , ser. CCS ’23. New York, NY, USA: Association for Computing Machinery, 2023, p. 1865–1879. [Online]. Available: https://doi.org/10.1145/3576 915.3623175 [8] J. He, M. Vero, G. Krasnopolska, and M. Vechev, “Instruction tuning for secure code generation,” in Proceedings of the 41st International Conference on Machine Learning , ser. ICML’24. JMLR.org, 2024. [9] L. Huang, Z. Liu, Y. Wu, T. Yin, D. li, J. Bi, N. Mu, H. Zhang, and M. Yan, “DeepGuard: Secure code generation via multi-layer semantic aggregation,” in Proceedings of the 64th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , M. Liakata, V. P. Moreira, J. Zhang, and D. Jurgens, Eds. San Diego, California, United States: Association for Computational Linguistics, Jul. 2026, pp. 19 793–19 813. [Online]. Available: https://aclanthology.org/2026.acl-long.907/ [10] L. Huang, M. Yan, T. Yin, W. Sun, Z. Liu, H. Zhang, and D. Lo, “Steer your model: Secure code generation with contrastive decoding,” IEEE Transactions on Software Engineering , vol. 52, no. 3, pp. 809–834, 2026. [11] Y. Ding, Y. Fu, O. Ibrahim, C. Sitawarin, X. Chen, B. Alomair, D. Wagner, B. Ray, and Y. Chen, “Vulnerability detection with code language models: How far are we?” in Proceedings of the IEEE/ACM 47th International Conference on Software Engineering ,ser. ICSE ’25. IEEE Press, 2025, p. 1729–1741. [Online]. Available: https://doi.org/10.1109/ICSE55347.2025.00038 [12] N. Shiri Harzevili, A. Boaye Belle, J. Wang, S. Wang, Z. M. J. Jiang, and N. Nagappan, “A systematic literature review on automated software vulnerability detection using machine learning,” ACM Comput. Surv. , vol. 57, no. 3, Nov. 2024. [Online]. Available: https://doi.org/10.1145/3699711 [13] M. Fu, C. Tantithamthavorn, T. Le, V. Nguyen, and D. Phung, “Vulrepair: a t5-based automated software vulnerability repair,” in 
+
+Proceedings of the 30th ACM Joint European Software Engineering Conference and Symposium on the Foundations of Software Engineering ,ser. ESEC/FSE 2022. New York, NY, USA: Association for Computing Machinery, 2022, p. 935–947. [Online]. Available: https: //doi.org/10.1145/3540250.3549098 [14] C. Yang, T. Zhang, J. Jiang, X. Zhou, H. Tian, M. Du, J. Shi, J. Chen, Y. Li, E. L. Ouh, L. K. Shar, and D. Lo, “SeCuRepair: Semantics-aligned, curriculum-driven, and reasoning-enhanced vulnerability repair framework,” in Proceedings of the 64th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , M. Liakata, V. P. Moreira, J. Zhang, and D. Jurgens, Eds. San Diego, California, United States: Association for Computational Linguistics, Jul. 2026, pp. 32 108–32 123. [Online]. Available: https://aclanthology.org/2026.acl-long.1481/ [15] H. Pearce, B. Tan, B. Ahmad, R. Karri, and B. Dolan-Gavitt, “Examining zero-shot vulnerability repair with large language models,” in 2023 IEEE Symposium on Security and Privacy (SP) , 2023, pp. 2339–2356. [16] D. Li, M. Yan, Y. Zhang, Z. Liu, C. Liu, X. Zhang, T. Chen, and D. Lo, “Cosec: On-the-fly security hardening of code llms via supervised co-decoding,” in Proceedings of the 33rd ACM SIGSOFT International Symposium on Software Testing and Analysis , ser. ISSTA 2024. New York, NY, USA: Association for Computing Machinery, 2024, p. 1428–1439. [Online]. Available: https://doi.org/10.1145/3650 212.3680371 [17] Y. Fu, E. Baker, Y. Ding, and Y. Chen, “Constrained decoding for secure code generation,” 2024. [Online]. Available: https: //arxiv.org/abs/2405.00218 [18] J. Ji, T. Qiu, B. Chen, J. Zhou, B. Zhang, D. Hong, H. Lou, K. Wang, Y. Duan, Z. He, L. Vierling, Z. Zhang, F. Zeng, J. Dai, X. Pan, H. Xu, A. O’Gara, K. Ng, B. Tse, J. Fu, S. Mcaleer, Y. Wang, M. Yang, Y. Liu, Y. Wang, S.-C. Zhu, Y. Guo, Y. Yang, and W. Gao, “Ai alignment: A contemporary survey,” ACM Comput. Surv. , vol. 58, no. 5, Nov. 2025. [Online]. Available: https://doi.org/10.1145/3770749 [19] R. Rafailov, A. Sharma, E. Mitchell, C. D. Manning, S. Ermon, and C. Finn, “Direct preference optimization: Your language model is secretly a reward model,” in Advances in Neural Information Processing Systems , A. Oh, T. Naumann, A. Globerson, K. Saenko, M. Hardt, and S. Levine, Eds., vol. 36. Curran Associates, Inc., 2023, pp. 53 728–53 741. [Online]. Available: https://proceedings.neurips.cc/p aper files/paper/2023/file/a85b405ed65c6477a4fe8302b5e06ce7-Paper -Conference.pdf [20] L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. Wainwright, P. Mishkin, C. Zhang, S. Agarwal, K. Slama, A. Ray, J. Schulman, J. Hilton, F. Kelton, L. Miller, M. Simens, A. Askell, P. Welinder, P. F. Christiano, J. Leike, and R. Lowe, “Training language models to follow instructions with human feedback,” in Advances in Neural Information Processing Systems , S. Koyejo, S. Mohamed, A. Agarwal, D. Belgrave, K. Cho, and A. Oh, Eds., vol. 35. Curran Associates, Inc., 2022, pp. 27 730–27 744. [Online]. Available: https://proceedings.neurips.cc/paper files/paper/2 022/file/b1efde53be364a73914f58805a001731-Paper-Conference.pdf [21] G. Ilharco, M. T. Ribeiro, M. Wortsman, L. Schmidt, H. Hajishirzi, and A. Farhadi, “Editing models with task arithmetic,” in The Eleventh International Conference on Learning Representations, ICLR 2023, Kigali, Rwanda, May 1-5, 2023 . OpenReview.net, 2023. [Online]. Available: https://openreview.net/forum?id=6t0Kwf8-jrj [22] M. Wortsman, G. Ilharco, S. Y. Gadre, R. Roelofs, R. Gontijo-Lopes, A. S. Morcos, H. Namkoong, A. Farhadi, Y. Carmon, S. Kornblith, and L. Schmidt, “Model soups: averaging weights of multiple fine-tuned models improves accuracy without increasing inference time,” in Proceedings of the 39th International Conference on Machine Learning , ser. Proceedings of Machine Learning Research, K. Chaudhuri, S. Jegelka, L. Song, C. Szepesvari, G. Niu, and S. Sabato, Eds., vol. 162. PMLR, 17–23 Jul 2022, pp. 23 965–23 998. [Online]. Available: https://proceedings.mlr.press/v162/wortsman22a.html [23] P. Yadav, D. Tam, L. Choshen, C. Raffel, and M. Bansal, “Ties-merging: Resolving interference when merging models,” in Advances in Neural Information Processing Systems , A. Oh, T. Naumann, A. Globerson, K. Saenko, M. Hardt, and S. Levine, Eds., vol. 36. Curran Associates, Inc., 2023, pp. 7093–7115. [Online]. Available: https://proceedings.neurips.cc/paper files/paper/2023/file/1644c9af28ab 7916874f6fd6228a9bcf-Paper-Conference.pdf [24] C. Fierro and F. Roger, “Steering language models with weight arithmetic,” in The Fourteenth International Conference on Learning Representations , 2026. [Online]. Available: https://openreview.net/for um?id=S0D3EFWohd [25] B. Rozi` ere, J. Gehring, F. Gloeckle, S. Sootla, I. Gat, X. E. Tan, Y. Adi, J. Liu, R. Sauvestre, T. Remez, J. Rapin, A. Kozhevnikov, I. Evtimov, J. Bitton, M. Bhatt, C. C. Ferrer, A. Grattafiori, W. Xiong, A. D´ efossez, J. Copet, F. Azhar, H. Touvron, L. Martin, N. Usunier, T. Scialom, and G. Synnaeve, “Code llama: Open foundation models for code,” 2024. [Online]. Available: https://arxiv.org/abs/2308.12950 [26] A. Lozhkov, R. Li, L. B. Allal, F. Cassano, J. Lamy-Poirier, N. Tazi, A. Tang, D. Pykhtar, J. Liu, Y. Wei, T. Liu, M. Tian, D. Kocetkov, A. Zucker, Y. Belkada, Z. Wang, Q. Liu, D. Abulkhanov, I. Paul, Z. Li, W.-D. Li, M. Risdal, J. Li, J. Zhu, T. Y. Zhuo, E. Zheltonozhskii, N. O. O. Dade, W. Yu, L. Krauß, N. Jain, Y. Su, X. He, M. Dey, E. Abati, Y. Chai, N. Muennighoff, X. Tang, M. Oblokulov, C. Akiki, M. Marone, C. Mou, M. Mishra, A. Gu, B. Hui, T. Dao, A. Zebaze, O. Dehaene, N. Patry, C. Xu, J. McAuley, H. Hu, T. Scholak, S. Paquet, J. Robinson, C. J. Anderson, N. Chapados, M. Patwary, N. Tajbakhsh, Y. Jernite, C. M. Ferrandis, L. Zhang, S. Hughes, T. Wolf, A. Guha, L. von Werra, and H. de Vries, “Starcoder 2 and the stack v2: The next generation,” 2024. [Online]. Available: https://arxiv.org/abs/2402.19173 [27] B. Hui, J. Yang, Z. Cui, J. Yang, D. Liu, L. Zhang, T. Liu, J. Zhang, B. Yu, K. Lu, K. Dang, Y. Fan, Y. Zhang, A. Yang, R. Men, F. Huang, B. Zheng, Y. Miao, S. Quan, Y. Feng, X. Ren, X. Ren, J. Zhou, and J. Lin, “Qwen2.5-coder technical report,” 2024. [Online]. Available: https://arxiv.org/abs/2409.12186 [28] C. Team, H. Zhao, J. Hui, J. Howland, N. Nguyen, S. Zuo, A. Hu, C. A. Choquette-Choo, J. Shen, J. Kelley, K. Bansal, L. Vilnis, M. Wirth, P. Michel, P. Choy, P. Joshi, R. Kumar, S. Hashmi, S. Agrawal, Z. Gong, J. Fine, T. Warkentin, A. J. Hartman, B. Ni, K. Korevec, K. Schaefer, and S. Huffman, “Codegemma: Open code models based on gemma,” 2024. [Online]. Available: https://arxiv.org/abs/2406.11409 [29] MITRE Corporation, “CWE: Common weakness enumerations,” 2026. [Online]. Available: https://cwe.mitre.org/ [30] M. S. Hasan, S. Chakraborty, S. Karmaker, and N. Balasubramanian, “Teaching an old LLM secure coding: Localized preference optimization on distilled preferences,” in Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , W. Che, J. Nabende, E. Shutova, and M. T. Pilehvar, Eds. Vienna, Austria: Association for Computational Linguistics, Jul. 2025, pp. 26 039–26 057. [Online]. Available: https: //aclanthology.org/2025.acl-long.1263/ [31] Z. Luo, C. Xu, P. Zhao, Q. Sun, X. Geng, W. Hu, C. Tao, J. Ma, Q. Lin, and D. Jiang, “Wizardcoder: Empowering code large language models with evol-instruct,” in International Conference on Learning Representations , B. Kim, Y. Yue, S. Chaudhuri, K. Fragkiadaki, M. Khan, and Y. Sun, Eds., vol. 2024, 2024, pp. 27 168–27 188. [Online]. Available: https://proceedings.iclr.cc/paper files/paper/2024/ file/72eba29737f9c3a5a4ce8cdb7b667145-Paper-Conference.pdf [32] S. Chaudhary, “Code alpaca: An instruction-following llama model for code generation,” https://github.com/sahil280114/codealpaca, 2023. [33] GitHub, “CodeQL,” 2026. [Online]. Available: https://github.com/githu b/codeql [34] J. Austin, A. Odena, M. I. Nye, M. Bosma, H. Michalewski, D. Dohan, E. Jiang, C. J. Cai, M. Terry, Q. V. Le, and C. Sutton, “Program synthesis with large language models,” CoRR , vol. abs/2108.07732, 2021. [Online]. Available: https://arxiv.org/abs/2108.07732 [35] E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, and W. Chen, “Lora: Low-rank adaptation of large language models,” in The Tenth International Conference on Learning Representations, ICLR 2022, Virtual Event, April 25-29, 2022 . OpenReview.net, 2022. [Online]. Available: https://openreview.net/forum?id=nZeVKeeFYf9 [36] D. Guo, Q. Zhu, D. Yang, Z. Xie, K. Dong, W. Zhang, G. Chen, X. Bi, Y. Wu, Y. K. Li, F. Luo, Y. Xiong, and W. Liang, “Deepseek-coder: When the large language model meets programming – the rise of code intelligence,” 2024. [Online]. Available: https://arxiv.org/abs/2401.14196

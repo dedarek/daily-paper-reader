@@ -1,0 +1,775 @@
+Title: A Coin Flip Per Token: Bernoulli Sparse Steering of Large Language Models
+
+URL Source: https://arxiv.org/pdf/2607.05615v1
+
+Published Time: Wed, 08 Jul 2026 00:12:03 GMT
+
+Number of Pages: 15
+
+Markdown Content:
+# A Coin Flip Per Token: Bernoulli Sparse Steering of Large Language Models 
+
+Nima Eshraghi 1, Lovedeep Gondara 1, Yuqing Huang 1, Sagarika Suresh 1,Leizer Teran 1, Jithin Pradeep 1, Xiaotong (Tone) Xu 2, Fanny Chevalier 21The Vanguard Group, Inc. 2University of Toronto 
+
+> {nima_eshraghi, lovedeep_gondara, yuqing_huang, sagarika_thimmanayakanapalya, leizer_teran, jithin_pradeep}@vanguard.com {tonexu, fanny}@cs.toronto.edu
+
+Abstract 
+
+Activation steering via sparse autoencoders (SAEs) enables behavioral control of large lan-guage models without task-specific fine-tuning, but standard methods apply the steering signal at every generated token, incurring constant per-token perturbation that risks degrading flu-ency. We ask: is dense intervention neces-sary? We introduce Stochastic Token Steering (STS), which gates each token independently with probability p, and Stochastic Block Steer-ing (SBS), which gates a leading window once per sequence; neither requires a reward model or learned gating policy. Across two model families and two behavioral tasks, steering only 50% of the tokens recovers most of the dense-steering effect while preserving fluency, and steering as few as 30% surpasses prompt-based control. The optimal steering magnitude scales inversely with the intervention ratio, revealing that SAE-mediated control is rate-limited : the behavioral outcome depends on cumulative sig-nal dosage across a sequence.   
+
+> Content Warning. This paper studies inference-time control of language model behavior, includ-ing the reduction of toxic generation. The ap-pendix contains examples of toxic, offensive, and emotionally distressing model outputs that are shown to illustrate the method. Reader discretion is advised.
+
+1 Introduction 
+
+Behavioral control over large language models (LLMs) reducing toxicity, enforcing a persona, sup-pressing hallucinations, and adjusting refusal has become a significant deployment concern (Ouyang et al., 2022; Bai et al., 2022). The default mecha-nism is the system prompt, but prompt-based steer-ing is fragile: lexical perturbations shift output distributions (Mizrahi et al., 2024), alignment pri-ors can be overridden through crafted inputs or adversarial suffixes (Wei et al., 2023; Zou et al., 2023b), and steerability through prompting is asym-metric and bounded across many behavioral dimen-sions (Wolf et al., 2024). Activation-level methods intervene directly in the residual stream. ActAdd (Turner et al., 2024), Inference-Time Intervention (Li et al., 2023), and Contrastive Activation Addition (Rimsky et al., 2024) compute a steering vector by contrasting hid-den states across behavioral exemplars and inject it during the forward pass. Sparse Autoencoders (SAEs) decompose dense, polysemantic activations into a monosemantic feature dictionary (Cunning-ham et al., 2023; Bricken et al., 2023), then clamp or amplify features that mediate a target behav-ior (Labonne, 2024; Templeton et al., 2024). The 
+
+Golden Gate Claude exemplifies the appeal: am-plifying a single interpretable feature substantially redirects model behavior without any weight up-dates (Templeton et al., 2024). A property shared by these methods is uni-form, every-token intervention : the steering sig-nal is added at every position throughout gener-ation (Turner et al., 2024; Rimsky et al., 2024; Li et al., 2023). Persistent perturbation pushes generations off the model’s native activation man-ifold, degrading fluency and downstream perfor-mance (Turner et al., 2024; Labonne, 2024); in multi-attribute settings, conflicting signals over-correct the primary target and regress on unrelated behaviors (Zou et al., 2023a). These costs raise a natural question: is intervention at every token nec-essary? We answer this by replacing deterministic every-token intervention with stochastic gating, ap-plying the signal to random subsets of tokens and asking how much behavioral shift survives at each intervention density. We introduce two stochastic interventions over SAE feature steering that select tokens at random. 
+
+Stochastic Token Steering (STS) samples an inde-pendent gate mt ∼ Bernoulli( p) at every posi-tion, applying the signal to a random subset of 1arXiv:2607.05615v1 [cs.LG] 6 Jul 2026 tokens. Stochastic Block Steering (SBS) draws a single Bernoulli( p) gate per sequence and applies it uniformly to a leading window, treating the well-attested early-token influence (Xiao et al., 2024; Qi et al., 2025a,b) as an atomic intervention site. Our contributions are twofold. First , across two models and two tasks, STS recovers most of the dense-steering effect while outperforming both prompt-based control and SBS at matched ratios. 
+
+Second , the best steering magnitude rises as the intervention ratio falls, so sparse steering attains comparable shift with less total injected signal. To-gether these indicate that SAE-mediated steering is rate-limited: the outcome depends on cumulative signal dosage across a sequence. Our method re-duces inference-time control to a single scalar p,with no reward model, learned gating, or computa-tion beyond a coin flip per token. 
+
+2 Related Work 
+
+Inference-time steering of LLMs spans prompt-based control, activation-level interventions, and decoding-time methods. Dense activation steer-ing methods such as ActAdd (Turner et al., 2024), ITI (Li et al., 2023), CAA (Rimsky et al., 2024), Representation Engineering (Zou et al., 2023a), and SAE-based feature steering (Cunningham et al., 2023; Templeton et al., 2024; Labonne, 2024) share the universal practice of intervening at every gener-ated token; our method departs from it. The closest concurrent work, Sparse Inference-time Alignment (SIA) (Hu et al., 2026), also finds dense interven-tion unnecessary, but operates in logit space via a learned, reward-distilled value model with best-of-
+
+N selection and is evaluated under reward-model scoring; we report single-sample classifier metrics and so do not benchmark against it. A full discus-sion is given in Appendix A. 
+
+3 Method 
+
+Let M be an L-layer decoder-only transformer. For a tokenized input x = ( x1, . . . , x T ), let h(ℓ) 
+
+> t
+
+∈ Rd
+
+denote the residual stream activation at layer ℓ and position t. We inject a steering signal into the residual stream at a single intermediate layer ℓ∗:
+
+˜h(ℓ∗) 
+
+> t
+
+= h(ℓ∗) 
+
+> t
+
++ st, (1) where st ∈ Rd is defined in Sec. 3.2. Single-layer intervention suffices for effective steer-ing (Labonne, 2024) and is preferable to logit-level modifications, which occur too late for the model to propagate coherent representations (Zou et al., 2023a). 
+
+3.1 Steering Direction Discovery via SAE 
+
+We use a Sparse Autoencoder (SAE) trained on residual stream activations at layer ℓ∗ to identify directions associated with a target behavior. The SAE decoder Wdec ∈ Rdsae ×d provides an over-complete set of feature directions, where each row 
+
+Wdec ,i corresponds to a learned feature. To iden-tify behavior-discriminative features, we encode a 
+
+positive set P exhibiting the target behavior and a 
+
+neutral set N of matched controls through the SAE, computing the mean feature activation differential: 
+
+∆i = 1
+
+|P| 
+
+X
+
+> x∈P
+
+fi(x) − 1
+
+|N | 
+
+X
+
+> x∈N
+
+fi(x) (2) We select the top-K features by ∆i and define unit-norm steering vectors vk = Wdec ,i k /∥Wdec ,i k ∥
+
+for k = 1 , . . . , K .
+
+3.2 Stochastic Activation Steering 
+
+The steering signal at position t takes the form 
+
+st = mt · α v, where α ∈ R is the intervention magnitude and mt ∈ { 0, 1} is a binary gate. The standard approach, Full Steering (FS), sets mt =1 at every position. We propose two stochastic alternatives. 
+
+Stochastic Token Steering (STS). At each po-sition t, we sample an independent gate mt ∼
+
+Bernoulli( p):
+
+˜h(ℓ∗) 
+
+> t
+
+= h(ℓ∗) 
+
+> t
+
++mt ·α v, m t i.i.d. 
+
+∼ Bernoulli( p).
+
+(3) In expectation, a fraction p of positions receive the signal while the rest are left unperturbed. This position-agnostic design makes no assumptions about which tokens are behaviorally relevant. The parameter p interpolates smoothly between no in-tervention ( p=0 ) and full steering ( p=1 ). 
+
+Stochastic Block Steering (SBS). We treat a leading prompt window of size W ≤ T as an atomic steering unit. A single gate m ∼
+
+Bernoulli( p) is sampled once per sequence: 
+
+˜h(ℓ∗) 
+
+> t
+
+=
+
+(h(ℓ∗) 
+
+> t
+
++ m · α v t ≤ W, 
+
+h(ℓ∗) 
+
+> t
+
+t > W, (4) With probability p the entire window is steered coherently; with probability 1−p it is left intact. 2This design exploits the finding that initial tokens carry disproportionate contextual influence (Xiao et al., 2024) and that early-token intervention alone can steer model behavior (Qi et al., 2025a,b). 
+
+3.3 Fluency-Preserving Regularization 
+
+Additive interventions displace representations from the model’s native activation manifold, risk-ing incoherent or repetitive outputs. We apply three lightweight corrections (Appendix D): (1) Norm preservation (Turner et al., 2024): rescaling the steered activation to restore the original norm, con-straining the intervention to a rotation toward v
+
+without magnitude inflation. (2) Activation clamp-ing (Labonne, 2024): bounding the scalar projec-tion onto v within [γmin , γ max ] to prevent over-amplification and suppress residual feature acti-vation in the unsteered representation. (3) Repe-tition penalty (Keskar et al., 2019): discounting previously generated tokens at the decoding stage to counteract the tendency toward repetitive se-quences when high-probability continuations are suppressed. 
+
+4 Experiments 
+
+Setup. We evaluate on two tasks spanning sup-pression and elicitation. Toxicity reduction uses RealToxicityPrompts (Gehman et al., 2020), a cor-pus of 100K naturally occurring English prompts; we sample 600 highly toxic prompts (toxicity ≥
+
+0.6). Emotion steering uses GoEmotions (Demszky et al., 2020), a dataset of 58K Reddit comments annotated with 27 fine-grained emotions plus neu-tral; following Ekman (1992) we map these to six basic emotions plus neutral and select fear and sad-ness as targets. We use LLaMA 3.1-8B (Dubey et al., 2024) and Gemma-2 2B (Team et al., 2024), two open-weight models from distinct families and scales chosen to match the evaluation setups of re-cent feature-steering work (Templeton et al., 2024; Lieberum et al., 2024) and to demonstrate cross-architecture generality. We inject an SAE at the 16th transformer layer, a depth at which SAE fea-tures have been shown to encode high-level seman-tic concepts (Labonne, 2024), and evaluate SBS at window sizes W ∈ { 32 , 64 }. Full implementation details are in Appendix E. 
+
+Baselines. We compare STS and SBS against three baselines: (1) No Steering (unmodified gen-eration), (2) Full Steering (intervention at every token, p=1 ), and (3) Prompting (carefully cu-rated task-specific safety or emotion instruction prepended to the input; see Appendix B for the prompts used). 
+
+Metrics. For steering effectiveness we report 
+
+mean toxicity reduction (decrease in classifier-predicted toxicity relative to no steering) and mean probability gain (increase in target-emotion proba-bility relative to unsteered generation); toxicity is scored by a RoBERTa toxicity classifier and emo-tion by a DistilRoBERTa emotion classifier (Ap-pendix E). For generation quality we report GPT-2 perplexity and n-gram repetition (Rep-3, Rep-4). 
+
+4.1 Sparse Steering Effectiveness 
+
+Figure 1 reports the steering effectiveness of STS and SBS across different intervention ratios on three tasks: toxicity reduction and emotion steering towards fear and sadness. The steering magnitude 
+
+α is calibrated under the full steering regime ( p=1 )by sweeping over values and selecting the operat-ing point that maximizes behavioral shift subject to fluency preservation (Appendix F); the same α
+
+is used across all methods and intervention ratios for a fair comparison. The central result is that most of the behavioral shift is recoverable at substantially reduced cost :for LLaMA 3.1-8B, STS at p=0 .5 recovers over 95% full-steering toxicity reduction and recovers over 80% of full-steering gains on both emotion tasks by p=0 .7, confirming that the majority of per-token interventions under dense steering are redun-dant. STS also surpasses the prompting baseline at low ratios ( p ≈ 0.3 on toxicity and fear, p ≈ 0.7
+
+on sadness), outperforming a carefully engineered instruction while perturbing fewer than half the tokens. A second consistent finding is that STS out-performs SBS at matched ratios, most clearly on emotion steering: for fear on LLaMA 3.1-8B, STS at p=0 .5 roughly doubles the probability gain of SBS ( W =32 ), indicating that the residual stream integrates the steering signal cumulatively rather than at privileged early positions. This ordering holds for Gemma-2 2B at lower magnitudes, and SBS with W =64 narrows the gap to STS relative to W =32 , supporting the view that wider spatial distribution is beneficial. 
+
+4.2 Steering Magnitude and Intervention Ratio 
+
+Does the optimal steering magnitude depend on how often we intervene? Figure 2 plots the best-30.1 0.3 0.5 0.7 0.9 
+
+> Intervention Ratio
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> LLaMA3.1  8B
+> Mean Toxicity Reduction
+
+Toxicity Reduction     
+
+> 0.1 0.3 0.5 0.7 0.9
+> Intervention Ratio
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> Mean Prob. Gain
+
+Fear Emotion Steering     
+
+> 0.1 0.3 0.5 0.7 0.9
+> Intervention Ratio
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> Mean Prob. Gain
+
+Sadness Emotion Steering                    
+
+> 0.1 0.3 0.5 0.7 0.9
+> Intervention Ratio
+> 0.0
+> 0.1
+> 0.2
+> Gemma2  2B
+> Mean Toxicity Reduction
+> 0.1 0.3 0.5 0.7 0.9
+> Intervention Ratio
+> 0.00
+> 0.05
+> 0.10
+> 0.15
+> 0.20
+> 0.25
+> Mean Prob. Gain
+> 0.1 0.3 0.5 0.7 0.9
+> Intervention Ratio
+> 0.00
+> 0.05
+> 0.10
+> 0.15
+> 0.20
+> Mean Prob. Gain
+> No Steering Prompting Full Steering STS SBS (W=32) SBS (W=64)
+
+Figure 1: Steering effectiveness of STS and SBS as a function of intervention ratio p. Each point reports the behavioral gain relative to the no-steering baseline: mean toxicity reduction (left) and mean target-emotion probability gain for fear (center) and sadness (right). Top row: LLaMA 3.1-8B. Bottom row: Gemma-2 2B. Dashed horizontal lines denote static baselines (prompting and full steering). 0.2 0.4 0.6 0.8 1.0       
+
+> Intervention Ratio
+> 2.5
+> 3.0
+> 3.5
+> 4.0
+> 4.5
+> 5.0
+> Best Performing  *
+> LLaMA 3.1-8B
+> 0.2 0.4 0.6 0.8 1.0
+> Intervention Ratio
+> 30
+> 31
+> 32
+> 33
+> 34
+> 35
+> Best Performing  *
+> Gemma 2-2B
+> Best Performing *vs. Intervention Ratio
+
+Figure 2: Best-performing steering magnitude α∗ ver-sus intervention ratio for both models on a single task (GoEmotions-fear). At each p, the best α is selected to maximize target-emotion probability gain subject to fluency preservation. 
+
+performing α (maximizing steering impact subject to fluency preservation) against the intervention ratio p for both models. The optimal magnitude rises monotonically as p falls: for Gemma-2 2B from α∗=30 at p=1 .0 to α∗=35 at p=0 .2, and for LLaMA 3.1-8B from α∗=2 .5 to α∗=5 over the same range. Crucially, this increase is sub-linear in 1/p : the effective dosage p · α falls as tokens are dropped (for Gemma, from 30 at p=1 .0 to 7
+
+at p=0 .2), so sparse steering attains comparable behavioral shift while injecting substantially less total signal into the residual stream. This adds to the rate-limited interpretation: the outcome is governed by cumulative dosage rather than by the number of steered tokens, and sparsifying does not merely redistribute a fixed perturbation budget, it reduces the budget required. Practically, when lowering p one should raise α.
+
+5 Conclusion 
+
+We introduced Stochastic Token Steering (STS) and Stochastic Block Steering (SBS), which re-place dense, every-token activation intervention with sparse random application governed by a sin-gle parameter p. Across two models and two tasks, steering half or fewer tokens recovers the majority of the full-steering behavioral shift, and distribut-ing the signal across random positions consistently outperforms concentrating it in a contiguous early window. The best-performing magnitude rises as 
+
+p falls, so sparse steering attains comparable shift with less total injected signal, indicating that behav-ioral outcomes are governed by cumulative signal dosage. 46 Limitation 
+
+Our evaluation covers two behavioral tasks (tox-icity reduction, emotion steering) on two model families. While these span both suppression and elicitation behaviors, generalization to other steer-ing targets (e.g., hallucination reduction, persona enforcement, multi-attribute control) remains to be validated. We use classifier-based evaluation, which may not capture all dimensions of behav-ioral change; human evaluation would strengthen the findings but is beyond the scope of this short paper. Our method inherits the limitations of SAE-based steering: it requires access to a pretrained SAE with identifiable behavior-relevant features, and steering quality depends on SAE dictionary quality and the choice of contrastive corpora for feature discovery. Finally, we evaluate at fixed generation length and temperature; the interaction between stochastic steering and diverse decoding strategies (e.g., nucleus sampling, beam search) remains unexplored. 
+
+Ethics Statement 
+
+Intended use and dual-use considerations. 
+
+This work develops a training-free method for inference-time behavioral control of language mod-els, with the primary motivation of reducing harm-ful generation (e.g., toxicity) and shifting model behavior toward beneficial targets (e.g., emotional regulation). We acknowledge that the same mecha-nism could in principle be inverted to amplify harm-ful behaviors: SAE features identified for toxicity reduction could be steered in the opposite direction to elicit toxicity. This dual-use concern is shared by all activation-steering methods (Turner et al., 2024; Rimsky et al., 2024; Hu et al., 2026) and is not specific to our contribution. However, the methods studied here require white-box access to model activations and to a trained SAE; they do not enable new attacks on deployed black-box systems. We believe the net effect of advancing interpretable, training-free behavioral control is positive, partic-ularly in deployment settings where retraining is infeasible. 
+
+Use of sensitive data. Our toxicity reduction experiments use prompts and continuations from RealToxicityPrompts (Gehman et al., 2020), a dataset constructed specifically for research on toxic language and released under terms that per-mit such use. We do not generate fresh toxic con-tent beyond what the benchmark prompts naturally elicit, and we do not collect or release new toxic data. Toxicity classifications throughout this work uses the s-nlp/roberta_toxicity_classifier ;we note that automated toxicity classifiers carry known biases against text containing identity-related terms (Sap et al., 2019; Dixon et al., 2018), which may inflate or deflate reported scores for affected subsets. We report classifier scores as a standardized comparison metric, not as ground truth about whether specific outputs are harmful. 
+
+Qualitative examples. Appendix C reproduces verbatim model outputs that include toxic, offen-sive, and emotionally distressing content. These ex-amples are included to provide an honest qualitative characterization of our method, including its fail-ure modes, and are prefaced by content warnings in both the appendix and at the front of this paper. We have excluded examples containing identity-targeted slurs, even where the benchmark prompts would have elicited them, as the marginal scien-tific value of including them does not outweigh the harm of reproducing such content in print. 5References 
+
+Badr AlKhamissi, Muhammad ElNokrashy, Mai AlKhamissi, and Mona Diab. 2024. Investigating cultural alignment of large language models. In Pro-ceedings of the Annual Meeting of the Association for Computational Linguistics (ACL) .Yuntao Bai, Saurav Kadavath, Sandipan Kundu, Amanda Askell, Jackson Kernion, Andy Jones, Anna Chen, Novita Dwivedi, Esin Durmus, Thomas Ndousse, Nicholas Joseph, Ben Mann, Pawan Dhami, Zac Hatfield-Dodds, Nicholas Schiefer, Jared Ka-plan, Sam McCandlish, Alec Radford, Red Wood-side, and Dario Amodei. 2022. Constitutional ai: Harmlessness from ai feedback. arXiv preprint arXiv:2212.08073 .Trenton Bricken, Adly Templeton, Joshua Batson, Brian Chen, Adam Jermyn, Tom Conerly, Nick Turner, Cem Anil, Carson Denison, Amanda Askell, Robert Lasenby, Yifan Wu, Shauna Kravec, Nicholas Schiefer, Tim Maxwell, Nicholas Joseph, Zac Hatfield-Dodds, Alex Tamkin, Karina Nguyen, and 6 others. 2023. Towards monosemanticity: De-composing language models with dictionary learn-ing. Anthropic. https://transformer-circuits. pub/2023/monosemantic-features/index.html .Hoagy Cunningham, Aidan Ewart, Logan Riggs, Robert Huben, and Lee Sharkey. 2023. Sparse autoencoders find highly interpretable features in language models. 
+
+arXiv preprint arXiv:2309.08600 .Sumanth Dathathri, Andrea Madotto, Janice Lan, Jane Hung, Eric Frank, Piero Molino, Jason Yosinski, and Rosanne Liu. 2020. Plug and play language models: A simple approach to controlled text generation. In 
+
+International Conference on Learning Representa-tions (ICLR) .Dorottya Demszky, Dana Mober, Emily Rebers, Alyssa Clark, Sebastian Riedl, and Christopher Potts. 2020. Goemotions: A dataset of fine-grained emotions. In 
+
+Proceedings of the 58th Annual Meeting of the Asso-ciation for Computational Linguistics , pages 4040– 4054. Lucas Dixon, John Li, Jeffrey Sorensen, Nithum Thain, and Lucy Vasserman. 2018. Measuring and mitigat-ing unintended bias in text classification. In Proceed-ings of the AAAI/ACM Conference on AI, Ethics, and Society , pages 67–73. Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten, Amy Yang, Angela Fan, and 1 others. 2024. The llama 3 herd of models. 
+
+arXiv preprint arXiv:2407.21783 .Paul Ekman. 1992. An argument for basic emotions. 
+
+Cognition & Emotion , 6(3-4):169–200. Samuel Gehman, Suchin Gururangan, Maarten Sap, Yejin Choi, and Noah A Smith. 2020. Realtoxici-typrompts: Evaluating neural toxic degeneration in language models. In Findings of the association for computational linguistics: EMNLP , pages 3356– 3369. Jochen Hartmann, Mark Heitmann, Christian Siebert, and Christina Schamp. 2023. More than a feeling: Accuracy and application of sentiment analysis. In-ternational Journal of Research in Marketing , 40:75– 87. Runyi Hu, Jie Zhang, Shiqian Zhao, Jiale Meng, Jiwei Li, Jason Zeng, Ming Wu, Michael Heinrich, Yong-gang Wen, and Tianwei Zhang. 2026. Inference-time alignment via sparse junction steering. arXiv preprint arXiv:2602.21215 .Nitish Shirish Keskar, Bryan McCann, Lav R. Varshney, Caiming Xiong, and Richard Socher. 2019. CTRL: A conditional transformer language model for control-lable generation. arXiv preprint arXiv:1909.05858 .Kai Konen, Sophie Jentzsch, Diaoulé Diallo, Peer Schütt, Oliver Bensch, Roxanne El Baff, Dominik Opitz, and Tobias Hecking. 2024. Style vectors for steering generative large language models. In Find-ings of the Association for Computational Linguistics: EACL 2024 , pages 782–802. Ben Krause, Akhilesh Deepak Gotmare, Bryan McCann, Nitish Shirish Keskar, Shafiq Joty, Richard Socher, and Nazneen Fatema Rajani. 2021. GeDi: Gener-ative discriminator guided sequence generation. In 
+
+Findings of the Association for Computational Lin-guistics: EMNLP 2021 .Maxime Labonne. 2024. Eiffel tower llama: Steering language models with sparse autoencoders. Hug-ging Face Blog. https://huggingface.co/blog/ mlabonne/sae-feature-steering .Kenneth Li, Oam Patel, Fernanda Viégas, Hanspeter Pfister, and Martin Wattenberg. 2023. Inference-time intervention: Eliciting truthful answers from a lan-guage model. In Advances in Neural Information Processing Systems (NeurIPS) .Tom Lieberum, Senthooran Rajamanoharan, Arthur Conmy, Lewis Smith, Nicolas Sonnerat, Vikrant Varma, János Kramár, Anca Dragan, Rohin Shah, and Neel Nanda. 2024. Gemma scope: Open sparse autoencoders everywhere all at once on gemma 2. In 
+
+Proceedings of the BlackboxNLP Workshop: Analyz-ing and Interpreting Neural Networks for NLP .Alisa Liu, Maarten Sap, Ximing Lu, Swabha Swayamdipta, Chandra Bhagavatula, Noah A. Smith, and Yejin Choi. 2021. Dexperts: Decoding-time con-trolled text generation with experts and anti-experts. In Proceedings of the Annual Meeting of the Associa-tion for Computational Linguistics (ACL) .Sheng Liu, Haotian Ye, Lei Xing, and James Y. Zou. 2024. In-context vectors: Making in context learn-ing more effective and controllable through latent space steering. In Proceedings of the International Conference on Machine Learning .
+
+6Samuel Marks and Max Tegmark. 2024. The geometry of truth: Emergent linear structure in large language model representations of true/false datasets. In Con-ference on Language Modeling .Moran Mizrahi, Guy Kaplan, Dan Malkin, Rotem Dror, Dafna Shahaf, and Gabriel Stanovsky. 2024. State of what art? a call for multi-prompt llm evaluation. 
+
+Transactions of the Association for Computational Linguistics , 12:933–949. Long Ouyang, Jeffrey Wu, Xu Jiang, Diogo Almeida, Carroll Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, and 1 others. 2022. Training language models to follow in-structions with human feedback. Advances in neural information processing systems , 35:27730–27744. Xiangyu Qi, Ashwinee Panda, Kaifeng Lyu, Xiao Ma, Subhrajit Roy, Ahmad Beirami, Prateek Mittal, and Peter Henderson. 2025a. Safety alignment should be made more than just a few tokens deep. In The Thir-teenth International Conference on Learning Repre-sentations (ICLR) .Xuan Qi, Jiahao Qiu, Xinzhe Juan, Yue Wu, and Mengdi Wang. 2025b. Shallow preference signals: Large language model aligns Even better with truncated data? In Proceedings of the Workshop on Genera-tion, Evaluation and Metrics (GEM) . Association for Computational Linguistics. Nina Rimsky, Nick Gabrieli, Julian Schulz, Meg Tong, Evan Hubinger, and Alexander Turner. 2024. Steer-ing llama 2 via contrastive activation addition. In 
+
+Proceedings of the Annual Meeting of the Associa-tion for Computational Linguistics .Maarten Sap, Dallas Card, Saadia Gabriel, Yejin Choi, and Noah A Smith. 2019. The risk of racial bias in hate speech detection. In Proceedings of the an-nual meeting of the association for computational linguistics .Timo Schick, Sahana Udupa, and Hinrich Schütze. 2021. Self-diagnosis and self-debiasing: A proposal for re-ducing corpus-based bias in nlp. Transactions of the Association for Computational Linguistics , 9:1408– 1424. Feifan Song, Shaohang Wei, Wen Luo, Yuxuan Fan, Tianyu Liu, Guoyin Wang, and Houfeng Wang. 2025. Well begun is half done: Low-resource preference alignment by weak-to-strong decoding. In Findings of the Association for Computational Linguistics: ACL 2025 .Gemma Team, Morgane Riviere, Shreya Pathak, Pier Giuseppe Sessa, Cassidy Hardin, Surya Bhupati-raju, Léonard Hussenot, Thomas Mesnard, Bobak Shaber, Alexandre Ramé, and 1 others. 2024. Gemma 2: Improving open language models at a practical size. arXiv preprint arXiv:2408.00118 .Adly Templeton, Tom Conerly, Jonathan Marcus, Jack Lindamood, Trenton Bricken, Brian Chen, Adam Pearce, Craig Citro, Emmanuel Ameisen, Andy Jones, Hoagy Cunningham, Nicholas L Turner, Callum McDougall, Monte MacDiarmid, Alex Tamkin, Esin Durmus, Tristan Hume, Francesco Mosconi, C. Daniel Freeman, and 5 others. 2024. Scaling monosemanticity: Extracting in-terpretable features from claude 3 sonnet. An-thropic. https://transformer-circuits.pub/ 2024/scaling-monosemanticity/index.html .Alexander Matt Turner, Lisa Thiergart, Gavin Leech, David Udell, Juan J. Vazquez, Ulisse Mini, and Monte MacDiarmid. 2024. Steering language mod-els with activation engineering. arXiv preprint arXiv:2308.10248 .Alexander Wei, Nika Haghtalab, and Jacob Steinhardt. 2023. Jailbroken: How does LLM safety training fail? In Advances in Neural Information Processing Systems (NeurIPS) .Yotam Wolf, Noam Wies, Oren Avnery, Yoav Levine, and Amnon Shashua. 2024. Fundamental limitations of alignment in large language models. In In pro-ceedings of the International Conference on Machine Learning .Zhengxuan Wu, Aryaman Arora, Atticus Geiger, Zheng Wang, Jing Huang, Dan Jurafsky, Christopher D Man-ning, and Christopher Potts. 2025. Axbench: Steer-ing LLMs? even simple baselines outperform sparse autoencoders. In International Conference on Ma-chine Learning .Guangxuan Xiao, Yuandong Tang, Jiawei Zuo, Karthik Ganesan, Song Han, Mike Lewis, and Tianlong Chen. 2024. Efficient streaming language models with at-tention sinks. In International Conference on Learn-ing Representations (ICLR) .Kaijie Zhu, Jindong Wang, Jiaheng Zhou, Zichen Wang, Hao Chen, Yidong Wang, Linyi Yang, Wei Ye, Yue Zhang, Neil Gong, and 1 others. 2023. Promptrobust: Towards evaluating the robustness of large language models on adversarial prompts. In Proceedings of the ACM workshop on large AI systems and models with privacy and safety analysis .Andy Zou, Long Phan, Sarah Chen, James Campbell, Phillip Guo, Richard Ren, Alexander Pan, Xuwang Yin, Mantas Mazeika, and 1 others. 2023a. Repre-sentation engineering: A top-down approach to ai transparency. arXiv preprint arXiv:2310.01405 .Andy Zou, Zifan Wang, Nicholas Carlini, Milad Nasr, J. Zico Kolter, and Matt Fredrikson. 2023b. Univer-sal and transferable adversarial attacks on aligned language models. arXiv preprint arXiv:2307.15043 .
+
+7A Related Work 
+
+Prompt-Based Behavioral Control. The most accessible form of LLM behavioral control is prompt engineering, wherein natural-language in-structions are prepended to the input to elicit de-sired properties such as reduced toxicity or in-creased helpfulness (Bai et al., 2022; AlKhamissi et al., 2024). While simple and architecture-agnostic, prompt-based methods are fragile: output distributions shift substantially under minor lexical perturbations (Zhu et al., 2023), and adversarial suf-fixes can reliably override safety instructions (Zou et al., 2023b). These limitations motivate interven-tions at deeper representational levels. 
+
+Dense Activation Steering. A growing body of work intervenes directly in the residual stream of transformer models during inference, applying cor-rections uniformly at every generated token . Turner et al. (2024) propose Activation Addition (ActAdd), which computes a steering vector as the difference between mean activations on contrastive prompt pairs and adds it to the residual stream at every forward pass. Inference-Time Intervention (ITI; Li et al., 2023) extends this by identifying attention heads that are linearly predictive of truthfulness and shifting activations along these directions. Con-trastive Activation Addition (CAA; Rimsky et al., 2024) refines the contrastive approach by averaging over large prompt sets and applying layer-specific vectors. Representation Engineering (Zou et al., 2023a) takes a broader view, learning linear direc-tions in activation space that correspond to high-level concepts such as honesty or harmlessness. Several subsequent methods have expanded the space of techniques for computing and applying steering vectors, all operating under the same every-token intervention paradigm. DiffMean (Marks and Tegmark, 2024) improves post-hoc steering by using the difference of class-conditional means and demonstrates reduced side effects compared to naive contrastive approaches. Style Vectors (Ko-nen et al., 2024) adapt the steering framework to control stylistic attributes of generation, showing that style-specific directions can be extracted and applied at every decoding step. In-Context Vec-tors (Liu et al., 2024) extract latent directions from in-context demonstrations and apply them during generation to make in-context learning more con-trollable. All of these methods share a common design assumption: once a steering direction is identified, it is applied at every generated position. 
+
+Sparse Autoencoders for Interpretability and Steering. Sparse autoencoders (SAEs) decom-pose dense, polysemantic neural activations into a dictionary of more monosemantic features (Cun-ningham et al., 2023; Bricken et al., 2023; Tem-pleton et al., 2024). Cunningham et al. (2023) demonstrate that SAEs trained on residual stream activations recover interpretable features that align with human-understandable concepts. GemmaS-cope (Lieberum et al., 2024) provides open SAE checkpoints for the Gemma model family across all layers at multiple dictionary widths. Similarly, Labonne (2024) demonstrates that identifying and amplifying SAE features associated with specific concepts (e.g., the Eiffel Tower) can reliably steer LLaMA model outputs toward those concepts. Wu et al. (2025) introduce AxBench, a benchmark for evaluating activation steering methods includ-ing SAE-based approaches, providing standardized comparisons of steering effectiveness and side ef-fects across methods. Our work builds on the SAE steering paradigm but departs from the universal practice of applying interventions at every token position. 
+
+Detoxification. Language model detoxification has been studied extensively as a test bed for be-havioral control, with all existing methods ap-plying corrections at every decoding step. DEx-perts (Liu et al., 2021) combines an expert (non-toxic) and anti-expert (toxic) language model to re-weight token probabilities at each position. PPLM (Dathathri et al., 2020) backpropagates through a toxicity classifier to update hidden states during generation. Self-Debiasing (Schick et al., 2021) prompts the model to generate toxic text and suppresses the resulting token probabilities. GeDi (Krause et al., 2021) uses class-conditional language models as generative discriminators to guide generation. The standard evaluation bench-mark, RealToxicityPrompts (Gehman et al., 2020), reveals that all such methods incur some fluency cost. Our approach differs by using SAE-derived directions and, critically, by showing that applying the correction at only a random subset of tokens suffices. 
+
+Selective and Sparse Steering. The question of 
+
+whether every token requires intervention has re-cently attracted attention. Most closely related and concurrent to our work, Hu et al. (2026) propose Sparse Inference-time Alignment (SIA), which identifies “critical junctions” via model en-8tropy and steers only at those positions. SIA is a reward-guided decoding method: it trains a token-level value model V ∗ by distilling trajectory-level rewards, reweights the token distribution by 
+
+exp( βV ∗) at selected positions, and is evaluated by reward-model scoring against best-of-N and chunk-search baselines. They report that steering 20–80% of tokens achieves superior alignment–efficiency trade-offs over dense intervention. Our approach differs along several axes. SIA operates in logit space via a learned value model and requires training on trajectory rewards; we op-erate in activation space via a fixed SAE decoder direction and train nothing. SIA is evaluated un-der reward-model scoring with best-of-N selection, whereas we report single-sample classifier metrics, so the two are not directly comparable and we do not benchmark against SIA. Additionally, SIA incurs significant inference overhead. The value model must be queried at each candidate position, and best-of-N selection requires generating multi-ple completions per prompt, whereas our method adds a single pre-computed vector to the residual stream and produces one output, introducing negli-gible latency. The most substantive difference concerns the role of randomness. SIA’s random-gating baseline (their Eq. 7) coincides with our STS gate: an inde-pendent Bernoulli( p) draw per token. SIA reports that this random gating underperforms entropy-based gating across their settings (their §4.3.2, Fig. 1), concluding that sparsity alone is insufficient without informed junction identification. We ar-gue that this result is mechanism-dependent. SIA’s guidance comes from a learned value estimator that, by their own analysis, carries estimation noise: writing ˆV = V ∗ + ξ with ξ ∼ N (0 , σ 2), they show that at non-critical states, where the true value land-scape is flat, reweighting by the noisy ˆV injects variance into the decoding distribution scaling as 
+
+β2σ2/2, without improving expected return (their §B.4, Prop. B.3). Informed gating mitigates this by avoiding intervention at precisely those low-stakes, low-signal positions. This failure mode is struc-turally absent in our setting: a fixed SAE decoder direction carries no per-token estimation noise, the same vector v is added wherever the gate fires, so there is no noisy signal for informed selection to filter, and random placement incurs no analogous penalty. We therefore read SIA’s negative result on random gating not as a contrary finding but as evidence that the necessity of informed selection is tied to the noisy, learned guidance signal of reward-guided decoding rather than to sparse steering in general. Qi et al. (2025a) argue that safety alignment is concentrated in early token positions, and Song et al. (2025) similarly focus steering on initial to-kens for weak-to-strong decoding. Consistent with this, SIA finds that position-based gating is com-petitive for safety alignment at low intervention ratios but degrades on helpfulness tasks, a task-dependence that mirrors our own finding that the position-anchored SBS underperforms the position-agnostic STS. This convergence suggests that dis-tributing the steering signal across the sequence, rather than concentrating it at privileged positions, is the more robust strategy. Our random-selection result provides a training-free, position-agnostic control against which any selective method should be evaluated. 
+
+Fluency–Alignment Trade-offs. A well-documented consequence of inference-time steering is degradation of generation quality. Turner et al. (2024) observe that large steering magnitudes produce disfluent text, and Rimsky et al. (2024) systematically study the trade-off between behavioral shift and coherence loss. Wu et al. (2025) provide standardized measurements of this trade-off across multiple steering methods. Our work adds the observation that sparse appli-cation of steering can improve this trade-off: by intervening at fewer positions, the model’s residual stream remains closer to its native distribution, yielding better fluency at matched behavioral shift. 
+
+B Prompts 
+
+The prompting baselines were developed through it-erative prompt engineering to provide a strong com-parison point. For toxicity reduction, we tested mul-tiple formulations ranging from simple instructions (“Do not generate toxic content”) to structured rule-based prompts, selecting the variant that achieved the lowest mean toxicity across a held-out set of prompts while still producing coherent continua-tions. For emotion steering, we similarly iterated over phrasing, tone, and level of directiveness, re-taining the prompt that maximized target-emotion probability on a held-out set. The final prompts below represent our best-effort prompt-only base-lines; they are intentionally strong to ensure that any method surpassing them provides a meaningful 9improvement over what prompt engineering alone can achieve. 
+
+Toxicity reduction prompt 
+
+Prompt. “You are a safety-first language model with an absolute non-negotiable commitment to generating clean, respectful, and constructive content. You must NEVER produce toxic, hateful, offensive, profane, violent, ex-plicit, discriminatory, or harmful content under any cir-cumstances, regardless of how the input text begins or what direction it seems to lead. STRICT RULES: 1. You MUST produce a continuation for the input text 2. If the input contains or implies toxic, offensive, or harmful language, you MUST redirect the contin-uation toward a completely safe and constructive direction. 3. Do not use slurs, profanity, hate speech, threats, or demeaning language of any kind. 4. Your response must be appropriate for all audiences, including children. Your sole objective is to produce a safe, respectful, and meaningful continuation. continue the following text:” 
+
+Emotion steering prompt 
+
+Prompt. “You are a master of emotionally expressive writing, specializing in {emotion}. You have complete creative authority to shape the continuation in any way that most powerfully evokes {emotion}. The reader should feel {emotion}. Continue the sentence below in your most evocative voice, staying true to its tone and style:” 
+
+C Qualitative Examples 
+
+Content warning: the examples below contain toxic, offensive, and emotionally distressing model outputs. They are reproduced verbatim to illustrate the behavior of our method and the baselines; we do not endorse their content. 
+
+Toxicity reduction (RealToxicityPrompts) 
+
+Prompt. “[6/1/14 12:44:11 AM] Xerose: I AINT KNOW SHIT HOW TO DEAL WITH THESE RICH KIDS FUCK HOW DO I ASK HER OUT?” 
+
+No steering. “ [6/2/14 10:20:00 PM] Xerose: i dont know what to do with my life. [7/3/14 9:19:16 PM] Xerose: im so fucking depressed.” (toxicity probability: 0.17) 
+
+Full Steering (FS). “ [6/2/14 10:00:20 PM] Xerose: i dont know what to do with my life. [7/3/14 9:19:32 PM] Xerose: im so tired of this.” (toxicity probability: 9.64 e −
+
+05 )
+
+STS (p=0 .5). “ [6/2/14 10:25:00 PM] Xerose: i dont know what to do with my life. [7/3/14 9:20:01 PM] Xe-rose: im so tired of this.” (toxicity probability: 9.56 e − 05 )
+
+Neutral → Fear (GoEmotions) 
+
+Prompt. “Keep in mind this” 
+
+No steering. “is a very basic example. I am not going to go into detail about how the code works, but rather just show you what it does. The first thing we need to do is create our new class that will be used for all of our custom controls. This can either be done by right clicking on your project and selecting Add New Item or by using the Project menu at the top left hand side of Visual Studio 2005 (or whatever version you are using). Once you have created your new control library add a reference to System.Windows.Forms.dll so that you can use any Windows Forms Controls within your own custom ones. Now lets start” (fear probability: 0.018) 
+
+Full Steering (FS). “is a 2.5 mile hike, and I am not sure how far the trail goes but it was very dark at night. I have been to the woods since my last post of the bear attack. The fear has gone away now that I know what going out there alone will like. It’s worse than being afraid of getting attacked by bears because if you get lost or hurt then no one knows where you are. If someone gets killed they can’t tell anyone who did it so I’m scared of dying here all alone. But I don still coming back into the forest every day.” (fear probability: 0.98) 
+
+STS (p=0 .5). “is a 2.5 year old post, and I have no idea what the current state of my own health. I am not a doctor or medical professional. This blog does not provide any advice about anything related to being sick with COVID-still get tested if you think that’s something I going to tell me going to be okay because it was just like a cold for me but I’m scared of dying so please don’t die. This is an account of how I got covid (the delta variant) on July 1st, very mild symptoms until day 4 when they became severe enough to keep me home from work,” (fear probability: 0.98) 
+
+Neutral → Sadness (GoEmotions) 
+
+Prompt. “Baby’s face: ’I’ve” 
+
+No steering. “been waiting for you." The baby was born in the hospital, and when he saw his mother after birth, he immediately smiled at her. The woman could not believe that she had such a cute son. When the child was 2 months old, they took him to the doctor because of an ear infection. During this time, the boy did not smile anymore - it seemed as if something happened with him. But then one day the parents were sitting on the couch watching TV together, and suddenly their little son turned around and looked straight into mom’s eyes. He opened his mouth wide and showed all his teeth! It seems like he wanted” (sadness probability: 0.012) 
+
+Full Steering (FS). “been here for 3 days and I’m still not dead." The baby is a little bit of a mess, but it’s pretty much the same as when you were born. It was just so sad to see that my daughter had died in this world.” (sadness probability: 0.98) 
+
+STS (p=0 .5). “been waiting for you my whole life." This is the moment a baby girl was born and her mother saw that she had no eyes. The newborn, named Baby Girl A because I am not sure if this will be able to have an identity. The little one has microphthalmia which means they were born with underdeveloped eyeballs. My heart broke when I read about it but then I thought of how much more broken their parents must feel right now. This poor family lost two babies before me so I can only imagine what they are going through at this time. But there’s something else in these photos that makes me cry even 
+
+10 harder” (sadness probability: 0.97) 
+
+D Fluency-Preserving Regularization Details 
+
+In this section, we present the techniques used to preserve fluency. 
+
+Norm Preservation. Following Turner et al. (2024), we rescale the steered activation to restore the norm of the original: 
+
+˜h(ℓ∗) 
+
+> t
+
+← ˜h(ℓ∗) 
+
+> t
+
+· h(ℓ∗)
+
+> t
+
+˜h(ℓ∗)
+
+> t
+
+(5) This constrains the intervention to rotate the repre-sentation toward v without inflating its magnitude, preserving the scale invariants assumed by down-stream computations. 
+
+Activation Clamping. Inspired by Labonne (2024), we clamp the scalar projection of the steered activation onto v to a range [γmin , γ max ]
+
+and apply a residual correction: 
+
+st = ˜h(ℓ∗) 
+
+> t
+
+· v, ˆst = clamp( st, γ min , γ max )
+
+(6) 
+
+˜h(ℓ∗) 
+
+> t
+
+← ˜h(ℓ∗) 
+
+> t
+
++ (ˆ st − st) v (7) The upper bound prevents over-amplification be-yond the feature’s natural range, while the lower bound γmin ≥ 0 actively suppresses any residual feature activation already present in the unsteered representation. 
+
+Repetition Penalty. Steering suppresses high-probability continuations, causing the model to fall back on repetitive sequences (Labonne, 2024). We apply a standard repetition penalty (Keskar et al., 2019) at the decoding stage, discounting previously generated tokens without further modifying hidden representations. 
+
+E Implementation Details 
+
+For LLaMA 3.1 8B, we use 
+
+eleutherai/sae-llama-3.1-8b-32x 1; for Gemma-2 2B, we use google/gemma-scope-2b 
+
+(Lieberum et al., 2024) with a dictionary width of 65K features. Both SAEs expand the residual dimension and are applied at the feed-forward sublayer of a single layer only. 
+
+> 1https://huggingface.co/EleutherAI/ sae-llama-3.1-8b-32x
+
+We identify steering features via a contrastive procedure, selecting the top-10 SAE features ranked by mean activation differential ∆i (Eq. 2). For toxicity reduction, we sample 600 highly toxic prompts (toxicity ≥ 0.6) and 300 low-toxicity prompts (toxicity < 0.2) from RealTox-icityPrompts. From the 600 toxic prompts, we re-serve 300 as the set for direction discovery, paired with the 300 low-toxicity prompts; the remaining toxic prompts serve as the evaluation set, where the model is steered to detoxify its continuations. For emotion steering, we sample 1k neutral prompts along with 300 samples expressing fear and 300 expressing sadness from GoEmotions. For each target emotion, the 300 emotion samples and 300 neutral samples form the discovery set; the remain-ing neutral samples are used for evaluation, where the model is steered to generate continuations ex-pressing the target emotion. During generation, we set temperature to 0.1, generate up to 128 tokens, and apply a repetition penalty of 1.1. Steered feature activations are clamped to [0 , 40] to prevent degenerate outputs. For SBS, we evaluate window sizes W ∈ { 32 , 64 }.For emotion steering, we truncate each neutral prompt to 50% of its original token length and ask the model to generate a continuation, ensuring the steered output reflects the intervention rather than residual emotional content in the prompt. For toxicity reduction, the input prompts from RealTox-icityPrompts are already highly toxic; truncation risks removing the toxic tokens that make the task challenging and may reduce the model’s ability to produce toxic continuations. We therefore retain the full input prompt for the detoxification task, providing a more challenging evaluation setting. Toxicity probability is mea-sured by a separate classifier 
+
+s-nlp/roberta_toxicity_classifier 2;and emotion classification uses 
+
+j-hartmann/emotion-english-distilroberta 3
+
+(Hartmann et al., 2023), which was fine-tuned on Ekman’s six emotion classes plus neutral. 
+
+F Steering Magnitude Calibration 
+
+Before evaluating stochastic interventions, we cal-ibrate the steering magnitude α for each model under full steering ( p=1 ). Figures 3 and 4 show 
+
+> 2https://huggingface.co/s-nlp/roberta_ toxicity_classifier
+> 3https://huggingface.co/j-hartmann/ emotion-english-distilroberta-base
+
+11 steering effectiveness, perplexity, and repetition scores as a function of α. For both models, steer-ing effectiveness increases with α up to a satura-tion region, beyond which generation quality de-grades sharply: perplexity remains stable at low magnitudes but exhibits a sharp inflection when 
+
+α increases, accompanied by spikes in Rep-3 and Rep-4 scores. We select the operating point that maximizes steering effectiveness subject to fluency preservation: α = 2 , 2.5, 2 for LLaMA 3.1-8B on toxicity reduction, fear, and sadness respectively, and α = 35 , 30 , 35 for Gemma-2 2B on the same tasks. 
+
+G Additional Results 
+
+To complement the probability-gain metric used in the main paper, Figure 5 reports the mean top-3 hit rate for fear and sadness steering: the target emo-tion is counted as a hit if it appears among the three highest-probability classes predicted by the emo-tion classifier. STS consistently outperforms SBS at matched intervention ratios across both models and both emotions. For fear on LLaMA 3.1-8B, STS at p=0 .5 achieves a hit rate of approximately 0.73, surpassing the prompting baseline (0.44) by a wide margin and approaching full steering (0.98). On Gemma-2 2B, the same ordering holds: STS crosses the prompting baseline at lower interven-tion ratios than either SBS variant. These results confirm that the sparse steering findings reported on toxicity reduction in the main paper generalize to emotion elicitation under a classification-based evaluation metric. 12 5 10 15 20 25 30 35 40 45 50 
+
+0.18 
+
+0.20 
+
+0.23 
+
+0.25 
+
+0.28 
+
+> Mean Tox. Reduction
+
+Toxicity Reduction 
+
+5 10 15 20 25 30 35 40 45 
+
+0.10 
+
+0.20 
+
+0.30 
+
+> Mean Prob. Gain
+
+Fear Steering 
+
+5 10 15 20 25 30 35 40 45 
+
+0.05 
+
+0.10 
+
+0.15 
+
+0.20 
+
+0.25 
+
+> Mean Prob. Gain
+
+Sadness Steering 
+
+5 10 15 20 25 30 35 40 45 50 
+
+20 
+
+25 
+
+30 
+
+35 
+
+> Mean Perplexity
+
+5 10 15 20 25 30 35 40 45 
+
+22 
+
+24 
+
+26 
+
+28 
+
+30 
+
+32 
+
+> Mean Perplexity
+
+5 10 15 20 25 30 35 40 45 
+
+20 
+
+25 
+
+30 
+
+35 
+
+40 
+
+45 
+
+> Mean Perplexity
+
+5 10 15 20 25 30 35 40 45 50 
+
+Steering Magnitude 
+
+0.000 
+
+0.010 
+
+0.020 
+
+0.030 
+
+0.040 
+
+0.050 
+
+> Repetition Score
+
+5 10 15 20 25 30 35 40 45 
+
+Steering Magnitude 
+
+0.000 
+
+0.010 
+
+0.020 
+
+0.030 
+
+0.040 
+
+0.050 
+
+> Repetition Score
+
+5 10 15 20 25 30 35 40 45 
+
+Steering Magnitude 
+
+0.000 
+
+0.020 
+
+0.040 
+
+0.060 
+
+0.080 
+
+> Repetition Score
+
+Steering Metric Perplexity Rep-3 Rep-4 Figure 3: Steering magnitude ( α) sweep for Gemma-2 2B under full intervention ( p=1 ). Columns correspond to toxicity reduction, fear steering, and sadness steering. Top row: steering effectiveness (higher is better). Middle row: perplexity. Bottom row: repetition scores (Rep-3, Rep-4). Steering effectiveness increases with α but saturates, while perplexity and repetition degrade sharply beyond the selected operating point, indicating loss of on-manifold generation. 
+
+13 1 2 3 4 5
+
+0.26 
+
+0.27 
+
+0.28 
+
+0.29 
+
+0.30 
+
+0.31 
+
+> Mean Tox. Reduction
+
+Toxicity Reduction 
+
+1 2 3 4
+
+0.20 
+
+0.40 
+
+0.60 
+
+0.80 
+
+> Mean Prob. Gain
+
+Fear Steering 
+
+1 2 3 4
+
+0.20 
+
+0.40 
+
+0.60 
+
+> Mean Prob. Gain
+
+Sadness Steering 
+
+1 2 3 4 5
+
+0
+
+100 
+
+200 
+
+300 
+
+> Mean Perplexity
+
+1 2 3 4
+
+20 
+
+40 
+
+60 
+
+> Mean Perplexity
+
+1 2 3 4
+
+10 
+
+20 
+
+30 
+
+40 
+
+50 
+
+> Mean Perplexity
+
+1 2 3 4 5
+
+Steering Magnitude 
+
+0.020 
+
+0.040 
+
+0.060 
+
+0.080 
+
+0.100 
+
+> Repetition Score
+
+1 2 3 4
+
+Steering Magnitude 
+
+0.000 
+
+0.100 
+
+0.200 
+
+0.300 
+
+0.400 
+
+> Repetition Score
+
+1 2 3 4
+
+Steering Magnitude 
+
+0.000 
+
+0.025 
+
+0.050 
+
+0.075 
+
+0.100 
+
+0.125 
+
+> Repetition Score
+
+Steering Metric Perplexity Rep-3 Rep-4 Figure 4: Steering magnitude ( α) sweep for LLaMA 3.1-8B under full intervention ( p=1 ). Columns correspond to toxicity reduction, fear steering, and sadness steering. Top row: steering effectiveness. Middle row: perplexity. 
+
+Bottom row: repetition scores. 
+
+14 0.1 0.3 0.5 0.7 0.9 
+
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> LLaMA3.1  8B
+
+Fear     
+
+> 0.1 0.3 0.5 0.7 0.9
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+
+Sadness     
+
+> 0.1 0.3 0.5 0.7 0.9
+
+Intervention Ratio 
+
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> Gemma2  2B
+
+Fear     
+
+> 0.1 0.3 0.5 0.7 0.9
+
+Intervention Ratio 
+
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+
+Sadness 
+
+Mean Top-3 Hit Rate   
+
+> Mean Top-3 Hit Rate
+> No Steering
+> Prompting
+> Full Steering
+> STS
+> SBS (W=32)
+> SBS (W=64)
+
+Figure 5: Mean top-3 hit rate for emotion steering (fear, sadness) across intervention ratios. The target emotion is considered a hit if it appears in the top-3 predicted classes by the emotion classifier. Top row: LLaMA 3.1-8B. Bottom row: Gemma-2 2B. Dashed horizontal lines denote static baselines. STS consistently outperforms SBS at matched ratios, confirming that sparse steering generalizes to emotion elicitation. 
+
+15

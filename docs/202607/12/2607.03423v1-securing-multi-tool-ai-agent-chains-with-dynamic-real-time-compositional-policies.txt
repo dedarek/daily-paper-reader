@@ -1,0 +1,489 @@
+Title: Securing Multi-Tool AI Agent Chains With Dynamic, Real-Time Compositional Policies
+
+URL Source: https://arxiv.org/pdf/2607.03423v1
+
+Published Time: Tue, 07 Jul 2026 01:29:30 GMT
+
+Number of Pages: 13
+
+Markdown Content:
+# Securing Multi-Tool AI Agent Chains With Dynamic, Real-Time Compositional Policies 
+
+Chris Schneider 1 Kriti Faujdar 2 Philipp Schoenegger 1 Ben Bariach 11Microsoft AI 2Microsoft 
+
+# Abstract 
+
+Modern AI agent implementations such as frontier cod-ing agents chain multiple tools at runtime that create a security surface that per-tool guardrails are unable to address, as individually permitted tools can violate or-ganizational policies when composed. We propose the Dynamic Security Control Compositor (DSCC), a two-phase approach to compositional security for multi-tool agent chains. In Phase 1, at session checkout, a Most Restrictive Set (MRS) algorithm composes per-tool secu-rity policies into a single effective policy for the full chain with a formal monotonicity invariant that extending a chain can only tighten the result, blocking incompatible combinations before any tool executes. Outputs of any tool call propagate their classification constraints into a session-level taint state, so subsequent invocations must satisfy the most restrictive classification constraints seen so far on the chain. In Phase 2, at runtime, the system tracks the sensitivity of data the agent touches through a monotonic taint state and revokes the session if the accumulated exposure would make a subsequent tool call a policy violation. Together, these two phases provide de-fense in depth, where static composition prevents unsafe chains from starting, and runtime taint tracking catches violations that emerge from the specific data used. We then provide a reference implementation on a catalog of 32 tools governed by 16 NIST SP 800-53 aligned policies and evaluate it under two composition modes. In the default clearance mode, permitted combinations are par-titioned into classification-level clusters, blocking 79.2% of policy pairs and 95.5% of triples. The alternative 
+
+taint mode admits mixed-classification chains within the exfiltration boundary, blocking 42.5% and 60.5% respec-tively. Lastly, we discuss the governance implications for organizations deploying multi-tool agents, including the utility-security tradeoff and the changes needed to operationalize chain-aware policies. 
+
+# 1 Introduction 
+
+Large language model agents can invoke external tools, ranging from reading files and calling APIs to sending messages and executing code. This has been shown by Schick et al. [ 1] to be able to be done autonomously with models as early as GPT-J. Later, Yao et al. [ 2 ]then demonstrated that interleaving reasoning with tool actions substantially improves metrics such as hallucina-tion rates, error propagation, and interpretable output, leading to improved performance and applicability. This has contributed to the widespread application of LLMs across a large set of knowledge work due to the added ca-pabilities and reduced error rates. Subsequent work then scaled tool use to thousands of real-world APIs [ 3 , 4], leading to modern deployed agentic coding tools such as GitHub Copilot [ 5], Claude Code [ 6], and Codex [ 7], which give LLMs direct access to a substantial number of file systems, shells, and web APIs, making multi-tool composition a standard mode of operation in pursuit of the user goals, which often include a wide range of some-times low-level computer operations. Moreover, as agent teams, cross-ecosystem invocations, and agent-swarms become more common-place and capabilities increase even further, the total number of tools and tool chains used in each session is likely to increase dramatically. We argue that this creates a security surface that current safeguards are not well designed to address and that is likely to become more pressing in the near fu-ture. Consider a simple example: a file-reading tool and an HTTP client each pass their individual security checks, but when composed, an agent can read an in-ternal document and POST its contents to an external server. Neither tool is prohibited on its own, with the violation only emerging from their combination. Nor is the risk limited to data exfiltration, with a database query tool handling Confidential data (requiring AC-6 Least Privilege) and a planning tool classified as Internal (carrying only AC-3 Access Enforcement) each operating correctly in isolation. However, composing them means the planning tool would process Confidential data with-out the access controls mandated at that classification level, even though no data ever leaves the organization. The context is the component that necessitates security policy alignment versus the tool. Scaled up to multiple sub-agents and large agent teams across multiple ses-sions, the combinations of tools are likely to result in severe security risks. Recent work shows that this type of risk is already materializing. For example, Li et al. [ 8] formalize what they call Sequential Tool Attack Chaining (STAC), con-structing multi-turn attack sequences in which each individual attack prompt has less than 2% harmfulness, yet the composed sequence achieves an attack success rate exceeding 90% across eight LLMs spanning four model families, with their strongest defense reducing this by only 28.8%. Moreover, Wu et al. [ 9 ] apply greybox fuzzing to 20 open-source agent applications covering 998 tools, finding that 302 of 365 confirmed vulnerabil-ities (82.7%) require multi-tool execution to manifest, with only 63 being single-tool issues, resulting in an almost 5 times higher incidence of multi-tool vulnera-1                       
+
+> arXiv:2607.03423v1 [cs.CR] 3 Jul 2026 PHASE 1: SESSION CHECKOUT PHASE 2: RUNTIME EXECUTION
+> Agent requests tools T1, . . . , T n
+> Policy Store
+> per-tool: controls, data flow, network zones, TTL
+> MRS ENGINE mode :Clearance |Taint
+> 1. Compatibility check (control conflicts, satisfiability)
+> 2. Control resolution Leff (c) = max i(level i(c))
+> 3. Data flow composition (classification check, prohibition, zones)
+> 4. DENY enforcement (composed flow vs. deny-level controls)
+> →Effective Control Set
+> Session created Blocked
+> valid invalid
+> Agent calls tool Tion resource r
+> Session Guard
+> active, not expired, tool in checked-out set
+> Resource Classifier
+> look up rin label catalog →classification label
+> Taint Tracker
+> update session high-water mark (sticky prohibit-external)
+> enforcement checks (§3)
+> Tool executes Session revoked
+> no yes
+> next tool call
+
+Figure 1: DSCC architecture overview. Phase 1 (left) uses the MRS composition engine, operating in one of two modes (Clearance or Taint ), to compose per-tool policies into a single Effective Control Set at session checkout. 
+
+bilities. This suggests that multi-tool use is a frequent cause of vulnerabilities in current implementations, fur-ther strengthening the central security problem of these combinatorial risks. A growing body of work on the Model Context Pro-tocol (MCP) also corroborates this pattern, document-ing cross-server memory exfiltration [ 10 ], data leakage via implicit prompt injection that evades output-based safety checks in 95% of cases [ 11 ], implicit tool poisoning that manipulates agents into misusing legitimate high-privilege tools [ 12 ], tool poisoning as the most prevalent client-side vulnerability under STRIDE/DREAD analy-sis of Huang et al. [13 ], and over 2,000 attack instances across 10 scenarios and 12 attack categories [ 14 ]. As agents often autonomously interact with MCPs directly, this directly interlinks with the above risk surface. While much of this recent work targets MCP specifi-cally, the underlying vulnerability is protocol-agnostic, with any system in which an agent sequences tool calls, whether through OpenAI function calling [ 15 ], LangChain [ 16 ], AutoGen [ 17 ], or bespoke orchestration, is facing the same compositional risk whenever per-tool policies are evaluated in isolation. In general, stochastic software such as LLM agents can invoke arbitrary tools that require per-invocation authorization, which deter-mines whether a single call satisfies the policy active at that specific point. Additionally, they also require chain-level composition, which intersects the policies of every tool traversed by the agent and rejects any path that has an effective permission which exceeds that in-tersection. Many existing frameworks implement the first and largely omit the second, which is exactly the compositional gap this paper addresses. In this paper, we propose a solution to the composi-tional authorization gap in agent tool-chains by making four distinct contributions. To remediate these issues, we introduce the Dynamic Security Control Composi-tor (DSCC), a two-phase architecture for compositional security of multi-tool agent chains (Figure 1). DSCC treats the agent as an untrusted stochastic caller whose tool selections cannot be predicted at session time, mak-ing the threat not a specific adversary but the emergent policy violations that arise when individually-authorized tool calls compose into sequences whose aggregate ef-fective permissions exceed what any constituent policy intended to grant. Our approach includes the requirement that every tool carry a standardized security policy encoding its data classification, permitted data flows, as well as ap-plicable regulatory controls, resulting in the common representation required for composition. We then define the Most Restrictive Set (MRS) algorithm as the com-position operator at the core of DSCC’s Phase 1, which takes the per-tool policies of any chain and produces a single effective policy, which satisfies a monotonicity invariant such that extending a chain can only tighten the result but never relax it. We took the basic idea of ordered security labels from Bell–LaPadula’s security model [ 18 ] and adapted it for agent chains by treating agents as control subjects, enforcing monotonic tight-ening of policies as the chain grows and introducing a compositional algebra for multi-tool policy merging (novel to this framework). Our approach also removes trusted-subject exemptions. Specifically, our proposed Phase 1 applies this compo-sition at session checkout, where, in its default clearance mode, it rejects incompatible chains before they execute. In its other mode, the alternative taint mode, it permits mixed-classification chains while propagating the chain’s high-water mark forward as session state. Phase 2 then extends the same taint state at runtime, where it re-vokes any given session session before any subsequent call would breach it. Together, this static composition prevents unsafe chains from starting, while runtime taint tracking catches violations that emerge from the specific data encountered during an agent’s runtime. We evaluate this approach through a reference .NET 9 implementation over 32 tools governed by 16 NIST SP 800-53 aligned policies. We find that under the clearance mode, a total of 79.2%/95.5% of policy pairs/triples are blocked, while under the taint mode it is 42.5%/60.5%, in line with our 2theoretical expectations. Lastly, we discuss the practical governance implications of compositional security for multi-tool agent deployments and what organizational changes are needed to operationalize it. 
+
+# 2 The MRS Algorithm 
+
+This section presents the Most Restrictive Set (MRS) algorithm, which powers Phase 1 of the DSCC architec-ture. First, we define the policy model each tool carries (§2.1). Second, we present the four-step composition procedure that produces a single effective control set for the chain (§2.2). Third, we state the monotonicity invariant guaranteeing that adding a tool can never relax the result (§2.3). Jointly, these components ensure that any tool chain is either governed by a single policy at least as restrictive as each individual tool’s, or rejected with a clear explanation before execution begins. 
+
+2.1 Policy Model 
+
+In order for the Most Restrictive Set (MRS) algorithm to function, it requires a common representation of what each tool is permitted to do in the same format. This al-lows the constraints from different tools to be compared and combined mechanically in a straightforward manner. Most agent frameworks today define tools primarily by their functional capability (e.g., ’a web search tool’), with limited or no security metadata attached. The proposed DSCC solution directly shapes this layer, such that every tool registered in the system carries a security policy authored by the tool developer or organizational security team, encoding what data the tool may touch, where it may send that data, and which NIST SP 800-53 controls apply to its operation. Definition 1 specifies the six components of this policy. 
+
+Definition 1 (Tool Policy) . A tool policy Pi for tool 
+
+Ti is the six-tuple 
+
+Pi = (Bi, C i, ϕ i, d i, Z i, τ i
+
+).                                   
+
+> Table 1: Components of the tool-policy six-tuple Pi(Defini-tion 1).
+> Symbol Component Definition
+> BiControl bindings Pairs (c, l )binding a NIST control c(e.g. AC-4) to l∈{Allow ,Restrict ,Deny }.
+> CiData-flow classi-fication Highest sensitivity han-dled (from Public up to
+> Restricted ).
+> ϕiTransmission prohibition Flag in {0,1};if 1,Ti’s data must stay within the boundary.
+> diFlow direction Sends out, receives, both, or internal-only.
+> ZiPermitted zones Zones Timay run in (corporate-vpn ,dmz , . . . ); any if unset.
+> τiMaximum session TTL Longest session lifetime, in hours (default 48).
+
+The first three components capture what the tool does with data. First, control bindings tie NIST controls to restriction levels that determine whether an operation is permitted, audited, or blocked. Second, the classification level records the highest sensitivity of data the tool handles. Third, the prohibition flag marks whether that data must stay within the organizational boundary. The restriction and classification levels are both totally ordered, which lets the composition algorithm select the most restrictive value mechanically. The remaining three components capture where and how long the tool operates. First, the flow direction declaring the tool’s data movement capability using com-binable flags. Second, the permitted zones constraining which network segments it may run in. Third, (vi) the TTL setting an upper bound on session lifetime. The policy model requires that, first, a tool Ti is 
+
+outbound if its flow direction includes the outbound flag but not the internal-only flag (as the composition algorithm uses this predicate to identify tools capable of sending data outside the organizational boundary) and ,second, controls not mentioned in a tool’s policy are simply absent from that tool’s binding set, as they do not default to Allow or Deny and do not participate in control resolution for that tool. 
+
+2.2 Composition Algorithm 
+
+This section describes how policies from multiple tools are composed into a single effective control set. Given a chain of tools T1, . . . , T n with policies P1, . . . , P n, the MRS algorithm produces either an effective control set 
+
+E that governs the entire session or a rejection with an attributed reason that clearly identifies which poli-cies conflict and why. This approach proceeds in four steps, each of which can independently reject the chain: compatibility check, control resolution, data-flow com-position, and DENY enforcement. 
+
+Step 1: Compatibility check. Before computing anything, the first step of this algorithm verifies that the requested tool set is not internally contradictory. Some policy combinations are unsatisfiable by themselves, re-gardless of composition order. For example, if one policy prohibits external transmission ( ϕi = 1 ) while another explicitly permits operation on the public internet, the two are contradictory, as one tool requires data to stay internal while another sends it externally. Step 1 also delegates an early data-flow satisfiability check to the composer (Step 3). If either check fails, the chain is rejected before composition begins. 1
+
+Step 2: Control resolution. Next, for each NIST control c appearing in any policy in the chain, the algo-rithm selects the most restrictive properties across all tools that declare it. Writing li(c) for the restriction properties that tool Ti’s policy assigns to control c:
+
+Leff (c) = max      
+
+> i:Tideclares c
+
+li(c) (1) 
+
+> 1In deployments, chains can become too long such that patho-logical compositions become common. In these cases, operators may want to decompose the workflow into smaller sub-chains, each independently composed and checked out. This narrows the effec-tive control set per segment and aligns with the modular-design principle of small, auditable units.
+
+3Table 2: Domains used in tool policies (Definition 1). 
+
+Domain Ordering / Semantics Interpretation 
+
+Restriction level Allow < Restrict < Deny Permissive → prohibitive Classification level Public < Internal < Confidential < Restricted Low → high sensitivity Flow direction Flags: Inbound , Outbound , Bidirectional , InternalOnly Data movement capability  
+
+> Note. Restriction levels and classification levels are ordered from least to most restrictive such that any two values can be compared, while flow directions are combinable flags describing data movement capability, not an ordered scale.
+
+Table 3: MRS Composition 
+
+Require: Policies P1, . . . , P n for tools T1, . . . , T n; composition mode mode ∈{Clearance , Taint } (default: Clearance ); optional initial classification C0
+
+Ensure: Effective control set E or Reject  
+
+> 1:
+
+Step 1: Check structural compatibility of policy set  
+
+> 2:
+
+Step 2: For each control c declared by any tool: Leff (c) ← max i li(c) 
+
+> 3:
+
+Step 3: Compose data flow:  
+
+> 4:
+
+Ceff ← max (C0, max i Ci
+
+) ▷ high-water mark  
+
+> 5:
+
+if mode = Clearance : Reject if any Ci < C eff ▷ clearance check  
+
+> 6:
+
+ϕeff ← max i ϕi ▷ sticky prohibition  
+
+> 7:
+
+Reject if ϕeff = 1 and chain contains outbound tools  
+
+> 8:
+
+Reject if Ceff ≥ Confidential and chain contains outbound tools  
+
+> 9:
+
+Zeff ← ⋂ 
+
+> i
+
+Zi ▷ zone intersection  
+
+> 10:
+
+Reject if Zeff = ∅ 
+
+> 11:
+
+Step 4: For each boundary or flow control c at Deny : reject if composed flow violates c 
+
+> 12:
+
+τeff ← min i τi 
+
+> 13:
+
+return E = ({(c, L eff (c)) }, C eff , ϕ eff , Z eff , τ eff 
+
+)                          
+
+> Notation. Ti: a tool in the chain. Pi: the security policy attached to Ti(Definition 1). c: a NIST SP 800-53 control identifier (e.g., AC-4, SC-7). li(c): the restriction level ( Allow <Restrict <Deny ) that Ti’s policy assigns to control c.Leff (c): the effective (most restrictive) level of control cacross the chain. Ci: data-flow classification ( Public <Internal <Confidential <Restricted ). ϕi: transmission prohibition flag (1 = data must stay internal). Zi: set of permitted network zones;
+
+⋂           
+
+> iZiis their intersection (zones common to all tools).
+> τi: maximum session lifetime. E: the resulting effective control set for the chain. C0: optional initial classification of the input data (default: Public ); seeds the high-water mark before any tool contributes. mode : composition mode ( Clearance or Taint ); governs whether the clearance check in Step 3 is enforced. Subscript eff denotes the composed value for the full chain.
+
+A single Deny from any tool in the chain overrides, as the chain as a whole must satisfy the strictest individual requirement. This contrasts with a majority vote that would allow permissive tools to dilute a restrictive one. The resolved control record then also stores which policy imposed the winning level, providing attribution for audit and incident response. 
+
+Step 3: Data-flow composition. This step com-poses the data-flow constraints from all tools in the chain, computing five properties that together determine how data may flow through the session and whether that flow is permitted. 
+
+Classification high-water mark. The effective classifi-cation for the session is set by whichever tool handles the most sensitive data, taking the maximum classification level across all tools in the chain: 
+
+Ceff = max (C0, max  
+
+> i
+
+Ci
+
+) (2) This value can only increase as tools are added to the chain. For example, if one tool handles Confidential 
+
+data, the entire session must be governed at that classi-fication level, because the agent may route that tool’s output to any subsequent tool. Equivalently, classifi-cation sticks with the session through the chain. We compute this up front as the high-water mark, and §3 shows how the session taint state updates it as the chain runs. The high-water mark is seeded from C0 with the classification of the input data if known or, if not available, starts at Public .
+
+Clearance check. MRS supports two composition modes that differ only in whether the clearance check is enforced. In clearance mode (the default), tools require a 4classification level at least as high as Ceff , otherwise the chain is rejected because those tools are not cleared to handle data at the session’s sensitivity level. For exam-ple, a Public -classified HTTP client cannot participate in a chain that touches Confidential data. In taint mode , the optional setting, the clearance check is skipped. Classification is treated as a sticky prop-erty of the data rather than a property the tool must be pre-authorized for. For example, a Public -classified HTTP client may process Confidential data, provided the output remains classified as Confidential (the up-ward ratchet still applies). All other checks—prohibition propagation, the classification boundary rule, and zone intersection—remain in force irrespective of which mode is chosen. In general, we argue that the taint mode is suited to mixed-classification pipelines where individual tools are not independently credentialed for the chain’s peak sensitivity, but organizational controls do govern the overal pipeline. 
+
+Prohibition propagation. Once any tool in the chain prohibits external transmission, that prohibition binds the entire session and cannot be lifted by subsequent tools: 
+
+ϕeff = max  
+
+> i
+
+ϕi (3) For example, if a file reader prohibits external transmis-sion, that prohibition propagates to the entire session, blocking any subsequent outbound tool from sending the data externally. 
+
+Classification boundary rule. Even without an ex-plicit prohibition flag, any chain carrying data classi-fied at Confidential or above that also contains an external-facing tool is rejected. This provides a safety floor, ensuring that sensitive data must not reach ex-ternal tools even if no individual policy explicitly sets 
+
+ϕi = 1 .
+
+Network zone intersection. Each tool declares which network zones it may operate in, and the session is restricted to zones that every tool permits: 
+
+Zeff = ⋂
+
+> i
+
+Zi (4) where a null Zi (unrestricted) is treated as the universal set. If Zeff = ∅, no network zone satisfies all tools simultaneously and the chain is rejected. Zone intersection is also the one composition operator that can produce failures invisible to pairwise analysis. For instance, consider three tools with Z1 = {A, B },
+
+Z2 = {B, C }, Z3 = {A, C }, where every pair shares a zone but Z1 ∩ Z2 ∩ Z3 = ∅, so the triple is rejected even though all pairs pass. Because of this, our architecture composes over the full tool set rather than checking pairs. 2
+
+If any of the checks in this step fails, the composer returns a rejection identifying the conflicting tools and the NIST control that was violated.   
+
+> 2For the other operators (maximum, minimum, Boolean OR), the pairwise outcome already determines the n-way outcome be-cause the “non-violating” predicate is preserved under repeated application. For zone intersection, all operators are equally asso-ciative, but pairwise non-emptiness does not imply n-way non-emptiness, which is what makes it the structural source of pairwise-invisible failures.
+
+Step 4: DENY enforcement. Steps 2 and 3 can each independently reject a chain, but some violations require information from both. During the last step, Step 4 cross-checks the resolved controls against the composed data flow. For each control at Deny level in the resolved set, the algorithm checks whether the composed data flow would violate it. Specifically, if the chain contains external-facing tools and the effective classification exceeds Public , any control at Deny level that governs data boundary crossing or information flow triggers rejection. Note that a chain that survived Steps 1–3 can still fail here. For instance, two tools might have a boundary control at Restrict , but a third tool escalates it to 
+
+Deny via Step 2. Only at Step 4, when the DENY-level control is checked against the composed data flow, does the violation surface. If all four steps succeed, the effective session lifetime is computed as τeff = min i τi, inheriting the shortest TTL of any constituent tool. The resulting effective control set E then governs the session for its duration. Table 3 summarizes the full computation. 
+
+2.3 Monotonicity Invariant 
+
+The composition operators defined in §2.2 share a struc-tural property, which is that because each uses maxi-mum, minimum, or intersection, extending a chain can never relax the effective control set. We state this as a formal invariant below. 
+
+Invariant 1 (Monotonicity) . Let En be the effective control set for a chain of n tools ⟨T1, . . . , T n⟩, and let 
+
+En+1 be the effective control set after appending tool 
+
+Tn+1 . Then En+1 is at least as restrictive as En on every dimension: 
+
+Table 4: Monotonicity of the effective control set on each policy dimension under chain extension (Invariant 1). 
+
+Dimension Dir. Relation ( n → n+1 )
+
+Restriction level Leff ↑ L(n+1) eff (c) ≥ L(n)eff (c)
+
+Classification Ceff ↑ C(n+1) eff ≥ C(n)eff 
+
+Network zones Zeff ↓ Z(n+1) eff ⊆ Z(n)eff 
+
+Session TTL τeff ↓ τ (n+1) eff ≤ τ (n)eff 
+
+Prohibition ϕeff ↑ ϕ(n+1) eff ≥ ϕ(n)eff     
+
+> Note. In this table, the arrows up/down indicate the direction each quantity may move. The superscript (n)denotes the chain of length n.
+
+This means that based on this, organizations can make decisions about tool additions in a modular manner. That is, if a chain is currently approved, and because adding a tool can only either preserve of tighten the effective control set), the decision-making is focused on the additional step as opposed to the full chain. As such, any reviewer need only assess whether the new tool’s contribution is acceptable rather than re-auditing the entire chain from scratch. In Section 3, we show that this property also extends beyond static composition, where monotonicity carries over to runtime resource accesses, forming the basis for Phase 2 enforcement. 53 Runtime Enforcement Model 
+
+Phase 1 composes tool policies as declared, but it oper-ates only on the policies themselves, not on the values the agents will read, the sequence of calls it will make, or the accumulated exposure across these calls. This is because any given agent may choose resources dy-namically based on its reasoning and input from other agents, both of which introduce irreducible variability into the workflow. For example, a coding agent might open whichever files match a search query that have been uploaded recently, or call whichever API endpoint another agent recommended, none of which can always (or almost ever) be known at session checkout. To address this gap, we define a runtime enforce-ment model that powers Phase 2, monitoring what the agent actually touches and intervening when the ac-cumulated data sensitivity would make a subsequent tool call a policy violation. For example, a file reader authorized for Confidential data might only open 
+
+Public documents in one session, or it might open a 
+
+Restricted document that exceeds even its own de-clared level. Phase 1 cannot distinguish these cases, but Phase 2 can, because it resolves each resource’s classifica-tion at access time. The model has four components: (i) a resource classification scheme that labels data at access time, (ii) a session taint state that accumulates sensitiv-ity monotonically, (iii) a set of enforcement checks that trigger revocation when a policy violation is imminent, and (iv) a monotonicity extension that formally connects these runtime guarantees to the static invariant from §2.3. 
+
+Resource classification. The first component of Phase 2 assigns a sensitivity label to each piece of data the agent touches. Every resource in the system then carries a classification label drawn from the same or-dered set used for tool policies ( Public < Internal <
+
+Confidential < Restricted ), along with an op-tional transmission prohibition flag. This then results in a set-up where when an agent invokes a tool on a specific resource, the system resolves that resource’s label from a classification catalog at access time (though note that the resolved classification may exceed the tool’s declared level, which would evade Phase 1’s set-up). 
+
+Session taint state. The second component of Phase 2 tracks how sensitive the session has become as the agent acts over time. To do this, the session maintains a taint record S = ( Cs, ϕ s): a high-water classification Cs that can only increase, and a sticky prohibition flag ϕs that, once set, cannot be cleared. On each resource access with resolved classification Cr and prohibition flag ϕr , the taint updates as: 
+
+Cs ← max( Cs, C r ), ϕs ← max( ϕs, ϕ r ) (5) These are the same monotonic operators used in static composition (Equations 2 and 3), now applied to the actual resources the agent touches rather than to policy declarations. As before, once elevated, neither field can be lowered for the remainder of the session. 
+
+Enforcement checks. The next step outlines what to do with the accumulated exposure. Before each tool execution, the system evaluates three guards, any one of which can revoke the session. All three target the same class of violation (i.e., data crossing the organiza-tional boundary when policy forbids it) but they detect it from different vantage points: First, if the session’s taint record carries a transmission prohibition and the requested tool is outbound, second, if the resource be-ing accessed in the current call itself prohibits external transmission and the chain includes outbound tools, or third, if the composed data flow from Phase 1 already prohibits external transmission and the current tool is outbound. When any of these guards fire, the system creates an attributed detection record identifying the violated NIST control, revokes the session immediately, and permits no further tool executions. 
+
+Monotonicity extension. The fourth component ties these runtime mechanisms back to the formal guarantee from Phase 1: Because the taint update operators in Equation 5 mirror the composition operators in Invari-ant 1, the runtime model inherits the same structural property, where each resource access can only tighten the session’s constraints but can never relax them. To-gether with Phase 1, this creates a defense-in-depth architecture in which the security boundary can only become more restrictive over the lifetime of a session. Section 4 describes the reference implementation that realizes both phases and characterizes their behavior on a representative tool catalog. 
+
+# 4 Reference Implementation and Characterization 
+
+This section describes a reference implementation that realizes both phases of the architecture from Figure 1 and characterizes their behavior on a representative tool catalog. We first describe the system’s implementation (§4.1), then specify the tool catalog and enumeration methodology (§4.2), report Phase 1’s static composi-tion results (§4.3), and demonstrate Phase 2’s runtime enforcement on three illustrative scenarios (Figure 3, §4.4). 
+
+4.1 System Overview 
+
+We built a reference implementation in C# that in-tegrates both phases into a single system. Phase 1 implements the MRS composition algorithm from §2.2, either issuing a time-limited session token or rejecting the request with an attributed explanation. Phase 2 implements the enforcement model from §3, classifying resources at access time, updating the session’s taint state, and revoking the session if any of the three guards fire. The policy store draws on 11 NIST SP 800-53 controls spanning five control families (AC, SC, AU, SI, MP), giving the composition engine a shared vocabulary of enforceable constraints across the catalog. 
+
+4.2 Experimental Setup 
+
+To characterize Phase 1’s static composition, we enumer-ate all policy combinations over a realistic tool catalog and measure how often MRS blocks them and why. Note 6that Phase 2’s runtime enforcement is demonstrated sep-arately in §4.4. We first describe the tool catalog, then outline the distribution of policies across classification levels, and finally describe the enumeration methodol-ogy. 
+
+Tool catalog. Our test environment contains 32 tools drawn from two distinct categories. Ten infrastructure tools are used to model common organizational capabili-ties (file readers, database query engines, HTTP clients, messaging endpoints, a code sandbox, a VPN gateway, a wiki reader, a cloud upload service, and an air-gapped lab), while twenty-two agent tools mirror the tool set of a production coding agent (file system operations, shell execution, web access, task orchestration, planning, and scheduling). Each tool is bound to exactly one of 16 security policies, though multiple tools may share a policy when their security posture is identical. 
+
+Policy distribution. The 16 policies span all four classification levels: Six operate at Confidential with internal-only flow (file reading, database access, code execution, VPN, file writing, agent orchestration), four are classified as Internal with internal-only flow (wiki reading, planning, worktree management, scheduling), three handle Public data with outbound flow (HTTP, Slack, cloud upload), and two govern Restricted data with internal-only flow and explicit transmission pro-hibition (bash execution, air-gapped lab). One policy, email, is classified as Internal but with outbound flow, making it the only policy that combines an internal classification with external-facing capability. 
+
+Enumeration. Lastly, because MRS operates on poli-cies rather than individual tools, we report results pri-marily at the policy level. The 16 policies yield (16 2
+
+) =120 unordered pairwise combinations and (16 3
+
+) = 560 
+
+three-way combinations. For completeness, we also com-pute all 32 × 31 = 992 directed tool-level pairs and all (32 3
+
+) = 4 ,960 tool-level triples. Each combination is evaluated using the same composition logic described in §2.2. 
+
+4.3 Results 
+
+Phase 1 blocks the majority of multi-policy composi-tions at session checkout, with the block rate depending on which composition mode (§2.2) is active. Clearance mode is the default and applies in regulated deployments where every tool must be cleared to the chain’s high-water mark before participating, while taint mode is the alternative posture for mixed-classification pipelines where individual tools are not independently creden-tialed for the chain’s peak sensitivity but organizational controls govern the pipeline as a whole. Table 5 reports both modes across all pairwise and three-way combi-nations of the 16 policies and 32 tools in our catalog. Under clearance, MRS blocks 79.2% of policy pairs and 95.5% of triples; under taint, the same combinations block at 42.5% and 60.5% respectively (see Figure 2). The block rate is higher at chain length 3 than at chain length 2 in both modes, consistent with the monotonic-ity invariant of §2.3. The lower tool-level rate relative to policy-level reflects that many tools share policies and same-policy pairs are always permitted. 
+
+Rejection mechanisms. Under clearance mode, two mechanisms are responsible for all 95 blocked pairs. The clearance check in Step 3 is responsible for 91 (95.8%): whenever two policies operate at different classification levels, the lower-classified policy is not authorized to handle data at the chain’s high-water mark, and the composition is rejected. The remaining 4 pairs (4.2%) are blocked by DENY-level boundary enforcement in Step 4, all involving the email sender paired with an In-ternal /internal-only policy. Here, both policies share a classification level, so the clearance check passes, but the email policy introduces SC-7 (Boundary Protection) at Deny while making the chain external-facing, trigger-ing a boundary violation. The email policy is therefore incompatible with every other policy in the catalog. Under taint mode, the clearance check is gated off (§2.2), so the 51 blocked policy pairs are handled by the downstream data-flow and DENY-enforcement checks. In clearance mode, it eats almost all classification-boundary cases before downstream checks see them, while in taint mode those checks see the full rejection workload. 
+
+Cluster structure. Under clearance mode, the 25 permitted pairs partition into four classification-level clusters with no cross-cluster edges (Figure 2, left panel): 
+
+Confidential (6 policies, (62
+
+) = 15 pairs), Internal 
+
+(4 policies, 6 pairs), Public (3 policies, 3 pairs), and 
+
+Restricted (2 policies, 1 pair). The same pattern holds at chain length 3, where all 25 permitted triples are drawn from a single cluster ( 20 + 4 + 1 + 0 ). This structure follows directly from the clearance check: any pair spanning two classification levels is rejected, so composition is permitted only when all policies share the same level. The observed block rates are therefore a function of how policies are distributed across levels in this catalog, not an intrinsic property of the algorithm. Thus, what MRS guarantees structurally in clearance mode is that no cross-level composition is ever permitted, regardless of the distribution. Under taint mode, the upper three classes (Restricted , Confidential , Internal ) collapse into a single permitted region of 66 pairs (Fig-ure 2, right panel): 22 within-cluster pairs carry over from clearance ( 15 + 6 + 1 ) and 44 newly-permitted pairs span classes (12 Restricted ×Confidential ,8 Restricted ×Internal -non-email, 24 Confiden-tial ×Internal -non-email). The remaining 3 permit-ted pairs lie inside the Public cluster, unchanged from clearance. What survives in both modes is therefore exfiltration containment: data tainted above Public 
+
+cannot reach an outbound tool, whether or not the clearance check is enforced. 
+
+4.4 Runtime Enforcement 
+
+We demonstrate Phase 2 by walking through three sce-narios (Figure 3) that exercise the runtime enforcement model defined in §3. Unlike Phase 1, which straightfor-wardly allows exhaustive enumeration over a finite set 7Table 5: Phase 1 composition results under both modes (clearance default, taint alternative) across all policy and tool combinations. 
+
+Clearance (default) Taint Combination type Total Blocked Rate Blocked Rate 
+
+Policy pairs ( n = 2 ) 120 95 79.2% 51 42.5% Policy triples ( n = 3 ) 560 535 95.5% 339 60.5% Tool pairs (directed) 992 704 71.0% 322 32.5% Tool triples (undirected) 4,960 4,499 90.7% 2,350 47.4% 
+
+Note. Policy-level counts use unordered combinations ( (16 2
+
+) and (16 3
+
+)). Tool-level pairs are enumerated directionally ( 32 × 31 ), though the current composition operators are all commutative, so each undirected pair produces the same verdict in both directions. Airgap Lab     
+
+> Bash Exec
+> File Read
+> DB Query
+> Code Exec
+> VPN
+> File Write
+> Agent Orc
+> Wiki Read
+> Planning
+> Worktree
+> Scheduler
+> Email
+> HTTP
+> Slack
+> Cloud Upload
+> Airgap Lab
+> Bash Exec
+> File Read
+> DB Query
+> Code Exec
+> VPN
+> File Write
+> Agent Orc
+> Wiki Read
+> Planning
+> Worktree
+> Scheduler
+> Email
+> HTTP
+> Slack
+> Cloud Upload
+> Clearance mode
+> Permitted (25) Blocked (95) Self (diagonal)
+> Airgap Lab
+> Bash Exec
+> File Read
+> DB Query
+> Code Exec
+> VPN
+> File Write
+> Agent Orc
+> Wiki Read
+> Planning
+> Worktree
+> Scheduler
+> Email
+> HTTP
+> Slack
+> Cloud Upload
+> Airgap Lab
+> Bash Exec
+> File Read
+> DB Query
+> Code Exec
+> VPN
+> File Write
+> Agent Orc
+> Wiki Read
+> Planning
+> Worktree
+> Scheduler
+> Email
+> HTTP
+> Slack
+> Cloud Upload
+> Restricted
+> Confidential
+> Internal
+> Int.+Out
+> Public
+> Taint mode
+> Permitted (69) Blocked (51) Self (diagonal)
+
+Figure 2: Phase 1 composition under both modes (clearance and taint). Left: Clearance mode (default): permitted pairs partition strictly into the four classification-level clusters along the diagonal. Green cells are permitted compositions, red cells are blocked, gray diagonal cells are self-pairs. Right: Taint mode: the upper three classification levels ( Restricted ,
+
+Confidential , Internal ) collapse into a single permitted region as the clearance check is gated off and mixed-classification chains execute with session taint elevated to the chain’s high-water mark. 
+
+of policy combinations, Phase 2 depends on which re-sources an agent accesses at runtime, an input space that is almost unbounded and determined by the agent’s rea-soning as well as the input from sources the live internet. We therefore evaluate Phase 2 on a set of representative scenarios rather than exhaustive enumeration, select-ing cases that primarily exercise Guard 1 (session-taint 
+
+× outbound) and cover the spectrum from benign (no taint elevation) to immediate revocation. Each scenario below uses tools from the catalog in §4.2 and shows how the taint state (Equation 5) evolves with each resource access and when/why the enforcement checks fire. 
+
+Walkthrough. In Example 1, a research agent reads public documents, queries a shareable product catalog, runs an analysis script, and posts a summary to Slack. As every resource it touches is classified as Public , the session taint stays at Public throughout and the agent completes its activities normally. In Example 2, a data analysis agent starts the same way as the agent in Example 1 (reading public docu-ments and querying product pricing). However, the agent then queries employee salary data, which is classi-fied as Confidential with a transmission prohibition. The query itself succeeds because the database tool is cleared for Confidential data, but the session taint is now permanently elevated to Confidential . When the agent subsequently attempts a cloud upload, the system checks the accumulated taint against the tool. Because the cloud upload is an external-facing Public 
+
+tool, but the session now carries Confidential data with a transmission prohibition, any outbound operation is a policy violation. Thus, the upload is blocked and the session is revoked. In Example 3, an exfiltration agent reads a restricted legal memo on its very first tool call. The memo is clas-sified as Restricted with a transmission prohibition, so the session taint is elevated to Restricted immedi-8Session taint after each step                    
+
+> Example 1: Research agent Read public docs Query catalog Run analysis Post to Slack
+> Public Public Public Public
+> Completed
+> Example 2: Data analysis agent Read public docs Query pricing Query salaries Cloud upload
+> Public Public Confidential Confidential
+> Revoked
+> Example 3: Exfiltration agent Read legal memo Call external API
+> Restricted Restricted
+> Revoked
+> Tool executes successfully Tool executes, taint elevated Tool blocked, session revoked
+
+Figure 3: Phase 2 (runtime enforcement): These three illustrative scenarios show how the session taint state evolves during tool execution across different plausible agentic deployment scenarios. Each box represents a tool invocation, with the session’s accumulated classification level shown above in matching colour. Green boxes execute normally, orange boxes succeed but elevate the session taint to a higher classification, while red boxes are blocked because the accumulated taint makes the requested operation a policy violation. In Example 1, all resources are Public , so the session completes. In Example 2, querying employee salary data elevates the taint to Confidential with a transmission prohibition, so the subsequent cloud upload is blocked. In Example 3, reading a restricted legal memo immediately elevates the taint to 
+
+Restricted , and the next outbound call is blocked. 
+
+ately. On the next call, the agent attempts to reach an external API. The taint check fires instantly because the session carries Restricted data under a transmission prohibition and the tool is external-facing. As such, the call is blocked and the session is revoked. The difference between this and Example 2 is that there is no window of normal operation, as the very first resource access sets the taint to a level that makes any subsequent outbound call impossible. Overall, Phase 1 blocks incompatible tool chains be-fore execution through static composition (§2.2), with the clearance mode producing the strict cluster parti-tion reported above, and taint mode admitting mixed-classification chains while preserving the exfiltration boundary. Later, Phase 2 then catches violations that only become visible when the agent touches specific re-sources through runtime taint tracking (§3). Across both modes, we have a monotonicity invariant of §2.3 as well as an exfiltration containment that keeps tainted data away from outbound tools, regardless of which mode is active. The mode choice is therefore a deployment-time decision about how to balance compositional reach against per-tool credentialing as opposed to a security-versus-no-security tradeoff. We discuss whether this balance strikes the right tradeoff between security and utility, along with the organizational and lifecycle con-siderations it raises for adopters, in §5. 
+
+# 5 Discussion 
+
+The results in §4.3 show that DSCC produces a con-servative security boundary by adopting an effective chain control set that is the most restrictive across all constituent tool policies. This introduces a tradeoff: DSCC limits the generality of an agent whenever its requested tool chain spans an incompatible policy re-quirement. We argue that this tradeoff is desirable, as the alternative default of no compositional enforcement introduces the multi-tool vulnerabilities surveyed before. Furthermore, decomposition into smaller tool chains abates issues with functionality limitations. Finally, the single effective control set of MRS gives auditors one policy artifact per session rather than a collection of tool-specific policies with no cross-tool enforcement. The remainder of this section examines what follows from this design choice. First, we examine the utility-security tradeoff DSCC imposes, arguing that the cost of over-restriction is recoverable while the cost of under-restriction is not (§5.1). Second, we chart how DSCC policies should be organizationally authored, owned, and maintained over time (§5.2). Third, we turn to a specific advantage of DSCC in mitigating frontier risks of agentic systems, arguing that its fail-closed composition posture enables it to function as a control-level complement to emerging capability-level guardrails (§5.3). 
+
+5.1 On the Utility-Security Tradeoff 
+
+As §4.3 showed, for our reference implementation oper-ating in clearance mode, the clearance check accounts for 95.8% of MRS’s rejections by blocking compositions that span two conflicting classification levels. Within a single classification cluster, nearly all pairs and triples are permitted (the four exceptions all involve the email policy, which carries SC-7 Deny regardless of cluster), while across clusters, none are. Under taint mode the same boundary is enforced downstream rather than up-stream, with the rejection rate falling from 95.5%/79.2% to 60.5%/42.5% on triples/pairs (Table 5). The effective cost of DSCC to a deployment therefore depends on how its tool catalog distributes policies across classification levels relative to its intended workflows. A deployment whose policy authors have placed tools at appropriate levels sees a low block rate. Conversely, coarsely writ-ten policies or workflows that trigger cross-classification boundaries will see a higher block rate. When MRS blocks a chain, two readings are possible. The first is that the block did precise work, preventing the chain from crossing a boundary that it should not. The second, unintended case is that MRS overblocked legitimate workflows, as the policy was too coarse. In the latter case, one or more of the tool policies need refining. MRS itself does not distinguish between these two cases. However, it reports to the user which control binding caused the denial, allowing them to examine the policy in question and consider refinement, where 9appropriate. We propose this tradeoff through MRS since the cost of these two errors is asymmetrical. A legitimate chain that gets blocked by an overly coarse policy disrupts user experience, but is monitorable and amendable. An un-safe chain that slips through an under-specified policy is different in that it cannot be reconciled post-hoc. DSCC prioritizes the recoverable cost over the unrecoverable one, only adding operational overhead in reviewing poli-cies that likely would have already needed refinement. We return to this asymmetry in §5.3, where it under-lies the case for enabling compositional enforcement by default. 
+
+5.2 DSCC Policy Lifecycle 
+
+DSCC requires a tool catalog to run, and each tool needs a classification level, a control binding to the framework of choice (NIST SP 800-53 in our implementation; see §4), and any data-flow constraints that apply (i.e. ause policy). Authoring DSCC policies is a continuous task throughout the tool lifecycle, requiring ongoing monitoring, policy reviews and refinement as tools and workflows evolve. Tools acquire new versions, based on different training data and introducing new capabilities over time. Their policies must change with them, in a manner that accounts for organizational knowledge and incentives. The model assumes a federated division of labor. A central security team owns the shared vocabulary, which includes the classification scheme, the control framework, and the classification floors. In parallel, tool developers author the policy for their respective tool. Two consid-erations underpin the split. First, the developers who built a tool understand its data access and externalities better than central reviewers, which puts them in the best position to describe the tool’s limitations. Second, developers are typically incentivized towards the most permissive policy that allows their tool to run seamlessly, requiring that a separate objective function oversees the audit trail. Federation thus balances developer-supplied accuracy with centrally-owned minimal requirements and audit. This federative structure also shapes what happens when a chain is denied. Because MRS records which binding in which tool caused the denial, triage starts from a single tool rather than the whole chain. Usually the developer whose chain got blocked is the one who is most incentivized to resolve it, but the binding can only be relaxed by whoever owns the blocking policy. Federation does not resolve these cases, but it narrows the candidate set from an organization-wide search to the small number of parties whose tools or boundaries are impacted by the denial. 
+
+5.3 DSCC as a Mitigation Lever for Frontier Risk 
+
+A specific emerging area where DSCC can serve as a mitigation layer is frontier AI risks, a class of severe, potentially large-scale harms associated with the most capable general-purpose models. These risks are in-creasingly the subject of a dedicated governance ecosys-tem spanning developer-led safety frameworks [ 19 –22 ], emerging regulation and standards [ 23 , 24 ], and inde-pendent AI safety reports [ 25 ]. A common thread across these efforts is the identification of dangerous capabil-ities that require dedicated evaluation and mitigation once a model crosses a pre-defined risk threshold [ 26 , 27 ]. Autonomous, multi-step tool use is consistently named among these capabilities. This enables agents to chain actions in manners that are harmful, including chain-ing individually benign actions into outcomes a human principal would not have necessarily authorized. DSCC operates on a different axis than the evalua-tions that dominate frontier governance. Frontier risk governance capability evaluations monitor what a model can do, probing whether it is able to plan autonomously, chain tools, or evade oversight. Instead, DSCC instead constrains what the tool is permitted to do, irrespec-tive of the model’s capabilities, making these two axes orthogonal. A capability evaluation is incomplete as it samples from an unbounded behavior space and estab-lishes only a lower bound on what the model can do for specific and anticipated risk areas. MRS composition, by contrast, confines the agent to the policy space it governs. As the findings in §4.3 show, every admissible combination of tool policies has a fixed, pre-computable verdict. DSCC therefore does not attempt to predict the agent’s behavior, but bounds it based on continuously refined action policies. DSCC does not interfere with the intent or planning capabilities of an agent, but it limits the action space available to it. A chain that would cross a classification boundary is blocked whether the agent autonomously chose to cross it or was instructed into it, since the check only looks at the declared tool policies. In this sense, DSCC acts as a circuit breaker at the policy level, capping how far an agent’s tool use can reach. It does so independently of the agent’s reasoning, instilling a control-level backstop that sits alongside capability-level evaluations and mitigations, rather than duplicating them. In the context of frontier risk, DSCC can be deployed in two ways, which differ in the extent and triggers for its enforcement. The first is always-on : DSCC runs on every agent session, regardless of the model capability. This is a safe default because, as §5.1 argued, blocking a good chain is recoverable but letting a bad one through is not and because the results in §4.3 show that chains within a single classification level are almost always permitted, the cost of running by default is low. The second is threshold-triggered : DSCC is switched on, or made stricter, only once a capability evaluation shows the model has crossed a risk tier defined by a frontier framework (see, e.g., [ 19 ]). This allows the deployer to tailor DSCC application to the level of risk. Where the risks are negligible for the implementation of DSCC, it supports different postures triggered by indications of higher-risk capabilities. 10 References 
+
+[1] Timo Schick, Jane Dwivedi-Yu, Roberto Dessì, Roberta Raileanu, Maria Lomeli, Luke Zettlemoyer, Nicola Cancedda, and Thomas Scialom. Toolformer: Language models can teach themselves to use tools. 
+
+arXiv preprint arXiv:2302.04761 , 2023. [2] Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan, and Yuan Cao. Re-act: Synergizing reasoning and acting in language models. In Proceedings of the International Confer-ence on Learning Representations (ICLR) , 2023. [3] Shishir G. Patil, Tianjun Zhang, Xin Wang, and Joseph E. Gonzalez. Gorilla: Large language model connected with massive apis. arXiv preprint arXiv:2305.15334 , 2023. [4] Yujia Qin, Shihao Liang, Yining Ye, Kunlun Zhu, Lan Yan, Yaxi Lu, Yankai Lin, Xin Cong, Xiangru Tang, Bill Qian, Sihan Zhao, Lauren Hong, Runchu Tian, Ruobing Xie, Jie Zhou, Mark Gerstein, Dahai Li, Zhiyuan Liu, and Maosong Sun. Toolllm: Fa-cilitating large language models to master 16000+ real-world apis. arXiv preprint arXiv:2307.16789 ,2023. [5] GitHub. Github Copilot coding agent, 2025. URL 
+
+https://github.com/features/copilot/agen ts . Agentic coding agent. Accessed 2026-04-09. [6] Anthropic. Claude code, 2025. URL https://do cs.anthropic.com/en/docs/claude-code/over view . Agentic coding tool. Accessed 2025-03-24. [7] OpenAI. Codex CLI, 2025. URL https://openai .com/codex/ . Open-source coding agent. Accessed 2025-03-24. [8] Jing-Jing Li, Jianfeng He, Chao Shang, Devang Kul-shreshtha, Xun Xian, Yi Zhang, Hang Su, Sandesh Swamy, and Yanjun Qi. STAC: When innocent tools form dangerous chains to jailbreak LLM agents. 
+
+arXiv preprint arXiv:2509.25624 , 2025. [9] Jiangrong Wu, Zitong Yao, Yuhong Nan, and Zibin Zheng. ChainFuzzer: Greybox fuzzing for workflow-level multi-tool vulnerabilities in LLM agents. arXiv preprint arXiv:2603.12614 , 2026. [10] Yiheng Sun, Linkang Du, Zhou Su, Yuntao Wang, Han Liu, Quan Zhao, and Xiaolin Niu. MSA: A cross-MCP privacy attack via memory exfiltration of large language models. In Proceedings of the 24th Workshop on Privacy in the Electronic Society (WPES) , 2025. Co-located with ACM CCS 2025. DOI: 10.1145/3733802.3764057. [11] Qianlong Lan, Anuj Kaul, Shaun Jones, and Stephanie Westrum. Silent egress: When implicit prompt injection makes LLM agents leak without a trace. arXiv preprint arXiv:2602.22450 , 2026. [12] Ruiqi Li, Zhiqiang Wang, Yunhao Yao, and Xiang-Yang Li. MCP-ITP: An automated framework for implicit tool poisoning in MCP. arXiv preprint arXiv:2601.07395 , 2026. [13] Charoes Huang, Xin Huang, Ngoc Phu Tran, and Amin Milani Fard. Model context protocol threat modeling and analyzing vulnerabilities to prompt injection with tool poisoning. arXiv preprint arXiv:2603.22489 , 2026. [14] Dongsen Zhang, Zekun Li, Xu Luo, Xuannan Liu, Peipei Li, and Wenjun Xu. MCP security bench (MSB): Benchmarking attacks against model context protocol in LLM agents. arXiv preprint arXiv:2510.15994 , 2025. Accepted at ICLR 2026. [15] OpenAI. Function calling and other API updates, 2023. URL https://openai.com/blog/functi on-calling-and-other-api-updates . Blog post, 13 June 2023. Accessed 2026-03-25. [16] Harrison Chase. LangChain, 2022. URL https: //github.com/langchain-ai/langchain . Open-source LLM application framework. Accessed 2026-03-25. [17] Qingyun Wu, Gagan Bansal, Jieyu Zhang, Yi-ran Wu, Beibin Li, Erkang Zhu, Li Jiang, Xi-aoyun Zhang, Shaokun Zhang, Jiale Liu, Ahmed Awadallah, Ryen W. White, Doug Burger, and Chi Wang. Autogen: Enabling next-gen llm applica-tions via multi-agent conversation. arXiv preprint arXiv:2308.08155 , 2023. [18] David Elliott Bell and Leonard J. LaPadula. Se-cure computer systems: Mathematical foundations. Technical Report MTR-2547, Vol. I, MITRE Cor-poration, 1973. ESD-TR-73-278-I. [19] Microsoft. Microsoft frontier governance framework, 2025. URL https://cdn-dynmedia-1.microsoft .com/is/content/microsoftcorp/microsoft/ final/en-us/microsoft-brand/documents/Mic rosoft-Frontier-Governance-Framework.pdf .Accessed 2026-06-26. [20] Google DeepMind. Frontier safety framework, ver-sion 3.0, 2025. URL https://storage.google apis.com/deepmind-media/DeepMind.com/Blog /strengthening-our-frontier-safety-frame work/frontier-safety-framework_3.pdf . Ac-cessed 2026-06-26. [21] Anthropic. Responsible scaling policy, 2025. URL 
+
+https://www.anthropic.com/responsible-sca ling-policy . ccessed 2026-06-26. [22] OpenAI. Preparedness framework, version 2, 2025. URL https://cdn.openai.com/pdf/18a02b5d-6 b67-4cec-ab64-68cdfbddebcd/preparedness-f ramework-v2.pdf . Accessed 2026-06-26. [23] European Parliament and Council of the European Union. Regulation (EU) 2024/1689 of the euro-pean parliament and of the council laying down harmonised rules on artificial intelligence (Arti-ficial Intelligence Act). Official Journal of the 11 European Union, L series, 2024. URL https: //eur-lex.europa.eu/eli/reg/2024/1689/oj .(Arts. 51–55). Accessed 2026-06-26. [24] National Institute of Standards and Technology. Managing misuse risk for dual-use foundation mod-els. Technical Report NIST AI 800-1 (Initial Public Draft), NIST, 2024. URL https://nvlpubs.ni st.gov/nistpubs/ai/NIST.AI.800-1.ipd.pdf .Accessed 2026-06-26. [25] Yoshua Bengio, Stephen Clare, Carina Prunkl, et al. International AI safety report 2026. Techni-cal Report DSIT 2026/001, Department for Sci-ence, Innovation and Technology, 2026. URL 
+
+https://internationalaisafetyreport.org .[26] Toby Shevlane, Sebastian Farquhar, Ben Garfinkel, Mary Phuong, Jess Whittlestone, Jade Leung, Daniel Kokotajlo, Nahema Marchal, Markus An-derljung, Noam Kolt, Lewis Ho, Divya Siddarth, Shahar Avin, Will Hawkins, Been Kim, Iason Gabriel, Vijay Bolina, Jack Clark, Yoshua Bengio, Paul Christiano, and Allan Dafoe. Model evaluation for extreme risks. arXiv preprint arXiv:2305.15324 ,2023. URL https://arxiv.org/abs/2305.15324 .[27] Megan Kinniment, Lucas Jun Koba Sato, Haox-ing Du, Brian Goodrich, Max Hasin, Lawrence Chan, Luke Harold Miles, Tao R. Lin, Hjalmar Wijk, Joel Burget, Aaron Ho, Elizabeth Barnes, and Paul Christiano. Evaluating language-model agents on realistic autonomous tasks. arXiv preprint arXiv:2312.11671 , 2024. URL https://arxiv.or g/abs/2312.11671 .12 Appendix 
+
+This appendix provides the complete data underlying the evaluation in §4. Table 6 lists the 11 NIST SP 800-53 controls used in the reference implementation, of which two (AC-4 and SC-7) default to Deny and the remaining nine to Restrict . Table 7 gives the full definitions of all 16 security policies, including classification level, flow direction, transmission prohibition, session TTL, and assigned controls. Table 8 maps each of the 32 tools to its governing policy, grouped by category. Together, these three tables are sufficient to reproduce the enumeration results reported in §4.3. 
+
+Table 6: NIST SP 800-53 controls used in the reference implementation. 
+
+Family ID Name Default level 
+
+AC AC-3 Access Enforcement Restrict AC AC-4 Information Flow Enforcement Deny AC AC-6 Least Privilege Restrict SC SC-7 Boundary Protection Deny SC SC-8 Transmission Confidentiality & Integrity Restrict SC SC-13 Cryptographic Protection Restrict SC SC-28 Protection of Information at Rest Restrict AU AU-2 Event Logging Restrict AU AU-6 Audit Record Review & Reporting Restrict SI SI-4 System Monitoring Restrict MP MP-5 Media Transport Restrict 
+
+Table 7: Complete policy catalog used in the evaluation. 
+
+Policy Classification Flow Prohibit TTL (h) Controls 
+
+File Reader Confidential Internal No 48 AC-3, AC-4 Database Query Confidential Internal No 24 AC-3, AC-6 Code Interpreter Confidential Internal No 12 AC-3, AC-6, SI-4 VPN Gateway Confidential Internal Yes 8 AC-3, SC-7, SC-8, SC-13 File Writer Confidential Internal No 24 AC-3, AC-6, AU-2 Agent Orchestrator Confidential Internal No 24 AC-3, AC-4, AU-2 Wiki Reader Internal Internal No 48 AC-3, AC-4 Planning Internal Internal No 48 AC-3 Worktree Internal Internal No 24 AC-3, AC-6 Scheduler Internal Internal No 48 AC-3, AU-2 Email Sender Internal Outbound No 48 SC-7, SC-8 HTTP Client Public Outbound No 48 SC-7, SC-8 Slack Notifier Public Outbound No 48 SC-7 Cloud Upload Public Outbound No 4 SC-7, SC-8, SC-13, MP-5 Bash Executor Restricted Internal Yes 4 AC-3, AC-6, AU-2, SI-4 Air-gapped Lab Restricted Internal Yes 2 AC-3, AC-4, AC-6, SC-28, SI-4 
+
+Table 8: Complete tool catalog used in the evaluation. 
+
+Tool Policy Tool Policy 
+
+Infrastructure tools (10) 
+
+Read Documents File Reader Send Email Email Sender Query Database Database Query VPN Access VPN Gateway Web API Call HTTP Client Read Wiki Pages Wiki Reader Send Slack Message Slack Notifier Cloud File Upload Cloud Upload Run Code (Sandbox) Code Interpreter Detonation Environment Air-gapped Lab 
+
+Agent tools (22) 
+
+Agent Agent Orchestrator WebFetch HTTP Client TaskOutput Agent Orchestrator WebSearch HTTP Client TaskStop Agent Orchestrator TodoWrite Planning Bash Bash Executor AskUserQuestion Planning Glob File Reader Skill Planning Grep File Reader EnterPlanMode Planning Read File Reader ExitPlanMode Planning Edit File Writer EnterWorktree Worktree Write File Writer ExitWorktree Worktree NotebookEdit File Writer CronCreate Scheduler CronDelete Scheduler CronList Scheduler 
+
+13
