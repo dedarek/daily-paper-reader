@@ -6,38 +6,37 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-12
-- 运行时间：2026-07-12 05:25:21 UTC
+- 最新运行日期：2026-07-13
+- 运行时间：2026-07-13 05:18:32 UTC
 - 运行状态：成功
-- 本次总论文数：6
-- 精读区：2
-- 速读区：4
+- 本次总论文数：5
+- 精读区：3
+- 速读区：2
 
 ### 今日简报（AI）
-今日推荐聚焦AI Agent的安全治理与自主解耦，精读两篇高分论文分别探讨加密解耦学习权威和动态组合策略保护多工具链。重点关注《Governed Individuation》提出的密码学解耦方案和《Securing Multi-Tool AI Agent Chains》的实时策略机制，这两项工作直接回应Agent系统的核心安全困境。后续可追踪论文中提出的具体攻击向量与防护措施，特别是针对知识库投毒和轨迹劫持的防护思路。
-- 详情：[/202607/12/README](/202607/12/README)
+今日精读5篇论文，核心聚焦大模型知识库投毒防御与功率校准水印技术。  
+① 针对RAG框架的知识库投毒攻击与防御策略、② 无需启发式调参的LLM水印方案，均为高分重点。  
+建议优先了解知识库安全加固与高效水印实现，以提升系统鲁棒性与内容可溯源能力。
+- 详情：[/202607/13/README](/202607/13/README)
 
 ### 精读区论文标签
-1. [Governed Individuation: Cryptographically Decoupling an Agent's Learning from Its Authority](/202607/12/2607.04613v1-governed-individuation-cryptographically-decoupling-an-agents-learning-from-its-authority)  
-   标签：评分：9.0/10、query:llm-security
-   evidence：通过密码学限制保障自主智能体的安全机制
-2. [Securing Multi-Tool AI Agent Chains With Dynamic, Real-Time Compositional Policies](/202607/12/2607.03423v1-securing-multi-tool-ai-agent-chains-with-dynamic-real-time-compositional-policies)  
+1. [Knowledge Base Poisoning Attacks and Defense for Policy-Aware LLM-RAG Framework](/202607/13/2607.04379v1-knowledge-base-poisoning-attacks-and-defense-for-policy-aware-llm-rag-framework)  
    标签：评分：8.0/10、query:llm-security
-   evidence：提出DSCC用于多工具AI智能体链的组合安全
+   evidence：针对LLM-RAG知识库投毒的攻击与防御
+2. [Beyond Heuristic Tuning: Power-Calibrated LLM Watermarking](/202607/13/2607.05694v1-beyond-heuristic-tuning-power-calibrated-llm-watermarking)  
+   标签：评分：8.0/10、query:llm-security
+   evidence：功率校准的水印技术用于识别LLM生成内容
+3. [Neuro-Agentic Control: A Deep Learning-based LLM-Powered Agentic AI Framework for Controlling Security Controls](/202607/13/2607.09076v1-neuro-agentic-control-a-deep-learning-based-llm-powered-agentic-ai-framework-for-controlling-security-controls)  
+   标签：评分：8.0/10、query:llm-security
+   evidence：神经代理控制框架，通过反事实物理注入实现安全代理控制
 
 ### 速读区论文标签
-1. [FORGE: Research-Trajectory Hijacking Attacks on Deep Research Agents](/202607/12/2607.04718v1-forge-research-trajectory-hijacking-attacks-on-deep-research-agents)  
-   标签：评分：7.0/10、query:llm-security
-   evidence：通过轨迹劫持对深度研究代理的提示注入攻击
-2. [A Coin Flip Per Token: Bernoulli Sparse Steering of Large Language Models](/202607/12/2607.05615v1-a-coin-flip-per-token-bernoulli-sparse-steering-of-large-language-models)  
-   标签：评分：7.0/10、query:llm-security
-   evidence：通过稀疏引导控制LLM行为，作为输出护栏
-3. [Knowledge Base Poisoning Attacks and Defense for Policy-Aware LLM-RAG Framework](/202607/12/2607.04379v1-knowledge-base-poisoning-attacks-and-defense-for-policy-aware-llm-rag-framework)  
+1. [Large Language Models (LLMs) and Generative AI in Cybersecurity and Privacy: A Survey of Dual-Use Risks, AI-Generated Malware, Explainability, and Defensive Strategies](/202607/13/2607.06963v1-large-language-models-llms-and-generative-ai-in-cybersecurity-and-privacy-a-survey-of-dual-use-risks-ai-generated-malware-explainability-and-defensive-strategies)  
    标签：评分：6.0/10、query:llm-security
-   evidence：LLM-RAG知识库投毒防御方法
-4. [Functional and Secure Code Generation with Task Vectors](/202607/12/2607.07881v1-functional-and-secure-code-generation-with-task-vectors)  
+   evidence：综述涵盖LLM安全风险、对抗攻击及防御策略
+2. [Optimizing Against Safety Representations: Activation-Guided Adversarial Suffixes and the Geometry of Refusal](/202607/13/2607.08883v1-optimizing-against-safety-representations-activation-guided-adversarial-suffixes-and-the-geometry-of-refusal)  
    标签：评分：6.0/10、query:llm-security
-   evidence：通过任务向量技术确保LLM生成代码的内容安全
+   evidence：对抗后缀攻击优化与拒绝方向分析，可辅助缓解对抗提示
 
 
 <div class="dpr-home-promo-card">

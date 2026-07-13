@@ -1,0 +1,352 @@
+Title: Optimizing Against Safety Representations: Activation-Guided Adversarial Suffixes and the Geometry of Refusal
+
+URL Source: https://arxiv.org/pdf/2607.08883v1
+
+Published Time: Mon, 13 Jul 2026 00:10:25 GMT
+
+Number of Pages: 8
+
+Markdown Content:
+# Optimizing Against Safety Representations: Activation-Guided Adversarial Suffixes and the Geometry of Refusal 
+
+# Ege Cakar, Hannah Guan, Kayden Kehe 
+
+Harvard University John A. Paulson School of Engineering and Applied Sciences 
+
+{ecakar, hguan, kaydenkehe }@college.harvard.edu 
+
+Abstract 
+
+Behavioral alignment in large language models often masks fragile internal safety representations. Recent work sug-gests that refusal behavior is mediated by low-dimensional directions in activation space. This raises questions about how such representations are structured, localized, and ac-cessed by optimization. We study adversarial suffix attacks as a probe of representational alignment. We introduce Activation-Guided GCG, which replaces output-based objec-tives with losses that directly target a model’s internal re-fusal direction. Across several objective variants, we find that suppressing refusal globally across all layers and posi-tions is more effective than targeting a single layer–position pair. This suggests that safety representations are distributed across the forward pass rather than causally localized to a single site. We further introduce Soft-GCG, a continu-ous relaxation of discrete suffix optimization using Gumbel-Softmax. Soft-GCG achieves a 33 × speedup over standard GCG while improving attack success rates. Evaluating across model scales, we find that smaller models remain vulnerable while larger models resist both activation- and suffix-based attacks at our compute-constrained settings, consistent with larger and better safety trained models being harder to jail-break. Together, our results clarify how safety mechanisms are encoded and can be broken in contemporary models. These insights provide concrete guidance for designing more robust and representation-aware alignment strategies. 
+
+Code — github.com/Ege-Cakar/ImprovingGCG 
+
+# Introduction 
+
+The widespread deployment of Large Language Models (LLMs) has necessitated rigorous safety alignment tech-niques to prevent the generation of harmful or unethical con-tent. At least in public chat interfaces, it seems like these alignment techniques have advanced significantly. However, recent research has demonstrated that these safety guardrails are surprisingly brittle. Two distinct lines of inquiry have emerged to analyze this fragility: automated adversarial at-tacks on the input space, and the analysis of refusal repre-sentations within the model’s residual streams. The Greedy Coordinate Gradient (GCG) method, pro-posed by (Zou et al. 2023), demonstrates that optimizing ad-versarial suffixes can reliably bypass alignment. However, GCG operates on a behavioral proxy: it optimizes inputs to maximize the likelihood of specific target output tokens (e.g., forcing the model to output “Sure, here is...”). While effective, this objective targets the symptom of the jailbreak (the output logits) rather than the mechanism of the refusal. Additionally, the GCG method is limited by the given ini-tialization conditions and long waits until convergence. Its discrete optimization methods are significantly slower com-pared to continuous methods, and we hypothesize that a large portion of the optimization that is done by GCG can be done first via continuous optimization, and that discrete optimization is only necessary to overcome the “projection gap” (i.e., the loss in performance that comes from jump-ing to discrete tokens at the end after optimizing continu-ously and achieving a minimum in between real tokens that doesn’t generalize to hard tokens). Conversely, (Arditi et al. 2024) investigates the model’s internal representations of refusal. They demonstrated that refusal behavior in open-source chat models is mediated by a single, one-dimensional subspace in the model’s activation space and that simply ablating this direction eliminates re-fusal behavior. This approach, though, is limited by the need for possible attacks to have white-box access to a model’s activations. Thus, in its purest form, it cannot be used on closed models, most widely used by the general public. These results raise a deeper question on how safety mech-anisms are encoded internally and how robust they are to op-timization. If refusal behavior is mediated by a small num-ber of high-leverage features, then alignment may succeed behaviorally while remaining brittle at the representational level. In this paper, we use adversarial suffix optimization as a diagnostic tool for studying safety representations. Our findings suggest that current safety training produces refusal representations that are geometrically simple and accessible to gradient-based optimization. We make two contributions: • We introduce Activation-Guided GCG, which replaces output-based jailbreak objectives with losses that directly minimize projections onto internal refusal directions. By varying the spatial and depth scope of these objectives, we empirically probe whether refusal is locally or glob-ally encoded. • We introduce Soft-GCG, a continuous relaxation of dis-crete suffix optimization that dramatically reduces com-putational cost. The effectiveness of this relaxation pro-vides evidence that the problem of the projection gap can arXiv:2607.08883v1 [cs.LG] 9 Jul 2026 be overcome with annealing of the “continuity” of the prompt during convergence. 
+
+# Related Work 
+
+Adversarial Attacks on Aligned LLMs 
+
+The vulnerability of aligned LLMs to adversarial inputs has been extensively documented. Early “jailbreaks” relied on manual prompt engineering (e.g., “DAN” or role-play sce-narios)(Shen et al. 2023). However, (Zou et al. 2023) intro-duced a formal, automated gradient-based approach known as Greedy Coordinate Gradient (GCG). GCG overcomes the discrete nature of text optimization by using token-level gra-dients to identify promising candidate replacements for an adversarial suffix. As part of their formulation, they define the adversarial loss L for a prompt x1: n as the negative log probability of a target sequence x∗ 
+
+> n+1: n+H
+
+:
+
+L(x1: n) = − log p(x∗ 
+
+> n+1: n+H
+
+|x1: n). (1) For each token xi in the adversarial suffix, they compute the gradient of the loss with respect to the one-hot encoding 
+
+exi :
+
+∇exi L(x1: n) ∈ R|V |. (2) They then select the top-k candidates with the largest neg-ative gradient values to evaluate in a forward pass. They demonstrated that this method achieves high Attack Suc-cess Rates (ASR), reaching 100% on Vicuna-7B and 88% on Llama-2-7B-Chat for harmful behaviors with enough itera-tions. Furthermore, they showed that these attacks are trans-ferable, meaning a suffix optimized on one model can often break completely different black-box models. While highly effective, GCG is computationally extremely expensive. Ad-ditionally, it relies on the assumption that forcing the first few tokens of output determines the subsequent generation trajectory. In this paper, we aim to create a more effective suffix to bypass refusals as well as use continuous optimiza-tion to lower the computation overhead. 
+
+Refusal Directions 
+
+Parallel to adversarial attacks, researchers have sought to understand how models represent refusal internally using techniques often associated with representation engineering. (Arditi et al. 2024) utilized a difference-in-means method-ology to isolate a single direction ˆr (the normalized differ-ence vector) in the residual stream that differentiates be-tween harmful and harmless instructions. Concretely, they define: 
+
+r(l) = μ(l) 
+
+> harmful
+
+− μ(l) 
+
+> harmless
+
+(3) where μ(l) represents the mean activation at layer l.They validated this finding through a technique they term 
+
+Directional Ablation . Directional ablation erases the re-fusal direction from the residual stream activation x by pro-jecting it out: 
+
+x′ ← x − (x · ˆr)ˆ r. (4) By performing this intervention at every layer (or equiv-alently, orthogonalizing model weights), they effectively disabled refusal. Crucially, (Arditi et al. 2024) compared their weight orthogonalization method directly against GCG on the HarmBench benchmark. They found their method achieved comparable or superior Attack Success Rates (ASR) while requiring significantly less computational cost as it does not require per-prompt optimization. Conversely, they demonstrated that adding this direction to harmless prompts ( x′ ← x + αˆr) induced refusal behavior even on benign queries like “List the benefits of yoga” (Arditi et al. 2024). Their work suggests that safety fine-tuning does not eliminate harmful knowledge but rather learns a specific “re-fusal feature” that overrides generation when activated. Our results confirm this conjecture and additionally add flex-ibility to their activation-based approach by developing a method to generate adversarial suffixes that optimize for by-passing refusal directions. 
+
+Continuous Prompt Optimization 
+
+(Wen et al. 2023) proposed “Hard Prompts Made Easy” (PEZ), a gradient-based framework designed to bridge the optimization gap between continuous embedding spaces and discrete token sequences. Their work addresses the largest limitation in soft prompt tuning: while continuous soft prompts are easier to optimize via gradient descent, they often fail to map onto coherent or effective discrete tokens when simply projected to the nearest vocabulary neighbors after training – a phenomenon the authors describe as the “projection gap.” To overcome this, PEZ introduces a methodology where the discretization step is integrated directly into the forward pass of the optimization loop. The algorithm maintains a set of learnable continuous parameters (soft prompts) but projects them onto their nearest discrete neighbors in the embedding matrix before computing the loss. The gradi-ents derived from this discrete forward pass are then used to update the underlying continuous parameters. This effec-tively allows the optimizer to explore the smooth, differen-tiable continuous space while being constantly tethered to the valid discrete manifold, preventing the optimization tra-jectory from drifting into regions of the latent space that have no semantic validity. Empirically, Wen et al. demon-strated that this approach could robustly discover effective hard prompts for both text-to-image generation (inverting CLIP encoders for Stable Diffusion) and text-only tasks. However, in our testing, their approach underperformed for jailbreak purposes. 
+
+Efficient Jailbreak Methods 
+
+Several recent approaches have sought to reduce the com-putational cost of automated jailbreaks. PAIR (Chao et al. 2023) uses an attacker LLM to iteratively refine adver-sarial prompts based on target model responses, requir-ing only black-box access. TAP (Mehrotra et al. 2023) ex-tends this with tree-of-thought reasoning and pruning for more efficient exploration. AutoDAN (Liu et al. 2024) em-ploys a hierarchical genetic algorithm to evolve semantically meaningful jailbreak prompts, achieving interpretability that gradient-based methods lack. These approaches trade off gradient information for query efficiency and black-box ap-plicability. Our Soft-GCG occupies a different point in this design space: it retains white-box gradient access but re-places discrete search with continuous optimization, achiev-ing speedups complementary to these query-based methods. 
+
+# Methodology 
+
+Activation-Guided GCG 
+
+This approach combines the gradient-based optimization framework of GCG with mechanistic insights from refusal direction analysis. We first extract refusal directions, then use these directions to guide adversarial suffix optimization through novel activation-based objectives in the hope that we can improve performance over baseline GCG. The activation-based approach offers two potential advan-tages. First, by targeting the causal mechanism underlying refusal (the internal direction identified through contrastive analysis), we may discover more fundamental adversarial perturbations than those found by optimizing surface-level output probabilities. Second, since the refusal direction is computed across many diverse examples, the activation ob-jective may generalize better to unseen harmful prompts compared to token-level objectives that risk overfitting to specific target strings. 
+
+Refusal Direction Extraction We use the precomputed refusal direction provided by (Arditi et al. 2024), extracted using the difference-in-means methodology (Equation 3). The optimal layer ℓ∗ = 14 and position p = −1 were se-lected by ranking candidate directions by how much ablat-ing them reduces refusal scores on harmful prompts using the refusal-direction training splits. The selected direction 
+
+drefusal serves as the optimization target for our attack. 
+
+Activation-Based Adversarial Optimization Standard GCG (Zou et al. 2023) optimizes an adversarial suffix by using one-hot representation of the tokens to compute token gradients (Equation 2). The gradients are aggregated across multiple prompts, and the top-K tokens with largest neg-ative gradients are used to generate candidate suffixes via greedy coordinate descent. We adopt this same optimization framework, replacing the optimization objective. 
+
+Activation-Based Objective Functions The core contri-bution of this work is replacing the output-based loss (Equa-tion 1) with objectives that directly target internal refusal representations. Each activation-based objective can be in-terpreted as a hypothesis about the structure of refusal rep-resentations. The Single objective evaluates whether refusal is causally localized to a specific layer–position pair. The Layer objective probes spatial locality across tokens at a fixed depth. The Token objective probes depth locality at a fixed position. The All objective tests whether refusal is globally distributed across the forward pass. These ob-jectives represent different design choices in the locality-globality spectrum: from targeting a single activation, to suppressing refusal across the entire forward pass, and have significantly different optimization landscapes. Comparing optimization efficiency across these objectives allows us to assess how safety representations are structured within the model. Given the refusal direction drefusal at layer ℓ∗ and posi-tion p (typically the last instruction token), we explore five activation-based objectives that vary in scope and optimiza-tion target: • Single. Minimize projections at the most influential layer and position 
+
+Lzero act (x) = h(ℓ∗) 
+
+> p
+
+(x) · drefusal 
+
+∥drefusal ∥
+
+!2
+
+(5) where h(ℓ∗) 
+
+> p
+
+(x) is the hidden state at layer ℓ∗ and position 
+
+p for input x = xinst ⊕ xadv .• Negative Projection. Push the projection to be negative (actively opposing refusal): 
+
+Lneg act (x) = h(ℓ∗) 
+
+> p
+
+(x) · drefusal 
+
+∥drefusal ∥ . (6) • Layer. Minimize projections across all token positions at the most influential layer: 
+
+Llayer act (x) = 1
+
+|P| 
+
+X
+
+> p∈P
+
+h(ℓ∗) 
+
+> p
+
+(x) · drefusal 
+
+∥drefusal ∥
+
+!2
+
+(7) where P represents all token positions in the sequence. • Token. Minimize projections at a single token position across all layers: 
+
+Ltoken act (x) = 1
+
+L
+
+> L
+
+X
+
+> ℓ=1
+
+h(ℓ) 
+
+> p
+
+(x) · drefusal 
+
+∥drefusal ∥
+
+!2
+
+(8) where L is the total number of layers and drefusal is the refusal direction at layer ℓ∗, applied identically to each layer. • All. Minimize projections across all layers and all posi-tions: 
+
+Lglobal act (x) = 1
+
+L · |P| 
+
+> L
+
+X
+
+> ℓ=1
+
+X
+
+> p∈P
+
+h(ℓ) 
+
+> p
+
+(x) · drefusal 
+
+∥drefusal ∥
+
+!2
+
+.
+
+(9) 
+
+Soft-GCG 
+
+Soft-GCG is our method of relaxing GCG into a continu-ous optimization problem, developed with the aim of solv-ing the continuous problem for speedup while diverging as little as possible from GCG in terms of performance. In-stead of searching for a sequence of discrete tokens (like standard GCG which swaps tokens), Soft-GCG maintains a set of continuous variables (logits) for each position in the suffix. These logits represent a probability distribution over the entire vocabulary. Problem Formulation Let x denote the user prompt (e.g., ”Write a tutorial on how to make a bomb”) and y denote the target response (e.g., ”Sure, here is a tutorial...”). We seek an adversarial suffix s of length L, consisting of tokens from a vocabulary V , such that the probability of the target response is maximized: 
+
+s∗ = arg max  
+
+> s∈VL
+
+log P (y | x, s ) (10) Since the domain V L is discrete, gradients cannot be back-propagated through the token selection indices. Soft-GCG circumvents this by optimizing a continuous parameteriza-tion of the suffix. 
+
+Continuous Relaxation via Gumbel-Softmax Instead of selecting a single discrete token si at each position i ∈{1, . . . , L }, we maintain a set of unbounded learnable log-its ϕi ∈ R|V |. These logits represent the unnormalized log-probabilities of selecting each token in the vocabulary. To approximate the discrete selection process while maintain-ing differentiability, we utilize the Gumbel-Softmax distri-bution (Jang, Gu, and Poole 2017). For each position i, a “soft” token vector ˜si is computed as: 
+
+˜si = Softmax 
+
+ ϕi + gi
+
+τ
+
+
+
+(11) where: • gi ∼ Gumbel (0 , 1) are i.i.d. samples drawn from the Gumbel distribution, included to avoid convergence to local minima. • τ > 0 is a temperature hyperparameter controlling the spikiness of the distribution, starting smoother and allow-ing more cross-token interaction then pushing the vector into a one hot as it decreases. The resulting vector ˜si ∈ ∆|V |− 1 lies on the probability simplex. The input embedding for the i-th suffix position, 
+
+e(si), is then approximated by the probability-weighted sum of the vocabulary embeddings matrix E ∈ R|V |× d:
+
+e(˜ si) = ˜ s⊤ 
+
+> i
+
+E = X
+
+> v∈V
+
+[˜ si]v · Ev (12) where at the end of the optimization, this should be just “picking out” the real token as ˜si tends towards a one-hot. This operation is fully differentiable, allowing gradients from the loss function to flow back to the logits ϕi.
+
+Optimization Objectives Cross-entropy Loss The primary objective is to minimize the negative log-likelihood of the target sequence y, condi-tioned on the prompt x and the soft suffix ˜s:
+
+LCE (ϕ) = −
+
+> |y|
+
+X
+
+> t=1
+
+log P (yt | x, ˜s, y <t ; θ) (13) where θ represents the fixed parameters of the language model. This directly aligns with the adversarial goal of max-imizing target probability. 
+
+Carlini-Wagner Loss In addition to the standard cross-entropy objective (Equation 13), we employ a Carlini-Wagner (CW) style loss adapted for sequence genera-tion(Carlini and Wagner 2017). Rather than directly maxi-mizing the log-probability of target tokens, the CW loss op-timizes for a margin between the logit of the correct target token and the highest logit among all other tokens. This en-courages the model to not only rank the target token first, but to do so with a confident separation, yielding more ro-bust suffixes upon discretization. Formally, for a batch of target sequences with logits z ∈
+
+RB×T ×| V |, target token indices yt, and an attention mask 
+
+m ∈ { 0, 1}B×T indicating valid (non-padding) positions, the per-token CW loss is: 
+
+ℓCW  
+
+> t
+
+= max 
+
+
+
+0, max  
+
+> v̸=yt
+
+zt,v − zt,y t + κ
+
+
+
+(14) where κ > 0 is a confidence margin (set to κ = 5 .0 in our experiments). This formulation drives the target token logit to exceed the next-best competitor by at least κ.To emphasize successful generation of the first target to-ken, critical for steering the model’s autoregressive trajec-tory, we apply a positional weighting wt with w0 = 5 .0 and 
+
+wt = 1 .0 for t > 0. The final per-example loss, averaged over valid tokens, is: 
+
+LCW (ϕ) = 1
+
+P 
+
+> t
+
+mtTX
+
+> t=1
+
+wt · mt · ℓCW  
+
+> t
+
+. (15) We were able to establish results using both Carlini-Wagner and cross-entropy losses. 
+
+Temperature Annealing Schedules The temperature τ
+
+plays a critical role in the optimization trajectory. We inves-tigate two annealing schedules: 1. Linear Schedule. A simple decay that steadily reduces entropy over T steps: 
+
+τt = τstart −
+
+ tT
+
+
+
+(τstart − τend ) (16) Typically annealing from τ = 2 .0 to τ = 0 .1. This pro-vides a consistent pressure towards discretization. 2. 3-Phase “Slushy” Schedule. A piecewise schedule de-signed to balance exploration and refinement: • Exploration (0% - 50%) : High temperature decay (2.5 → 1.0). Allows broad traversal of the embedding space. • Refinement (50% - 75%) : Moderate temperature (1.0 → 0.5). The “slushy” phase where structure forms but the distribution remains flexible enough to shift. • Solidification (75% - 100%) : Rapid cooling ( 0.5 →
+
+0.01 ). Forces the soft vectors to snap to the nearest discrete tokens. 
+
+Discretization After the optimization concludes, the con-tinuous logits ϕ must be projected back to the discrete vo-cabulary to form the final usable suffix. We select the token with the highest logit value at each position: 
+
+sfinal  
+
+> i
+
+= arg max  
+
+> v∈V
+
+[ϕi]v (17) This discrete suffix is then evaluated against the model to verify its effectiveness. Ideally the discretization gap is very low at this step, thanks to the latter portions of the optimiza-tion being done with an ever-decreasing temperature. From this point on, the converged substring can directly be utilized for attacks or it can be used as the initialization of GCG. 
+
+# Experimental Results 
+
+Activation-Guided GCG 
+
+Setup All experiments use a single open-weight chat model: Llama-2-7b-chat-hf (Touvron et al. 2023). For optimization and evaluation we rely on the datasets packaged with refusal direction (Arditi et al. 2024) and llm attacks (Zou et al. 2023): • Harmful prompts (train): Both GCG and Activation-Guided GCG train on goals drawn from AdvBench (Zou et al. 2023). For Activation-Guided GCG, the target strings are unused since the objective operates on acti-vations rather than output logits. • Harmful prompts (test): the harmful test split from the refusal-direction dataset, used only for evaluation. We use the standard parameters provided in the 
+
+llm attacks repository for all tests. Every test is trained with 200 discrete optimization steps. 
+
+Evaluation and Attack Success Metrics After training a universal suffix for each method, we evaluate it on held-out prompts from the refusal-direction dataset. For a given method and evaluation split, we generate com-pletions by appending the learned suffix to the instruction (for suffix-based methods), or by applying only the inter-nal activation intervention (for ablation baselines). We then score each completion with three complementary methods, each inducing a notion of “harmfulness”. The following are our evaluation definitions for harmful-ness: • Substring ASR : Labels a completion as harmful if it does not contain any of a fixed list of refusal-style pre-fixes (e.g., “I’m sorry”, “I cannot”). • LlamaGuard2 ASR : Labels a completion as harmful if it is labeled unsafe by the LlamaGuard safety classifier ((Inan et al. 2023)). • HarmBench ASR : Labels a completion as harmful if it is labeled unsafe by the HarmBench evaluation frame-work (Mazeika et al. 2024). 
+
+Results Activation-based objectives show improved at-tack success despite limited optimization steps. (Table 1) 
+
+As expected, the baseline (no suffix) results have the low-est ASR scores, and the ablation results are the highest. All activation-based objectives outperform or match stan-dard GCG in substring ASR, with the “All” objective achiev-ing 0.91 — approaching the ablation ceiling (0.98) — fol-lowed by Single (0.84), Layer and Negative (0.81), and To-ken (0.76). The strong performance of broader-scope objec-tives, particularly All, may reflect either that refusal repre-sentations are distributed across layers and positions, or that wider objectives provide richer gradient signal for optimiza-tion. In either case, activation-based objectives demonstrate substantially better sample efficiency than standard GCG at 200 steps. 
+
+ASR (Harmful) Method Substring LlamaGuard 4 HarmBench Baseline 0.39 0.00 0.00 Ablation 0.98 0.54 0.62 Single 0.84 0.06 0.04 
+
+Negative 0.81 0.03 0.03 All 0.91 0.09 0.01 Layer 0.81 0.03 0.01 Token 0.76 0.00 0.00 GCG 0.76 0.00 0.00 Table 1: Harmful prompt ASR for suffix-based attacks and refusal-direction ablation on the refusal-direction 
+
+harmful test split. We report results using the suffix with the lowest loss during training. 
+
+Soft-GCG 
+
+SGCG by itself achieves performance parity with GCG in our experiments, showing no need for any pure GCG steps at the end. (Figure 1) Given the computational cost of GCG, we generate one suffix per configuration for our long-main runs. The resulting suffixes are then evaluated against the entire AdvBench corpus multiple times to accurately as-sess performance. We observe similar performance parity between SGCG and GCG in smaller-scale runs. All results are evaluated on prompts from AdvBench using Llama-2-7b-chat-hf and substring ASR, with the same substrings as in the original GCG paper. For sweep experiments, we use a split of 25 training prompts and 10 test prompts, all drawn from AdvBench. 
+
+Optimization Setup and Configuration The suffix length is fixed at L = 20 tokens. In sweep experiments, we varied combinations of Soft and GCG steps, including Pure GCG (500 steps), Pure Soft (500 steps), and hybrid configurations (e.g., 250/250, 400/100). For the Gemma ex-periments, we ran 500 steps of Pure Soft optimization in-formed by sweep results. We use a learning rate of 0.1 for the Adam optimizer applied to suffix logits, a batch size of 10 for Gemma experiments, and 128 GCG candidates in the sweep. For the extended seed-comparison experiments (Fig-ure 2), we increased the iteration count to 2000. SGCG’s primary advantage is computational efficiency: it completes in approximately 2.5 minutes compared to 81 minutes for vanilla GCG on the same hardware—a 33 ×
+
+speedup —while also achieving higher ASR. In the shorter 500-step runs the speedup reached ∼43 ×, though we found 2000 steps yielded more consistent results. Since the main bottleneck is model loading rather than per-iteration cost, SGCG scales favorably to longer optimization runs. We then evaluate SGCG on the Gemma 3 model family, selected for two reasons: (a) Ollama, one of the most popular Figure 1: Performance of different configurations of SGCG →GCG. We see that it is more useful to run more SGCG iterations than GCG (number of iterations are constant). 
+
+Figure 2: Comparison of pure Soft-GCG and GCG. With 
+
+∼ 33 × speed, S-GCG beats vanilla GCG in performance as well. ASR was calculated through the substring method here. local serving applications, identifies it as the strongest model family that can run on a single GPU (Ollama 2024), and (b) it originates from a major AI lab (Google) with wide adoption (Blog 2025), making it a realistic target for local deployment. In Table 2, the observed drop in attack success with in-creasing model size suggests a scaling-dependent change in how refusal is represented. Larger models may encode safety constraints in higher-rank or more distributed sub-spaces, reducing the effectiveness of both localized activa-tion suppression and smooth input-space optimization. This points toward a potential representational phase transition in alignment mechanisms as models scale, with implications for robustness and interpretability. 
+
+Model Substring ASR ∗
+
+Gemma3-270m 1.000 ± 0.000 Gemma3-1b 0.577 ± 0.031 Gemma3-4b 0.336 ± 0.104 Gemma3-12b 0.000 ± 0.000 Table 2: ASR of the Gemma3 family. The 27B model was not evaluated given the negligible ASR observed on the 12B variant. ASR is marked with an asterisk because the 270m model became incoherent after optimization. 
+
+# Discussion and Future Work 
+
+We develop two complementary contributions exposing crit-ical vulnerabilities in aligned language models: (1) a novel white-box attack targeting internal refusal representations, demonstrating that safety mechanisms encoded as linear di-rections can be systematically suppressed via adversarial optimization, and (2) a 33x speed improvement to GCG that reduces computational barriers dramatically while in-creasing performance. By achieving high attack success rates on modern models (up to 34% ASR on Gemma 3 4B), we provide concrete evidence that current RLHF-based alignment is insufficient against representation-level attacks. The speed improvement transforms attacks from resource-intensive operations into ones executable within minutes on consumer hardware, making this a practical exploit acces-sible to broader actors. We demonstrate success on frontier models, and we intend for this to be an address to founda-tion model developers, in that Soft-GCG allows for longer suffixes to be trained for much longer for jailbreaking larger models. We chose not to run those out of safety concerns and lack of compute, but that is not necessarily the case for adversarial parties. Our theory relies on the security mindset: publicly dis-closing attack methodologies – including efficiency im-provements – accelerates defense development faster than exploitation. We assume (1) white-box access requirements limit immediate harm despite increased speed, (2) currently exploitable models aren’t yet smart enough to be destruc-tive, (3) AI labs will prioritize robustness when vulnerabili-ties are demonstrated to be effective and rapidly exploitable, and (4) insights from current models remain relevant for future architectures. The 33x speedup demonstrates that computational protections are shallow, compelling faster defensive action. The ultimate impact is next-generation AI systems developed with representation-level robustness: safety mechanisms distributed beyond exploitable linear di-rections, adversarial training including efficient activation-based attacks, and red-teaming testing for mechanistic vul-nerabilities discoverable at scale. The primary risk is that findings improve attacks rather than defenses before ade-quate countermeasures are deployed. 
+
+Limitations 
+
+Even though we argue that Gemma 3 is the most suitable model for evaluation, it does come with its problems. The most significant one is the huge vocabulary size of 262 thou-sand for all Gemma 3 models (Blog 2025), as opposed to 
+
+∼128 thousand for Llama 3 (Schmid and Sanseviero 2024). Due to the way we parametrize SGCG, the vocabulary size directly increases the complexity of the problem, making it a harder optimization. This, however, is entangled with the safety training of specific models, so we were unable to iso-late the effect of vocabulary size directly on performance. There are also limitations in how we evaluate our meth-ods. Particularly, we use substring matching to calculate ASR for both Activation-Guided GCG and Soft-GCG. Sub-string matching can lead to both false negatives and false positives, since it isn’t adaptable to the response itself and solely looks for common strings like “I cannot”, etc to deter-mine refusal. Future work could involve using more robust metrics of evaluation, such as using LlamaGuard as a judge for Soft-GCG. 
+
+# Safety Statement 
+
+This work makes jailbreaking attacks significantly more ef-ficient, and we are transparent about the dual-use impli-cations. A speedup reduces the computational cost of cir-cumventing alignment, which matters beyond controlled re-search settings, particularly as capable open-weight models become more widely accessible. The attacks currently require white-box access to weights and gradients, but we do not think this access barrier should be treated as a lasting safeguard. We believe this work should be published because the vul-nerabilities we exploit are not introduced by our methods; they are intrinsic to how current alignment techniques work. Efficient attacks are necessary for rigorous red-teaming, and safety researchers need these tools to audit weaknesses be-fore adversaries independently develop them. More funda-mentally, our results suggest that alignment representations learned through current training are fragile under gradient-based optimization, and we hope this motivates investment in more robust alignment strategies. Mitigating these vulnerabilities likely requires moving beyond surface-level alignment fine-tuning. Promising di-rections include adversarial training directly over the rep-resentation space targeted by our attacks, circuit-level inter-ventions that harden the specific mechanisms underlying re-fusal behavior, and simply training against these types of at-tacks. Ultimately, we view the efficiency gains demonstrated here as raising the bar for what counts as a credible robust-ness evaluation – defenses should be validated against fast, gradient-based attacks of this class before being considered reliable. 
+
+# References 
+
+Arditi, A.; Obeso, O.; Syed, A.; Paleka, D.; Panickssery, N.; Gurnee, W.; and Nanda, N. 2024. Refusal in Language Mod-els Is Mediated by a Single Direction. In Advances in Neural Information Processing Systems , volume 38. Blog, G. D. 2025. Gemma explained: What’s new in Gemma 3. https://developers.googleblog.com/en/gemma-explained-whats-new-in-gemma-3/. Carlini, N.; and Wagner, D. 2017. Towards Evaluating the Robustness of Neural Networks. In 2017 IEEE Symposium on Security and Privacy (SP) , 39–57. Chao, P.; Robey, A.; Dobriban, E.; Hassani, H.; Pappas, G. J.; and Wong, E. 2023. Jailbreaking Black Box Large Language Models in Twenty Queries. arXiv:2310.08419. Inan, H.; Upasani, K.; Chi, J.; et al. 2023. Llama Guard: LLM-based Input-Output Safeguard for Human-AI Conver-sations. https://github.com/meta-llama/PurpleLlama/blob/ main/Llama-Guard2/MODEL CARD.md. Jang, E.; Gu, S.; and Poole, B. 2017. Categorical Reparam-eterization with Gumbel-Softmax. arXiv:1611.01144. Liu, X.; Xu, N.; Chen, M.; and Xiao, C. 2024. AutoDAN: Generating Stealthy Jailbreak Prompts on Aligned Large Language Models. In The Twelfth International Conference on Learning Representations .Mazeika, M.; Phan, L.; Yin, X.; Zou, A.; Wang, Z.; Mu, N.; Sakhaee, E.; Li, N.; Basart, S.; Li, B.; Forsyth, D.; and Hendrycks, D. 2024. HarmBench: A Standardized Evalu-ation Framework for Automated Red Teaming and Robust Refusal. arXiv:2402.04249. Mehrotra, A.; Zampetakis, M.; Kassianik, P.; Nelson, B.; Anderson, H.; Singer, Y.; and Karbasi, A. 2023. Tree of Attacks: Jailbreaking Black-Box LLMs Automatically. arXiv:2312.02119. Ollama. 2024. Ollama – Gemma 3. https://ollama.com/ library/gemma3. Accessed: 2025-09-30. Schmid, P.; and Sanseviero, O. 2024. Welcome Llama 3 – Meta’s new open LLM. https://huggingface.co/blog/llama3. Shen, X.; Chen, Z.; Backes, M.; Shen, Y.; and Zhang, Y. 2023. “Do Anything Now”: Characterizing and Evaluating In-the-Wild Jailbreak Prompts on Large Language Models. 
+
+arXiv preprint arXiv:2308.03825 .Touvron, H.; Martin, L.; Stone, K.; Albert, P.; Almahairi, A.; et al. 2023. Llama 2: Open Foundation and Fine-Tuned Chat Models. arXiv:2307.09288. Wen, Y.; Jain, N.; Kirchenbauer, J.; Goldblum, M.; Geip-ing, J.; and Goldstein, T. 2023. Hard Prompts Made Easy: Gradient-Based Discrete Optimization for Prompt Tuning and Discovery. arXiv:2302.03668. Zou, A.; Wang, Z.; Carlini, N.; Nasr, M.; Kolter, J. Z.; and Fredrikson, M. 2023. Universal and Transferable Adversar-ial Attacks on Aligned Language Models. arXiv preprint arXiv:2307.15043 .
