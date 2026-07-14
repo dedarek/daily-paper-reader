@@ -1,0 +1,471 @@
+Title: HyperSafe: Inference-Time Safety Recovery for Fine-Tuned Language Models
+
+URL Source: https://arxiv.org/pdf/2607.11475v1
+
+Published Time: Tue, 14 Jul 2026 03:12:00 GMT
+
+Number of Pages: 17
+
+Markdown Content:
+# HyperSafe: Inference-Time Safety Recovery for Fine-Tuned Language Models 
+
+Aznaur Aliev Carlos Hinojosa Abdelrahman Eldesokey Bang An Bernard Ghanem Yibo Yang 
+
+King Abdullah University of Science and Technology, Saudi Arabia 
+
+{aznaur.aliev,carlos.hinojosa,yibo.yang}@kaust.edu.sa 
+
+# Abstract 
+
+Safety alignment in large language models can be fragile under fine-tuning, as even benign task adaptation may increase harmful compliance. Existing defenses mainly follow two directions: they either intervene during or after fine-tuning through retraining or weight modification, which can be costly and may hurt task performance, or they use model-agnostic safety classifiers, which may miss failures specific to a given fine-tuned checkpoint. These limitations motivate a post-hoc, model-specific, and non-invasive approach to safety restoration. To meet these requirements, we propose HyperSafe, a framework that restores safety behavior by generating a model-specific Safe Side Network (SSN) for each fine-tuned checkpoint. HyperSafe uses layer-wise activation fingerprints to capture how fine-tuning changes the model’s inner representations. With a small set of given calibration prompts, the hypernetwork maps these fingerprints to the parameters of the SSN in a single forward pass. The generated SSN runs alongside the frozen fine-tuned model and performs prompt-level safety classification: harmful prompts are routed to refusal, while safe prompts are answered by the original fine-tuned model. Thus, HyperSafe requires no gradient updates, no safety data at deployment time, and no modification to the deployed model weights. We evaluate HyperSafe on two model families, Qwen2-7B and LLaMA-3-8B, across multiple safety benchmarks. HyperSafe reduces harmful response rates from 19– 31% to below 1% on every held-out checkpoint, while keeping downstream task accuracy within 1% of the fine-tuned baseline on average. Code is available at 
+
+https://github.com/nokronim/project-safety-remedy 
+
+# 1 Introduction 
+
+Fine-tuning safety-aligned LLMs is a common way to adapt them to downstream tasks, but it can also weaken their safety alignment. Prior work has shown that, even when the fine-tuning data is totally benign, the harmful-response rate of a LoRA fine-tuned model can climb from under 5% (the aligned baseline) to over 40% on standard safety benchmarks [ 1 ]. One possible reason is that safety alignment can depend heavily on the model’s behavior in the first few output tokens [ 2]. As a result, even benign fine-tuning updates may change the model’s refusal behavior and reduce its ability to reject harmful requests. Existing defenses for this alignment degradation can be grouped into three main categories. The first category applies safety-preserving methods during fine-tuning. These methods add safety constraints during task adaptation, for example, through regularization, safety data, or constrained optimization (Lisa [ 3 ], RepNoise [ 4 ], Constrained-SFT [ 2]). They aim to preserve the base model’s refusal behavior while learning the downstream task. However, they often introduce a trade-off between safety and utility: stronger safety constraints may reduce task performance, while weaker constraints may still 
+
+> Preprint. arXiv:2607.11475v1 [cs.LG] 13 Jul 2026
+
+Table 1: Comparison with existing defenses against fine-tuning-induced safety degradation. Setup cost per checkpoint : compute to deploy on each new fine-tuned model. Model-aware : tailored to the target rather than a one-size-fits-all classifier. Preserves model weights : deployed weights kept unchanged. Standalone at deploy : requires only the fine-tuned model at inference, no aligned base 
+
+M0. HyperSafe is the only approach that satisfies all four.                                
+
+> Method Setup cost Model-Preserves Standalone per checkpoint aware model weights at deploy
+> Vaccine [11] full train ✓×✓
+> SafeInstr [12] partial train ✓×✓
+> Safe LoRA [5] projection ✓××
+> OneShot [6] 1-example SFT ✓×✓
+> Llama Guard 4 [13] none ×✓✓
+> HyperSafe (ours) 1 fwd pass ✓✓✓
+
+allow harmful responses. They also require control over the fine-tuning process, so they cannot be easily applied to fine-tuned checkpoints that have already been released. The second category modifies the model weights after fine-tuning. These methods aim to restore safety by editing, projecting, or merging fine-tuned weights (Safe LoRA [ 5], OneShot SFT [ 6], Task Arithmetic [ 7]). They are useful when the model has already been fine-tuned, but they directly change the deployed weights. As a result, their modification may cause forgetting in downstream task performance. They may also require access to the original aligned base model at deployment time, and they still face the same basic safety–utility trade-off as fine-tuning-stage methods. The third category uses model-agnostic external classifiers. These methods place a separate safety model before or after the LLM to filter harmful inputs or outputs (Llama Guard [ 8], WildGuard [ 9 ], Granite Guardian [ 10 ]). They are easy to deploy because they do not modify the target model or require access to its fine-tuning process. However, since they are not tailored to a specific fine-tuned model, they may miss failures caused by the particular fine-tuning recipe, such as harmful responses triggered by newly learned task-specific syntax or domain patterns. They may also spend capacity detecting risks that are not relevant to the deployed model. Overall, existing defenses either require intervention during or after fine-tuning, which can be costly and may reduce task utility, or rely on model-agnostic filters that may not capture failures specific to a given fine-tuned model. Based on these limitations, we ask the following question: 
+
+Can we recover the safety behavior of the original aligned model for a given fine-tuned checkpoint using a model-specific lightweight post-hoc method, with-out retraining, modifying the deployed weights, or degrading downstream task performance? 
+
+This question leads to three design requirements. First, it should not require access to or control over the original fine-tuning process. Second, it should not modify the deployed fine-tuned weights, since doing so may damage the task behavior learned during fine-tuning. Third, it should be specific to the fine-tuned checkpoint, rather than relying on a fixed external classifier that ignores how the model was adapted. These requirements motivate the use of a model-conditioned side network. Instead of changing the fine-tuned model itself, we attach a lightweight Safe Side Network (SSN) that runs alongside the frozen model and decides whether to answer or refuse a prompt. Since the SSN is separate from the task model, the fine-tuned model can preserve its downstream ability, while the SSN focuses on recovering safety behavior. To avoid training a new SSN for every released checkpoint, we use a hypernetwork to generate the SSN weights from the fine-tuned model’s activation fingerprints. We introduce HyperSafe, a post-hoc framework for restoring safety in fine-tuned LLMs without retraining or modifying the deployed model weights. Given a fine-tuned checkpoint, HyperSafe first extracts layer-wise activation fingerprints from a small set of calibration prompts. A hypernetwork then maps these fingerprints to generate the weights of a lightweight SSN. The SSN is then attached to the frozen fine-tuned model and produces a prompt-level safety score. At inference time, prompts predicted to be harmful are routed to a refusal response, while safe prompts are handled by the 2Figure 1: HyperSafe pipeline. Stages 1–3 (training, one-time): fine-tune the base model on each training domain (1), train a domain-specific SSN per fine-tuned checkpoint (2), and train the hypernetwork to map activation fingerprints to SSN weights (3). Stage 4 (deployment): for any new fine-tuned model, extract calibration activations and generate a model-specific SSN in a single forward pass. original fine-tuned model. In this way, HyperSafe is checkpoint-specific, because the generated SSN depends on the target model’s activations; post-hoc, because it is applied after fine-tuning; and non-invasive, because it does not update or edit the deployed model weights. 
+
+Contributions. We summarize our main contributions as follows: 1. We formulate post-hoc safety restoration as the activation-conditioned generation of SSN. Given a fine-tuned checkpoint, our method generates a model-specific SSN from its activation fingerprints, without additional gradient updates or safety data at deployment time. 2. We design HyperSafe, a hypernetwork-based framework that predicts the weights of a lightweight SSN. To make this prediction feasible, HyperSafe uses layer-wise activation conditioning, direction-magnitude decomposition, and factorized weight generation. 3. We show that the generated SSN can restore refusal behavior while preserving downstream task performance. Across Qwen2-7B and LLaMA-3-8B, the hypernetwork is trained on fine-tuned models from training domains and evaluated zero-shot on held-out fine-tuned checkpoints. On three safety benchmarks, HyperSafe reduces harmful response rates from 19–31% to below 1% on every held-out checkpoint, while keeping downstream task accuracy within 1% of the fine-tuned baseline on average. 
+
+# 2 Related Work 
+
+Safety alignment of LLMs. Modern LLMs acquire safety alignment through supervised fine-tuning on curated demonstration data [ 14 , 15 ], reinforcement learning from human feedback [ 16 , 17 ], Constitutional AI [ 18 ], and direct preference optimization [ 19 ], producing aligned models such as LLaMA-3-Instruct [ 20 ] and Qwen2-Instruct [ 21 ]. However, this alignment is shallow: Qi et al. [2] shows that refusal behavior is encoded in only a few token positions, and Wei et al. [22] finds that safety lives in low-rank subspaces that adversarial fine-tuning can easily traverse. Qi et al. [1] first demonstrated that fine-tuning aligned LLMs, even on benign data, compromises safety, an effect later confirmed across architectures, scales, and PEFT recipes [ 23 – 25 ]. Rather than proposing a new alignment recipe, our work focuses on recovering safety after fine-tuning has degraded it. 
+
+Defenses against fine-tuning-induced safety degradation. Existing defenses fall into three fam-ilies. Fine-tuning-stage methods modify the optimization process during fine-tuning (Lisa [ 3], Vaccine [ 11 ], RepNoise [ 4], SafeInstr [ 12 ], Constrained-SFT [ 2], Booster [ 26 ]). Post-fine-tuning weight-modification methods edit a deployed checkpoint by projection or arithmetic on its weights (Safe LoRA [ 5], OneShot SFT [ 6], Task Arithmetic [ 7 , 27 ], RESTA [ 28 ], backdoor-enhanced align-ment [ 29 ]). Model-agnostic external classifiers filter inputs/outputs without inspecting the target model (Llama Guard [ 8 ], ShieldGemma [ 30 ], WildGuard [ 9 ], AEGIS [ 31 ], Granite Guardian [ 10 ], 3production moderation [ 32 , 33 ]); a related line monitors a model’s own hidden states [ 34 – 37 ]. Unlike all three families, HyperSafe generates a model-specific safety classifier at inference time: it requires no per-checkpoint retraining, leaves the deployed weights unchanged, and adapts to recipe-specific shifts that model-agnostic classifiers cannot see. 
+
+Hypernetworks and side networks. Hypernetworks [ 38 , 39 ] generate the weights of a target net-work conditioned on context, with applications in continual learning [ 40 ], multi-task adaptation [ 41 ], parameter-efficient fine-tuning [ 42 , 43 ], and zero-shot model construction [ 44 ]. Recently, Liang et al. [45] scaled the paradigm to LLMs, generating LoRA parameters from text descriptions for zero-shot 
+
+utility adaptation. Ladder Side-Tuning [ 46 ] introduces a lightweight side network connected to a frozen backbone via lateral connections for parameter-efficient transfer. Our work generates safety weights from model activations (rather than text prompts) and combines hypernetworks with side networks for safety restoration in fine-tuned LLMs; to our knowledge, the first such combination. 
+
+# 3 Method 
+
+Our proposed HyperSafe framework generates a model-specific SSN for recovering safety in fine-tuned language models. The SSN is a lightweight network attached to the frozen backbone that performs prompt-level safety classification, and its weights are predicted by a hypernetwork from activation fingerprints of the target model. During training, we collect pairs of fine-tuned models and their corresponding SSNs across multiple domains to supervise the hypernetwork. At inference, we produce an SSN for a fine-tuned model on an unseen domain whose safety alignment may have degraded, using our proposed HyperSafe. In the following sections, we describe the problem setup, the architecture, and the hypernetwork training and deployment procedure. 
+
+3.1 Problem Formulation 
+
+Let M0 be a safety-aligned base LLM and Md a fine-tuned version of M0 on dataset d. Fine-tuning may weaken or alter the safety behavior of Md, leading to compliance with harmful prompts that 
+
+M0 would refuse. We seek a generator G that, given any fine-tuned model Md∗ from a potentially unseen dataset, produces an SSN fθ parameterized by the generated weights θ:
+
+θ = G A(Md∗ ), λ = fθ
+
+ x ; Md∗
+
+, (1) where x denotes the input prompt, A(·) denotes activation fingerprints extracted from a small calibration set (Eq. 4), θ are the SSN parameters predicted by G, and λ ∈ [0 , 1] is a safety score (λ ≈ 0: safe; λ ≈ 1: harmful). The semicolon in fθ (x ; Md∗ ) marks Md∗ as a contextual input: the SSN reads ladder-fused backbone activations from Md∗ when scoring x, so λ depends on both the prompt and the target fine-tuned model. In our framework, G is implemented as a hypernetwork that predicts θ from the activation fingerprint of the fine-tuned model (see Section 3.3). 
+
+3.2 HyperSafe Architecture 
+
+The SSN fθ attaches to the frozen backbone as a lightweight branch that predicts a safety score for each prompt and determines whether the model should produce a response or refuse. We build on the Ladder Side-Tuning (LST) architecture [ 46 ] and extend it for safety classification. Figure 2 illustrates the overall design. 
+
+Side Transformer. The SSN is implemented as a small Transformer that processes ladder-fused representations derived from the backbone hidden states. It consists of K layers with hidden dimension hs = h/r for backbone hidden size h and reduction factor r, adding 3–4% of backbone parameters at the 7–8B scale we evaluate (per-architecture values in Appendix A, Table 5). 
+
+Ladder Connections. Each side layer k fuses downsampled backbone hidden states with side hidden states via a per-layer gate: 
+
+hin  
+
+> k
+
+= μk · W down hback  
+
+> ϕ(k)
+
++ (1 −μk) · hside  
+
+> k−1
+
+(2) where ϕ(k) maps side layer k to a backbone layer, hback  
+
+> ϕ(k)
+
+denotes the corresponding backbone hidden state, hside  
+
+> k−1
+
+denotes the SSN hidden state from the previous layer, and μk = σ(gk/τ ) is a per-layer 4Figure 2: SSN architecture. The frozen backbone’s hidden states are downsampled via gated ladder connections into a lightweight side network ( ∼3% of backbone parameters). The SSN produces a safety score λ that routes safe prompts to the base model output and harmful prompts to a refusal response. gate. The scalar gk ∈ R is one of the parameters generated by the hypernetwork (see Section 3.3); τ
+
+is a fixed temperature hyperparameter. 
+
+Selective Routing. After the final side layer, hidden states are mean-pooled and passed through an MLP to produce λ. At inference, prompts scoring above the threshold are routed to a refusal response; those below bypass the SSN entirely, so the base model runs unmodified. This selective routing preserves task accuracy because safe prompts never interact with the SSN. 
+
+3.3 Activation-Conditioned Hypernetwork 
+
+We now describe how the SSN parameters are generated automatically from activation fingerprints. The hypernetwork G takes the activation fingerprint of a fine-tuned model as input and predicts the parameters of the SSN. To make the high-dimensional weight prediction feasible, we employ two complementary design strategies. 
+
+Activation Fingerprint Extraction. For each model Md, we run Ncal domain-specific calibration prompts and average the backbone hidden state at each layer l = 1 , . . . , L after the final token: 
+
+al = 1
+
+Ncal 
+
+> Ncal
+
+X
+
+> i=1
+
+hl(xi) ∈ Rh. (3) These L vectors form a compact behavioral fingerprint of how fine-tuning shifted the model’s representations: 
+
+A(Md) = {al}Ll=1 . (4) 
+
+Direction-Magnitude Decomposition. To enable more structured conditioning of the hypernetwork, we separate directional changes in representation space from their scale. Specifically, each activation vector is split into a unit direction and log-magnitude: 
+
+ˆdl = al
+
+∥al∥ , ml = log ∥al∥. (5) The direction captures the nature of the representational change, while the magnitude reflects its strength. We then compute the vectors: 
+
+zdir = Attn  {Wproj ˆdl}Ll=1 
+
+, (6) 
+
+zmag = MLP  {ml}Ll=1 
+
+, (7) where Wproj is a learnable projection matrix. The fused representation z = [ zdir ; zmag ] aggregates information across all layers and feeds the weight-generation modules. 
+
+Layer-wise Factorized Generation. We implement the hypernetwork G as a global encoder that produces the embedding z together with a set of layer-wise generators {Hk}Kk=1 that predict the parameters of each side layer. Rather than predicting all parameters jointly, we generate each side layer’s weights independently from the corresponding backbone activation: 
+
+θk = Hk(aϕ(k), z), (8) 5where ϕ : {1, . . . , K } → { 1, . . . , L } maps each side layer k to its corresponding backbone layer. 
+
+aϕ(k) provides layer-specific information and z captures global cross-layer context. Each module Hk
+
+is implemented as a lightweight MLP that projects and fuses the local activation aϕ(k) with the global embedding z to generate the parameters of side layer k. The modules Hk share most parameters across layers but include layer-specific adapters, reducing the effective output dimensionality per prediction. 
+
+Classifier Generation. The SSN classifier is generated via a dedicated branch that aggregates information across all layers using cross-layer attention, producing a global embedding of the model’s behavioral shift. This embedding is mapped through an MLP with a low-rank output factorization for efficiency (factorization rank in Appendix A, Table 5). 
+
+3.4 Training and Deployment 
+
+Training proceeds in two stages: (1) learning domain-specific SSNs to construct supervision targets, and (2) training the hypernetwork to predict these weights from activation fingerprints. 
+
+Ground-truth SSN Collection. We collect supervised pairs {(Md, θ ∗
+
+> d
+
+)}Dd=1 by training one SSN per dataset. For each dataset d, we first fine-tune the base model M0 using LoRA [ 47 ] and merge the adapter to obtain Md. We then freeze Md and attach a randomly initialized SSN. The SSN is trained on a mixture of per-domain data and category-balanced harmful data from BeaverTails [ 48 ](mixture sizes in Appendix A, Table 5). Training uses a selective loss: harmful prompts receive both language-modeling loss and classification loss, while safe prompts receive only classification loss. This encourages the SSN to learn when to intervene without degrading task performance on safe inputs. All SSNs share the same initialization, ensuring weight-space alignment for hypernetwork supervision. 
+
+Hypernetwork Training. The hypernetwork is trained on Dtrain datasets using three complementary losses, weighted by coefficients βrecon , βcls , and βfunc :
+
+L = βrecon Lrecon + βcls Lcls + βfunc Lfunc . (9) 
+
+Lrecon is the mean-squared error between the generated and ground-truth SSN weights ˆθ and θ∗,averaged over the generated parameter blocks. Lcls and Lfunc are binary cross-entropy losses on the predicted routing score ˆλ(x) against the harmful flag m ∈ { 0, 1}, evaluated respectively on the calibration set Cd used to extract the activation fingerprint and on a held-out probe set Pd disjoint from Cd; the latter verifies that the generated classifier generalizes beyond the calibration prompts the hypernetwork conditioned on. Hyperparameters and per-architecture training settings are listed in Appendix A, Table 5. 
+
+Deployment. Given a new fine-tuned model Md∗ : (1) extract layer-wise activations from Ncal 
+
+calibration prompts; (2) run one forward pass through the hypernetwork to obtain SSN weights; (3) load the SSN alongside Md∗ . No safety data, gradients, or model modification are required at deployment. 
+
+# 4 Experiments 
+
+Models and Domains. We evaluate on Qwen2-7B-Instruct [ 21 ] and LLaMA-3-8B-Instruct [ 20 ]across 22 datasets spanning QA, commonsense reasoning, math, knowledge, classification, code, and instruction-following (Appendix B). Each dataset is fine-tuned with LoRA (rank 16, α=32 ) and merged. 
+
+Safety Benchmarks. We evaluate on three harmful-prompt benchmarks: BeaverTails [ 48 ] (700 prompts, 14 categories) is used as the harmful data source during SSN training (see Section 3.4); the evaluation split is disjoint from the training split. AdvBench [ 49 ] (520 prompts), and HEx-PHI [1 ](330 prompts, 11 categories) are never seen in any training phase, serving as zero-shot safety tests. 
+
+Evaluation Protocol. We use three holdout splits (per-split domain composition in Appendix C, Table 7; the split → domain mapping is also visible in the column headers of Table 2), each removing four datasets from different task categories. The hypernetwork is trained on the remaining 18 6datasets and evaluated on held-out datasets it has never seen. We report Task Accuracy (dataset test performance) and Harmful Rate (percentage of harmful prompts producing harmful output, lower is safer; 700 BeaverTails prompts disjoint from training, judged by the beaver-dam-7b moderation model [ 48 ]). For task accuracy, we use the official HuggingFace test/validation split when available; six datasets lack a standard test split (Comp. Math, Alpaca, OpenHermes, NQ-Open, AG News, Dolly) and are evaluated on a 20% random holdout drawn with a fixed seed. We compare against the base model (aligned, no fine-tuning) and the LoRA model (fine-tuned, no safety mechanism). Table 1 provides a qualitative comparison with prior defense methods. 
+
+Compute and inference cost. At the 7–8B scale, we evaluate the SSN adds 3–4% of backbone parameters (12 side layers, hidden h/ 4); these weights are produced by one hypernetwork forward pass and amortized across all subsequent prompts. Safe prompts ( λ < 0.5) bypass the SSN during decoding, leaving per-token generation cost unchanged. Llama Guard 4, by contrast, is a separate 12B model that requires its own full forward pass and KV cache. 
+
+4.1 Main Results 
+
+Table 2 shows results across all three splits. LoRA fine-tuning increases the average harmful rate from 1–5% (base) to 19–31% across benchmarks, with the largest degradation on instruction-following and commonsense domains. HyperSafe reduces the harmful rate to below 1% across all 12 holdout datasets and both architectures, while preserving task accuracy within 1 percentage point. The highest residual rate (NQ-Open, 0.7%) still represents a >95% relative reduction from the fine-tuned model. 
+
+Comparison with Llama Guard 4. We compare against Llama Guard 4 (12B) [ 13 ], the latest release in the Llama Guard family, on the same three benchmarks (Table 3). Since BeaverTails appears in SSN training (with a disjoint evaluation split), the two fully zero-shot benchmarks provide the most appropriate comparison. On these benchmarks, Llama Guard 4 misses 6.5% of AdvBench and 6.7% of HEx-PHI prompts, while HyperSafe misses 0.0% and 0.0%, respectively. This performance is achieved with an SSN using only 3–4% of backbone parameters (at 7–8B scale), compared to Llama Guard 4’s dedicated 12B model. The gap is even larger on BeaverTails (53.6% vs. 0.1%). 
+
+4.2 Ablation Studies 
+
+We ablate on LLaMA-3-8B, reporting changes in task accuracy and harmful rate (BeaverTails). The full system achieves the best overall performance; removing any component degrades at least one metric. Figure 3 summarizes the loss-component and training-data ablations; full per-domain values are in Appendix Tables 10 and 11. 
+
+Loss components (Figure 3(a)). Removing Lsafe func (safe-probe supervision) causes the classifier to over-block safe prompts, substantially reducing accuracy across all domains. Removing all functional supervision ( −L func ) degrades both accuracy and safety. Without domain-specific calibration prompts, the activation fingerprint becomes less discriminative, degrading accuracy on harder domains (BoolQ 
+
+−2.5%, Alpaca −2.1%) while safety stays intact. Each component addresses a different failure mode of the generated classifier. 
+
+Training data diversity (Figure 3(b)). Progressive domain exclusion shows the method is robust to moderate reductions (up to 4 domains removed) but degrades sharply beyond that. Category exclusion reveals that instruction-following data is the most important category for safety: removing it substantially increases the harmful rate across all holdout datasets, while removing other categories has minimal effect. 
+
+Calibration set size (Figure 4). We sweep the number of calibration prompts Ncal used to extract the activation fingerprint. With too few prompts ( Ncal =10 ), the fingerprint is noisy and the generated SSN over-blocks safe prompts; accuracy improves steadily up to Ncal =50 and plateaus beyond that, while the harmful rate remains ≤0.4% across the entire sweep. We use Ncal =50 as the default. Per-domain values are in Appendix Table 12. 
+
+Generalization to full fine-tuning. SSNs trained for LoRA-merged checkpoints transfer unchanged to their fully fine-tuned counterparts (Table 4): harmful rates drop to ≤0.1% with task-accuracy deltas 7Table 2: Main results on LLaMA-3-8B and Qwen2-7B across 12 holdout datasets. Four metric blocks per architecture (Task Acc, BeaverTails, AdvBench, HEx-PHI) report Base , LoRA (grayed), 
+
+OneShot [ 6 ], and HyperSafe (ours). Green marks HyperSafe cells matching or beating OneShot; red flags OneShot accuracy drops and harmful rates > 4.0%. For each split, the hypernetwork is trained on 18 external datasets and evaluated on 4 held-out datasets (Table 7). 
+
+Split A Split B Split C Method BoolQ ARC Math Alp PIQA HSwag CSQA OH MMLU NQ AGN Dol Avg 
+
+LLaMA-3-8B 
+
+Acc ↑
+
+Base 39.1 87.7 32.4 27.1 44.8 41.2 75.5 24.8 57.7 35.6 77.6 29.4 47.7 
+
+Fine-tuned 87.2 86.6 33.8 39.0 88.1 89.4 81.7 54.9 61.1 77.4 94.1 37.8 69.3 
+
+OneShot 87.2 18.8 28.4 15.2 87.2 87.0 79.9 16.4 61.5 55.9 93.9 16.9 54.0 
+
+HyperSafe 86.9 86.5 34.1 38.9 87.7 89.1 81.5 54.6 61.0 77.1 90.6 34.4 68.5 BT ↓
+
+Base 4.0 4.0 4.0 4.0 4.0 4.0 4.0 4.0 4.0 4.0 4.0 4.0 4.0 
+
+Fine-tuned 9.7 41.7 8.6 23.0 37.7 12.1 17.7 41.0 9.9 20.1 9.0 38.6 22.4 
+
+OneShot 0.3 0.1 0.9 0.1 0.4 0.4 0.0 0.0 0.3 2.7 2.7 0.1 0.7 
+
+HyperSafe 0.1 0.0 0.0 0.1 0.0 0.1 0.0 0.0 0.0 0.4 0.0 0.1 0.1 AB ↓
+
+Base 0.2 0.2 0.2 0.2 0.2 0.2 0.2 0.2 0.2 0.2 0.2 0.2 0.2 
+
+Fine-tuned 1.5 33.8 1.7 9.6 40.4 15.2 5.4 85.6 10.2 11.5 0.8 64.0 23.3 
+
+OneShot 0.0 0.0 0.4 0.0 0.0 0.4 1.9 0.0 0.0 0.2 2.3 0.0 0.4 
+
+HyperSafe 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 HX ↓
+
+Base 4.0 4.0 4.0 4.0 4.0 4.0 4.0 4.0 4.0 4.0 4.0 4.0 4.0 
+
+Fine-tuned 7.0 20.0 6.0 34.3 37.7 11.3 5.0 62.0 8.7 19.7 5.3 49.0 22.2 
+
+OneShot 1.0 0.7 1.7 0.7 0.7 0.7 6.7 2.7 1.0 2.0 9.3 0.7 2.3 
+
+HyperSafe 0.0 0.0 0.0 0.0 0.0 0.3 0.0 0.0 0.0 0.0 0.0 0.0 0.0 
+
+Qwen2-7B 
+
+Acc ↑
+
+Base 79.0 89.2 42.2 27.4 32.7 67.5 75.9 35.9 58.9 30.3 72.1 30.2 53.4 
+
+Fine-tuned 88.4 91.3 74.4 39.6 90.8 93.2 84.6 57.2 68.7 54.8 97.6 35.6 73.0 
+
+OneShot 88.5 91.5 76.1 37.2 90.6 58.0 84.2 54.6 68.7 23.7 92.5 33.8 66.6 
+
+HyperSafe 88.2 91.3 74.1 39.5 90.6 92.8 84.5 57.0 68.4 54.3 97.6 35.4 72.8 BT ↓
+
+Base 3.6 3.6 3.6 3.6 3.6 3.6 3.6 3.6 3.6 3.6 3.6 3.6 3.6 
+
+Fine-tuned 14.3 7.1 6.0 19.4 43.1 32.9 15.7 38.0 9.7 11.9 10.1 22.1 19.2 
+
+OneShot 4.4 1.0 5.4 5.4 4.3 4.7 1.0 1.1 5.1 11.9 3.7 11.0 4.9 
+
+HyperSafe 0.1 0.0 0.0 0.4 0.0 0.1 0.0 0.1 0.1 0.6 0.0 0.3 0.1 AB ↓
+
+Base 0.6 0.6 0.6 0.6 0.6 0.6 0.6 0.6 0.6 0.6 0.6 0.6 0.6 
+
+Fine-tuned 7.5 0.2 0.0 13.3 67.7 29.8 3.7 70.2 0.2 6.0 0.2 24.0 18.6 
+
+OneShot 0.2 0.0 0.0 1.0 0.2 1.0 0.0 3.3 0.2 1.0 0.0 2.7 0.8 
+
+HyperSafe 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 HX ↓
+
+Base 4.7 4.7 4.7 4.7 4.7 4.7 4.7 4.7 4.7 4.7 4.7 4.7 4.7 
+
+Fine-tuned 13.3 33.7 6.7 33.0 57.3 45.3 14.0 64.7 22.0 28.7 6.0 44.3 30.8 
+
+OneShot 2.3 3.7 8.3 8.0 2.0 5.0 2.0 8.3 6.3 14.7 6.7 11.7 6.6 
+
+HyperSafe 0.0 0.0 0.0 0.0 0.0 0.3 0.0 0.1 0.3 0.7 0.0 0.0 0.1 
+
+Table 3: Harmful rate (%, ↓) on LLaMA-3-8B. HyperSafe reported as mean ±std across the 12 held-out fine-tuned checkpoints (per-domain numbers in Table 2); Llama Guard 4 is a single deterministic model. BeaverTails eval split (disjoint from training); AdvBench and HEx-PHI are zero-shot for both methods. 
+
+Method AdvBench HEx-PHI BT 
+
+Llama Guard 4 6.5 6.7 53.6 HyperSafe (ours) 0.0 ±0.0 0.0 ±0.1 0.1 ±0.1 
+
+within 0.3 percentage points. Cross-benchmark safety transfer also holds: HyperSafe maintains <1% harmful rate on the fully zero-shot AdvBench and HEx-PHI benchmarks (Table 2). 8Figure 3: Ablation summary on LLaMA-3, Split A holdout, shown as deviation from the full system. Left bars: ∆ task accuracy (%); right bars: ∆ harmful rate (%). (a) Loss-component ablation: removing Lsafe func causes the largest accuracy drop. (b) Training-data ablation: removing instruction-following data causes the largest safety degradation. Full per-domain tables are in Appendix Tables 10 and 11. 
+
+Figure 4: Effect of calibration set size Ncal (LLaMA-3, Split A holdout). Avg. task accuracy saturates at Ncal =50 (our default) while the harmful rate stays near zero; larger Ncal gives no further gains. Table 4: Generalization across fine-tuning methods (LLaMA-3-8B). The same SSN (generated once for the LoRA-merged checkpoint) is reused on the full-FT counterpart. Fine-tuned baselines are grayed; green marks HyperSafe cells driving the harmful rate to near-zero. 
+
+Method BoolQ CSenseQA ARC PIQA Avg Acc ↑
+
+LoRA FT 87.2 81.7 86.5 87.8 85.8 LoRA + HyperSafe 87.0 81.4 86.5 87.6 85.6 
+
+Full FT 87.2 81.1 86.8 87.5 85.7 Full + HyperSafe 87.0 80.8 86.8 87.2 85.5 
+
+Harm ↓
+
+LoRA FT 18.6 20.0 8.6 40.0 21.8 LoRA + HyperSafe 0.1 0.0 0.0 0.0 0.0 
+
+Full FT 8.9 10.6 7.3 31.4 14.6 Full + HyperSafe 0.1 0.0 0.0 0.1 0.1 
+
+# 5 Conclusion 
+
+HyperSafe generates model-specific SSNs at inference time, reducing harmful outputs to near zero across diverse domains and two model architectures while preserving task accuracy. Two findings underline the generality: an SSN generated from a LoRA fingerprint transfers unchanged to its fully fine-tuned counterpart (Table 4), and a hypernetwork trained only on BeaverTails keeps AdvBench at 0.0% and HEx-PHI below 0.8% zero-shot on every held-out checkpoint. This lets practitioners 9ship a fine-tuned LLM without re-running alignment: a single hypernetwork covers any subsequent fine-tuned checkpoint of the same backbone. 
+
+# Acknowledgments 
+
+This research was supported by King Abdullah University of Science and Technology (KAUST), Center of Excellence for Generative AI, under Award No. 5940, and by the KAUST Office of Research Funding and Services (ORFS) under Award No. ORFS-CRG13-2025-6903. 
+
+# References 
+
+[1] Xiangyu Qi, Yi Zeng, Tinghao Xie, et al. Fine-tuning aligned language models compromises safety, even when users do not intend to. In International Conference on Learning Representa-tions (ICLR) , 2024. URL https://openreview.net/forum?id=hTEGyKf0dZ .[2] Xiangyu Qi, Ashwinee Panda, Kaifeng Lyu, et al. Safety alignment should be made more than just a few tokens deep. In International Conference on Learning Representations (ICLR) , 2025. URL https://openreview.net/forum?id=6Mxhg9PtDE .[3] Tiansheng Huang, Sihao Hu, Fatih Ilhan, Selim Furkan Tekin, and Ling Liu. Lisa: Lazy safety alignment for large language models against harmful fine-tuning attack. In Advances in Neural Information Processing Systems (NeurIPS) , 2024. URL https://proceedings.neurips.cc /paper_files/paper/2024/file/bcfdaf04b54a69f47623c973c864ee8d-Paper-Confere nce.pdf .[4] Domenic Rosati, Jan Wehner, Kai Williams, Łukasz Bartoszcze, David Atanasov, Robie Gonza-les, Subhabrata Majumdar, Carsten Maple, Hassan Sajjad, and Frank Rudzicz. Representation noising: A defence mechanism against harmful finetuning. In Advances in Neural Information Processing Systems (NeurIPS) , 2024. [5] Chia-Yi Hsu, Yu-Lin Tsai, Chih-Hsun Lin, Pin-Yu Chen, Chia-Mu Yu, and Chun-Ying Huang. Safe LoRA: The silver lining of reducing safety risks when fine-tuning large language models. In Advances in Neural Information Processing Systems (NeurIPS) , 2024. [6] Jiawen Zhang, Tony He, Kejia Chen, Jian Lou, Jian Liu, Xiaohu Yang, and Ruoxi Jia. Safety at one shot: Patching fine-tuned LLMs with a single instance. In The Fourteenth International Conference on Learning Representations (ICLR) , 2026. URL https://openreview.net/for um?id=EyH8Fu3vtZ .[7] Gabriel Ilharco, Marco Túlio Ribeiro, Mitchell Wortsman, Ludwig Schmidt, Hannaneh Ha-jishirzi, and Ali Farhadi. Editing models with task arithmetic. In International Conference on Learning Representations (ICLR) , 2023. [8] Hakan Inan, Kartikeya Upasani, Jianfeng Chi, et al. Llama Guard: LLM-based input-output safeguard for human-AI conversations. arXiv preprint arXiv:2312.06674 , 2023. [9] Seungju Han, Kavel Rao, Allyson Ettinger, et al. WildGuard: Open one-stop moderation tools for safety risks, jailbreaks, and refusals of LLMs. arXiv preprint arXiv:2406.18495 , 2024. [10] Inkit Padhi, Manish Nagireddy, Giandomenico Cornacchia, et al. Granite Guardian. arXiv preprint arXiv:2412.07724 , 2024. [11] Tiansheng Huang, Sihao Hu, and Ling Liu. Vaccine: Perturbation-aware alignment for large language models against harmful fine-tuning attack. In International Conference on Learning Representations (ICLR) , 2024. [12] Federico Bianchi, Mirac Suzgun, Giuseppe Attanasio, Paul Röttger, Dan Jurafsky, Tatsunori Hashimoto, and James Zou. Safety-tuned LLaMAs: Lessons from improving the safety of large language models that follow instructions. In International Conference on Learning Representations (ICLR) , 2024. 10 [13] Meta AI. The Llama 4 herd: The beginning of a new era of natively multimodal AI innovation. Meta AI Blog, 2025. URL https://ai.meta.com/blog/llama-4-multimodal-intellige nce/ .[14] Long Ouyang, Jeffrey Wu, Xu Jiang, Diogo Almeida, Carroll Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, et al. Training language models to follow instructions with human feedback. In Advances in Neural Information Processing Systems (NeurIPS) , 2022. [15] Yuntao Bai, Andy Jones, Kamal Ndousse, et al. Training a helpful and harmless assistant with reinforcement learning from human feedback. arXiv preprint arXiv:2204.05862 , 2022. [16] Nisan Stiennon, Long Ouyang, Jeffrey Wu, Daniel Ziegler, Ryan Lowe, Chelsea Voss, Alec Radford, Dario Amodei, and Paul Christiano. Learning to summarize with human feedback. In 
+
+Advances in Neural Information Processing Systems (NeurIPS) , 2020. [17] Paul F Christiano, Jan Leike, Tom Brown, Miljan Martic, Shane Legg, and Dario Amodei. Deep reinforcement learning from human preferences. In Advances in Neural Information Processing Systems (NeurIPS) , 2017. [18] Yuntao Bai, Saurabh Kadavath, Sandipan Kundu, et al. Constitutional AI: Harmlessness from AI feedback. arXiv preprint arXiv:2212.08073 , 2022. [19] Rafael Rafailov, Archit Sharma, Eric Mitchell, Christopher D Manning, Stefano Ermon, and Chelsea Finn. Direct preference optimization: Your language model is secretly a reward model. In Advances in Neural Information Processing Systems (NeurIPS) , 2023. [20] Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, et al. The Llama 3 herd of models. arXiv preprint arXiv:2407.21783 , 2024. [21] An Yang, Baosong Yang, Binyuan Hui, et al. Qwen2 technical report. arXiv preprint arXiv:2407.10671 , 2024. [22] Boyi Wei, Kaixuan Huang, Yangsibo Huang, Tinghao Xie, Xiangyu Qi, Mengzhou Xia, Prateek Mittal, Mengdi Wang, and Peter Henderson. Assessing the brittleness of safety alignment via pruning and low-rank modifications. In International Conference on Machine Learning (ICML) ,2024. [23] Kathleen C. Fraser, Hillary Dawkins, Isar Nejadgholi, and Svetlana Kiritchenko. Fine-tuning lowers safety and disrupts evaluation consistency. In Leon Derczynski, Jekaterina Novikova, and Muhao Chen, editors, Proceedings of the First Workshop on LLM Security (LLMSEC) ,pages 129–141, Vienna, Austria, August 2025. Association for Computational Linguistics. ISBN 979-8-89176-279-4. URL https://aclanthology.org/2025.llmsec-1.10/ .[24] Simon Lermen, Charlie Rogers-Smith, and Jeffrey Ladish. LoRA fine-tuning efficiently undoes safety training in Llama 2-Chat 70B. In International Conference on Learning Representations (ICLR) , 2024. [25] Qiusi Zhan, Richard Fang, Rohan Bindu, Akul Gupta, Tatsunori Hashimoto, and Daniel Kang. Removing RLHF protections in GPT-4 via fine-tuning. In Conference of the North American Chapter of the Association for Computational Linguistics (NAACL) , 2024. [26] Tiansheng Huang, Gautam Bhattacharya, Pratik Joshi, Joshua Kimball, and Ling Liu. Booster: Tackling harmful fine-tuning for large language models via attenuating harmful perturbation. 
+
+arXiv preprint arXiv:2409.01586 , 2024. [27] Prateek Yadav, Derek Tam, Leshem Choshen, Colin Raffel, and Mohit Bansal. TIES-merging: Resolving interference when merging models. In Advances in Neural Information Processing Systems (NeurIPS) , 2023. [28] Rishabh Bhardwaj, Do Duc Anh, and Soujanya Poria. Language models are homer simpson! safety re-alignment of fine-tuned language models through task arithmetic. In Annual Meeting of the Association for Computational Linguistics (ACL) , 2024. 11 [29] Jiongxiao Wang, Jiazhao Li, Yiquan Li, Xiangyu Qi, Junjie Hu, Yixuan Li, Patrick McAuley, Somesh Jha, and Chaowei Zhao. Mitigating fine-tuning based jailbreak attack with backdoor enhanced safety alignment. In Advances in Neural Information Processing Systems (NeurIPS) ,2024. [30] Wenjun Zeng, Yuchi Liu, Ryan Mullins, Ludovic Peran, Joe Fernandez, Hamza Harkous, Karthik Narasimhan, et al. ShieldGemma: Generative AI content moderation based on Gemma. 
+
+arXiv preprint arXiv:2407.21772 , 2024. [31] Shaona Ghosh, Prasoon Varshney, Erick Galinkin, and Christopher Parisien. AEGIS: On-line adaptive AI content safety moderation with ensemble of LLM experts. arXiv preprint arXiv:2404.05993 , 2024. [32] Todor Markov, Chong Zhang, Sandhini Agarwal, et al. A holistic approach to undesired content detection in the real world. In AAAI Conference on Artificial Intelligence , 2023. [33] Alyssa Lees, Vinh Q Tran, Yi Tay, Jeffrey Sorensen, Jai Gupta, Donald Metzler, and Lucy Vasser-man. A new generation of Perspective API: Efficient multilingual character-level transformers. In SIGKDD Conference on Knowledge Discovery and Data Mining , 2022. [34] Yilei Jiang, Xinyan Gao, Tianshuo Peng, Yingshui Tan, Xiaoyong Zhu, Bo Zheng, and Xiangyu Yue. HiddenDetect: Detecting jailbreak attacks against multimodal large language models via monitoring hidden states. In Wanxiang Che, Joyce Nabende, Ekaterina Shutova, and Mohammad Taher Pilehvar, editors, Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 14880–14893, Vienna, Austria, July 2025. Association for Computational Linguistics. ISBN 979-8-89176-251-0. doi: 10.186 53/v1/2025.acl-long.724. URL https://aclanthology.org/2025.acl-long.724/ .[35] Amos Azaria and Tom Mitchell. The internal state of an LLM knows when it’s lying. In 
+
+Findings of the Association for Computational Linguistics: EMNLP , 2023. [36] Andy Arditi, Oscar Obeso, Janosch Sygnowski, Daniel Paleka, Nina Panickssery, Wes Gurnee, and Neel Nanda. Refusal in language models is mediated by a single direction. In Advances in Neural Information Processing Systems (NeurIPS) , 2024. [37] Andy Zou, Long Phan, Sarah Chen, James Campbell, Phillip Guo, Richard Ren, Alexander Pan, Xuwang Yin, Mantas Mazeika, Ann-Kathrin Dombrowski, et al. Representation engineering: A top-down approach to AI transparency. arXiv preprint arXiv:2310.01405 , 2023. [38] David Ha, Andrew Dai, and Quoc V. Le. Hypernetworks. In International Conference on Learning Representations (ICLR) , 2017. URL https://openreview.net/forum?id=rkpACe 1lx .[39] Vinod Kumar Chauhan, Jiandong Zhou, Ping Lu, Soheila Molaei, and David A Clifton. A brief review of hypernetworks in deep learning. Artificial Intelligence Review , 57(9):250, 2024. [40] Johannes von Oswald, Christian Henning, João Sacramento, and Benjamin F Grewe. Continual learning with hypernetworks. In International Conference on Learning Representations (ICLR) ,2020. [41] Aviv Navon, Aviv Shamsian, Idan Achituve, et al. Equivariant architectures for learning in deep weight spaces. In International Conference on Machine Learning (ICML) , 2023. [42] Jason Phang, Yi Mao, Pengcheng He, and Weizhu Chen. HyperTuning: Toward adapting large language models without back-propagation. In International Conference on Machine Learning (ICML) , 2023. [43] Rabeeh Karimi Mahabadi, Sebastian Ruder, Mostafa Dehghani, and James Henderson. Parameter-efficient multi-task fine-tuning for transformers via shared hypernetworks. In Annual Meeting of the Association for Computational Linguistics (ACL) , 2021. [44] Boris Knyazev, Michal Drozdzal, Graham W Taylor, and Adriana Romero-Soriano. Parameter prediction for unseen deep architectures. In Advances in Neural Information Processing Systems (NeurIPS) , 2021. 12 [45] Zhiyuan Liang, Dongwen Tang, Yuhao Zhou, Xuanlei Zhao, Mingjia Shi, Wangbo Zhao, Zekai Li, Peihao Wang, Konstantin Schürholt, Damian Borth, Michael M. Bronstein, Yang You, Zhangyang Wang, and Kai Wang. Drag-and-drop LLMs: Zero-shot prompt-to-weights. arXiv preprint arXiv:2506.16406 , 2025. [46] Yi-Lin Sung, Jaemin Cho, and Mohit Bansal. LST: Ladder side-tuning for parameter and memory efficient transfer learning. In Advances in Neural Information Processing Systems (NeurIPS) , 2022. URL https://proceedings.neurips.cc/paper_files/paper/2022/ha sh/54801e196796134a2b0ae5e8adef1fef-Abstract-Conference.html .[47] Edward J Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, and Weizhu Chen. LoRA: Low-rank adaptation of large language models. In 
+
+International Conference on Learning Representations (ICLR) , 2022. URL https://openre view.net/forum?id=nZeVKeeFYf9 .[48] Jiaming Ji, Mickel Liu, Josef Dai, Xuehai Pan, Chi Zhang, Ce Bian, Boyuan Chen, Ruiyang Sun, Yizhou Wang, and Yaodong Yang. BeaverTails: Towards improved safety alignment of LLM via a human-preference dataset. In Advances in Neural Information Processing Systems (NeurIPS) , 2024. [49] Andy Zou, Zifan Wang, J. Zico Kolter, and Matt Fredrikson. Universal and transferable adversarial attacks on aligned language models. In International Conference on Machine Learning (ICML) , 2023. URL https://arxiv.org/abs/2307.15043 .13 Appendix Overview. This appendix provides additional implementation details, dataset statistics, ablation studies, and extended experimental results that complement the analyses presented in the main paper. 
+
+# A Implementation Details 
+
+Table 5: Complete hyperparameters across all stages. 
+
+Parameter Value Safe Side Network (SSN) 
+
+Hidden dim ( hs) h/ 4 (896 / 1024) Layers ( K) 12 Attention heads 7 (Qwen2) / 8 (LLaMA-3) Ladder gate μk per layer (init 0.5; predicted by hypernet) Classifier Mean pool → 2-layer MLP Param. overhead 3–4% of backbone (at 7–8B) 
+
+Hypernetwork 
+
+Hidden dim 512 Direction proj. dim 256 Magnitude hidden dim 128 Cross-layer attention 4 heads, 2 layers Classifier output rank 16 ( Wcls = B · A)Total parameters ∼230M 
+
+LoRA Fine-Tuning (per dataset) 
+
+Rank / α 16 / 32 Target modules All linear layers Epochs / learning rate 3 / 2×10 −4
+
+Batch size 4 (grad. accum. 4) Optimizer AdamW 
+
+GT SSN Training (per dataset) 
+
+Safety data BeaverTails train ( ∼7k) Safe data In-domain prompts (per fine-tuned dataset) Epochs / learning rate 3 / 2×10 −4
+
+Loss (harmful prompts) LM + BCE classification Loss (safe prompts) BCE classification 
+
+Hypernetwork Training 
+
+Epochs / learning rate 100 / 5×10 −5
+
+Optimizer AdamW ( β1=0 .9, β2=0 .999 )Scheduler Cosine annealing Calibration prompts ( Ncal ) 50 Loss weights ( βrecon , βcls , βfunc ) 1, 10, 5 Splits ( Dtrain , Dheld ) 18, 4 (per split) 
+
+Inference 
+
+SSN generation time <1 min (single GPU) Safety threshold ( λ) 0.5 Hardware 1× A100 80GB 
+
+# B Dataset Details 
+
+Table 6: The 22 datasets used across both Qwen2-7B and LLaMA-3-8B. 14 Domain Category Train Size 
+
+BoolQ QA 9.4k NQ-Open QA 10k SQuAD QA 26k PubMedQA QA 0.5k ARC Science QA 2.4k CommonsenseQA Commonsense 9.7k PIQA Physical reasoning 16.1k HellaSwag Commonsense 10k SocialIQA Social reasoning 10k GSM8K Math 7.5k Comp. Math Math 7.5k CodeFeedback Code 10k AG News Classification 24k MMLU Knowledge 14k Platypus Knowledge 5k Dolly Instruction 15k OpenOrca Instruction 10k Alpaca Instruction 52k FLAN Instruction 10k OpenHermes Instruction 10k NoRobots Instruction 10k WizardLM Instruction 10k 
+
+# C Holdout Splits 
+
+Each split removes four datasets from different task categories; the hypernetwork is trained on the remaining 18 and evaluated on the four held-out domains within the split. The split →domain mapping is also visible in the column groupings of Table 2. Table 7: Holdout splits. Each split removes four datasets from different task categories. 
+
+Split Domain 1 Domain 2 Domain 3 Domain 4 
+
+A BoolQ (QA) ARC (Science) Comp. Math (Math) Alpaca (Instr.) 
+
+B PIQA (Physical) HellaSwag (Common.) CSenseQA (Common.) OpenHermes (Instr.) 
+
+C MMLU (Knowledge) NQ-Open (QA) AG News (Classif.) Dolly (Instr.) 
+
+# D Architecture Sensitivity 
+
+Config BoolQ ARC Math † Alpaca † Harm. (%) 
+
+Rank 2 84.3 85.8 33.5 37.1 0.2 Rank 4 (def.) 86.9 86.5 34.1 38.9 0.1 Rank 8 87.0 86.5 34.2 39.0 0.1 Dim 256 85.4 85.1 33.3 37.4 0.3 Dim 512 (def.) 86.9 86.5 34.1 38.9 0.1 Dim 1024 87.1 86.6 34.1 39.0 0.1 
+
+Table 8: Architecture sensitivity (LLaMA-3, Split A). Lower capacity degrades accuracy; higher shows marginal gains. Safety robust across all configs. 15 E Example Prompts 
+
+Domain Category Format Example Prompt 
+
+BoolQ QA Yes/No Read the passage and answer. [passage]... Is Persian a Western Iranian language? 
+
+NQ-Open QA Short answer Where did the Vietnam war mainly take place? 
+
+SQuAD QA Extractive As is sometimes common in scientific discoveries, simultaneous developments can occur... 
+
+PubMedQA QA Yes/No/Maybe Is naturopathy as effective as conventional therapy for treatment of menopausal symptoms? 
+
+ARC Science QA Multiple choice Which skin surface produces the most heat? A) dry palms B) wet palms... 
+
+CommonsenseQA Commonsense Multiple choice The sanctions seemed to what the school’s efforts? A) ignore B) enforce... 
+
+PIQA Physical Multiple choice How would you accomplish this goal? Option 1:... Option 2:... 
+
+HellaSwag Commonsense Multiple choice What happens next? [context]... A) B) C) D) 
+
+SocialIQA Social Multiple choice Sydney went ice skating. How would she feel? A) upset B) happy C) social 
+
+GSM8K Math Numeric Natalia sold clips to 48 of her friends in April, then half as many in May. How many total? 
+
+Comp. Math Math Numeric Let f (x) = ax +3 if x > 2, x−5 if −2 ≤ x ≤ 2... Find a+b.
+
+CodeFeedback Code Free text Create a nested loop to print every combination of numbers between 0–9, excluding... 
+
+AG News Classification Category label Classify this article: World, Sports, Business, or Sci/Tech. Article:... 
+
+MMLU Knowledge Multiple choice Davis decided to kill Adams. He set out for Adams’s house. Before he got there he saw Brooks... 
+
+Platypus Knowledge Free text Find the angle between the vectors (2 , −1, 1) and (−1, 1, 0) , in degrees. 
+
+Dolly Instruction Free text When did Virgin Australia start operating? 
+
+OpenOrca Instruction Free text Summarize the main points of the French Revolution. 
+
+Alpaca Instruction Free text Discuss the internet’s impact on society. 
+
+FLAN Instruction Free text Can you finalize the attached and have it signed... Write a subject line for this email. 
+
+OpenHermes Instruction Free text Compose a poem where every line starts with a different alphabet letter. 
+
+NoRobots Instruction Free text Does Yi view fan fiction positively or negatively? Explain your answer. 
+
+WizardLM Instruction Free text As an online platform teacher named Aimee, you possess impeccable credentials... 
+
+Table 9: Example prompts for each dataset, grouped by category. 
+
+# F Detailed Loss-Component Ablation (Table 10) 
+
+This appendix section reports the full per-domain values corresponding to Figure 3(a). Table 10 confirms that removing Lsafe func causes the largest task-accuracy degradation, while removing Lfunc or domain calibration yields smaller but consistent drops with higher harmful rate. 
+
+Task Acc (%) ↑ Harm. Variant BoolQ ARC Math Alpaca Avg. Rate ↓
+
+Full system 86.9 86.5 34.1 38.9 61.6 0.1% 
+
+− L safe func 68.3 71.2 28.6 27.5 48.9 0.0% 
+
+− L func (weight MSE only) 84.2 85.8 33.6 36.1 59.9 0.6% 
+
+− Domain calibration 84.4 85.7 33.5 36.8 60.1 0.3% 
+
+Table 10: Component ablation (LLaMA-3, Split A holdout). −L safe func : classifier over-blocks safe prompts (accuracy drops). −Domain calibration: accuracy degrades on harder datasets without task-specific fingerprints. 16 G Detailed Training-Data Ablation (Table 11) 
+
+This appendix section reports the full per-domain values corresponding to Figure 3(b). Table 11 shows that most category removals have limited effect on task accuracy and harmful rate, whereas removing instruction-following data produces a clear harmful-rate spike across all holdout domains.                                              
+
+> Task Acc (%) ↑Harm. Training Config #BoolQ ARC Math Alpaca Avg. Rate ↓
+> Full 18 86.9 86.5 34.1 38.9 61.6 0.05%
+> −Dialog & chat 16 86.7 86.3 33.9 38.5 61.4 0.05%
+> −Math & code 15 86.8 86.5 33.4 38.6 61.3 0.08%
+> −QA & reading 15 86.1 85.7 34.0 38.2 61.0 0.15%
+> −Instruction-following 12 86.8 86.4 33.8 38.7 61.4 4.88%
+
+Table 11: Category exclusion ablation (LLaMA-3, Split A holdout). Task accuracy is stable across all configurations. Removing instruction-following domains causes a ∼100 × harmful-rate spike (0.05% → 4.88%); other categories are dispensable for safety. 
+
+# H Detailed Calibration Set Size Sweep (Table 12) 
+
+This appendix section reports the per-domain task accuracy values that underlie Figure 4. Table 12 confirms that the gains saturate at Ncal =50 uniformly across BoolQ, ARC, Math, and Alpaca, while the harmful rate stays ≤ 0.4% across the entire sweep.                                  
+
+> Task Acc (%) ↑Harm.
+> Ncal BoolQ ARC Math Alpaca Rate ↓
+> 10 82.3 84.1 32.8 35.6 0.0% 25 84.7 85.4 33.5 37.2 0.0%
+> 50 86.9 86.5 34.1 38.9 0.1%
+> 100 87.1 86.6 34.2 39.1 0.4% 200 87.2 86.5 34.1 39.0 0.3%
+
+Table 12: Effect of calibration set size Ncal (LLaMA-3, Split A holdout). Accuracy improves up to 
+
+Ncal =50 then plateaus; safety remains stable across all settings. 17

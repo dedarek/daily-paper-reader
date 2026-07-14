@@ -6,37 +6,38 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-13
-- 运行时间：2026-07-13 05:18:32 UTC
+- 最新运行日期：2026-07-14
+- 运行时间：2026-07-14 05:10:30 UTC
 - 运行状态：成功
-- 本次总论文数：5
+- 本次总论文数：6
 - 精读区：3
-- 速读区：2
+- 速读区：3
 
 ### 今日简报（AI）
-今日精读5篇论文，核心聚焦大模型知识库投毒防御与功率校准水印技术。  
-① 针对RAG框架的知识库投毒攻击与防御策略、② 无需启发式调参的LLM水印方案，均为高分重点。  
-建议优先了解知识库安全加固与高效水印实现，以提升系统鲁棒性与内容可溯源能力。
-- 详情：[/202607/13/README](/202607/13/README)
+今天分析了6篇论文，精读重点涵盖可穿戴设备视觉语言模型的物理提示注入攻击与防御、以及多语言对抗注入对LLM相关性判断的影响。最值得关注的是《Devil in the Lens》的防御方案（9.0分）和《Multi-Lingual and Keyword Adversarial Injection》（8.0分）。下一步建议重点理解物理提示注入的防御逻辑，并思考多语言场景下模型判断的脆弱性。
+- 详情：[/202607/14/README](/202607/14/README)
 
 ### 精读区论文标签
-1. [Knowledge Base Poisoning Attacks and Defense for Policy-Aware LLM-RAG Framework](/202607/13/2607.04379v1-knowledge-base-poisoning-attacks-and-defense-for-policy-aware-llm-rag-framework)  
+1. [Devil in the Lens: Analyzing and Defending Physical Prompt Injection Against Vision-Language Models on Wearable Devices](/202607/14/2607.10269v1-devil-in-the-lens-analyzing-and-defending-physical-prompt-injection-against-vision-language-models-on-wearable-devices)  
+   标签：评分：9.0/10、query:llm-security
+   evidence：分析并提出针对可穿戴设备上VLM物理提示注入的防御方法
+2. [The Effect of Multi-Lingual and Keyword Adversarial Injection on LLM Relevance Judgment](/202607/14/2607.10080v1-the-effect-of-multi-lingual-and-keyword-adversarial-injection-on-llm-relevance-judgment)  
    标签：评分：8.0/10、query:llm-security
-   evidence：针对LLM-RAG知识库投毒的攻击与防御
-2. [Beyond Heuristic Tuning: Power-Calibrated LLM Watermarking](/202607/13/2607.05694v1-beyond-heuristic-tuning-power-calibrated-llm-watermarking)  
+   evidence：对LLM相关性判断的多语言提示注入攻击
+3. [HyperSafe: Inference-Time Safety Recovery for Fine-Tuned Language Models](/202607/14/2607.11475v1-hypersafe-inference-time-safety-recovery-for-fine-tuned-language-models)  
    标签：评分：8.0/10、query:llm-security
-   evidence：功率校准的水印技术用于识别LLM生成内容
-3. [Neuro-Agentic Control: A Deep Learning-based LLM-Powered Agentic AI Framework for Controlling Security Controls](/202607/13/2607.09076v1-neuro-agentic-control-a-deep-learning-based-llm-powered-agentic-ai-framework-for-controlling-security-controls)  
-   标签：评分：8.0/10、query:llm-security
-   evidence：神经代理控制框架，通过反事实物理注入实现安全代理控制
+   evidence：恢复微调后LLM的安全行为，适用于LLM智能体的安全机制
 
 ### 速读区论文标签
-1. [Large Language Models (LLMs) and Generative AI in Cybersecurity and Privacy: A Survey of Dual-Use Risks, AI-Generated Malware, Explainability, and Defensive Strategies](/202607/13/2607.06963v1-large-language-models-llms-and-generative-ai-in-cybersecurity-and-privacy-a-survey-of-dual-use-risks-ai-generated-malware-explainability-and-defensive-strategies)  
+1. [Cross-Layer Misalignment Detection in Agent Skills: A Progressive Loading-Aware Contrastive Learning Approach](/202607/14/2607.10534v1-cross-layer-misalignment-detection-in-agent-skills-a-progressive-loading-aware-contrastive-learning-approach)  
+   标签：评分：7.0/10、query:llm-security
+   evidence：检测Agent技能中的不一致，属于LLM智能体安全机制
+2. [Beyond Attack-Success Rate: Action-Graded Severity Scale for Tool-Using AI Agents](/202607/14/2607.07474v1-beyond-attack-success-rate-action-graded-severity-scale-for-tool-using-ai-agents)  
    标签：评分：6.0/10、query:llm-security
-   evidence：综述涵盖LLM安全风险、对抗攻击及防御策略
-2. [Optimizing Against Safety Representations: Activation-Guided Adversarial Suffixes and the Geometry of Refusal](/202607/13/2607.08883v1-optimizing-against-safety-representations-activation-guided-adversarial-suffixes-and-the-geometry-of-refusal)  
+   evidence：智能体工具调用轨迹的动作分级伤害量表
+3. [AMT-X: Phase-Structured Multi-Turn Red-Teaming with Checklist-Gated Evaluation](/202607/14/2607.11151v1-amt-x-phase-structured-multi-turn-red-teaming-with-checklist-gated-evaluation)  
    标签：评分：6.0/10、query:llm-security
-   evidence：对抗后缀攻击优化与拒绝方向分析，可辅助缓解对抗提示
+   evidence：多轮红队测试评估LLM安全性
 
 
 <div class="dpr-home-promo-card">
