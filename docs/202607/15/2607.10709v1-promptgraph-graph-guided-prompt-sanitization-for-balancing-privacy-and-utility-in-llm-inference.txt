@@ -1,0 +1,416 @@
+Title: PromptGraph: Graph-Guided Prompt Sanitization for Balancing Privacy and Utility in LLM Inference
+
+URL Source: https://arxiv.org/pdf/2607.10709v1
+
+Published Time: Tue, 14 Jul 2026 01:47:59 GMT
+
+Number of Pages: 8
+
+Markdown Content:
+> 1
+
+# PromptGraph : Graph-Guided Prompt Sanitization for Balancing Privacy and Utility in LLM Inference 
+
+Chen Gu, Hui Wan, Donghui Hu, Hui Wang, and Zhuoer Gu 
+
+Abstract —Large Language Model (LLM) services introduce a fundamental privacy challenge. Sensitive information may be inferred not only from explicit identifiers, such as names or phone numbers, but also from contextual associations among otherwise innocuous spans. Existing sanitizers typically assign privacy or utility signals to individual spans without explicitly modeling pairwise relationships among them. In this paper, we propose PromptGraph , a graph-guided prompt-sanitization approach for privacy-preserving LLM inference. PromptGraph 
+
+estimates privacy leakage at the span level and utility-relevant contextual dependencies between pairs of spans. It represents each prompt as an attributed graph, in which nodes carry span-level privacy scores and edges encode contextual dependencies needed to preserve utility. The sanitization objective selects a protected span set that maximizes privacy gain while penalizing the loss of contextual dependencies. This formulation explicitly balances privacy and utility when contextual evidence is hidden. Protected spans are sanitized locally, and returned placeholders are restored only after passing local consistency checks. We conduct extensive experiments showing that PromptGraph 
+
+achieves a more favorable balance between privacy and utility than prompt-privacy baselines. 
+
+Index Terms —Prompt sanitization, privacy-preserving inference, large language models, graph-guided selection. 
+
+I. I NTRODUCTION 
+
+Cloud Large Language Models (LLMs) are widely deployed through a prompt–response workflow, in which users submit prompts to remote servers and receive generated outputs [1]. Although this paradigm makes foundation models broadly accessible, it requires prompt content to be disclosed during each remote inference request [2]. Such prompts may contain sensitive information, including personal attributes and account credentials. Consequently, prompts transmitted to remote LLM servers may expose users’ private information. Prior work has explored several strategies for reducing privacy leakage in prompts. Differentially private text sani-tization [3], [4] perturbs tokens or representations to limit disclosure. However, these classical perturbation methods are not primarily designed for prompt workflows that require local restoration after generation. Prompt sanitization methods instead protect the input before cloud inference. HaS [5] hides private entities locally and restores anonymized responses after generation. InferDPT [6] studies privacy-preserving inference for black-box LLMs through perturbation and extraction. DP-OPT [7] investigates a related but distinct prompt optimization 
+
+Chen Gu, Hui Wan, Donghui Hu, and Hui Wang are with the School of Computer Science and Information Engineering, Hefei University of Tech-nology, Hefei, China (e-mail: guchen@hfut.edu.cn; wanhui@mail.hfut.edu.cn; hudh@hfut.edu.cn; wanghui@hfut.edu.cn). Zhuoer Gu is with International College Beijing, China Agricultural University, China (e-mail: guzhuoer@cau.edu.cn). Local User Cloud LLM      
+
+> Alice
+> Under-sanitization
+> [MASK] asks whether fasting log and dosage adjustment should be included in the treatment plan.
+> Health status remains inferable
+> Over-sanitization
+> [MASK] asks whether [MASK]
+> and [MASK] should be included in
+> [MASK] .
+> Intent Underspecified
+> Task Relation Attribute Privacy Cue
+> Masking
+> Prompt
+> Alice asks whether fasting log and dosage adjustment should be included in the treatment plan.
+> fasting
+> log
+> dosage
+> adjustment treatment
+> plan
+> Observed issue
+> Independent span scores overlook how context couples privacy and utility.
+
+Fig. 1: Context-coupled privacy risks of independent span sanitization. Under-sanitization may mask an explicit value while leaving contextual cues that support sensitive-attribute inference, whereas over-sanitization may remove task-relevant relations and leave the prompt underspecified for downstream LLM inference. setting under differential privacy. Closer to our setting, ProSan [8] balances privacy leakage risk with word importance, while ALSA [9] considers privacy leakage risk, contextual information importance, and task relevance when assigning anonymization actions. These studies suggest that lightweight local sanitization can be integrated into online LLM workflows. Despite this progress, existing prompt sanitization methods still do not explicitly model how privacy leakage and task utility are coupled through contextual relations. As illustrated in Figure 1, independent span decisions may hide an explicit sensitive value while leaving nearby cues that support recovery or attribute inference. They may also remove contextual relations that downstream inference needs. Existing methods such as ProSan [8] and ALSA [9] mainly attach importance or relevance signals to individual words or spans, rather than to the relations among them. In ALSA, for example, contextual information importance is summarized as a word-level feature and combined with privacy and task relevance in a clustering-based action rule. Such designs do not identify which visible spans provide evidence for recovering a sensitive or hidden span, nor do they score the utility loss caused by removing a particular relation. The key problem is therefore how to select prompt content for protection while reducing contextual privacy risk and preserving relations needed for downstream inference .In this paper, we propose PromptGraph , a graph-guided prompt sanitization approach that hides evidence of private information while preserving contextual relations. It first estimates span privacy from local patterns and counterfactual masking, so contextual privacy cues are handled as node-level privacy evidence. It then estimates contextual dependency for arXiv:2607.10709v1 [cs.CR] 12 Jul 2026 2
+
+utility preservation by checking how much one span supports local reconstruction of another. This edge-level dependency goes beyond span relevance by making utility-relevant pairwise relations explicit in the selection objective. The scored spans and retained pairwise relations are organized as a prompt graph for selection. The approach selects protected spans through a principled trade-off between privacy gain and contextual utility loss. Protected spans are locally sanitized, and returned placeholders are restored only when they pass local consistency checks. This graph-guided selection protects high-risk spans while avoiding unnecessary removal of contextual relations needed for downstream tasks. The novelty of PromptGraph 
+
+lies in reframing prompt sanitization from isolated span scoring as relation-aware graph selection, enabling a more explicit balance between privacy protection and task utility. Our contributions are summarized as follows.  
+
+> •
+
+We propose PromptGraph , a graph-guided prompt sanitization approach that protects sensitive prompt content while preserving contextual relations needed for down-stream inference.  
+
+> •
+
+The approach first segments a prompt into textual spans, estimates span privacy risk and contextual dependency for utility preservation, and organizes the scored spans and relations as an attributed prompt graph. It then selects protected spans with an edge-aware objective and restores returned placeholders only after local consistency checks.  
+
+> •
+
+We conduct extensive experiments on three task datasets, three mainstream LLMs, and two server-side attack eval-uations, demonstrating a more favorable balance between privacy and utility than baselines. II. R ELATED WORK 
+
+A. Privacy-Preserving Prompt Solutions 
+
+Privacy-preserving prompt solutions aim to protect sensitive information during cloud LLM inference while preserving the utility of sanitized prompts for downstream tasks. Practical approaches typically anonymize prompts locally and restore protected content after generation. HaS [5] replaces sensitive entities before inference and restores them in the returned response. Another line of work reduces disclosure through calibrated perturbations, often under differential privacy guar-antees. Early text sanitization methods [3], [4] perturb tokens or representations to limit information leakage. InferDPT [6] investigates privacy-preserving inference for black-box LLMs through perturbation and extraction, while DP-OPT [7] applies differential privacy to prompt optimization rather than direct prompt sanitization. More recent methods aim to balance privacy and utility. ProSan [8] balances privacy leakage risk against word importance, and ALSA [9] additionally incorpo-rates contextual importance and task relevance when selecting anonymization actions. Nevertheless, existing approaches still make protection decisions primarily at the span level, even when contextual or task-aware signals are considered. 
+
+B. Contextual Evidence and Structured Prompting 
+
+Recent studies have shown that LLM behavior is strongly influenced by both the content and organization of contextual information. In-context learning research demonstrates that demonstration retrieval [10], prompt format, example selection, and example ordering can all substantially affect downstream performance [11]. Studies on long-context models [12] further reveal that LLMs do not utilize contextual evidence uniformly, with performance often depending on the position of relevant information within the prompt. While these findings highlight the importance of contextual evidence for task performance, they do not address how such information should be protected or preserved during prompt sanitization. Structured prompting provides another perspective on how contextual dependencies can be represented. Prior prompting methods elicit intermediate reasoning steps in explicit chains or organize reasoning states as graphs [13], [14], showing that structure can support more flexible LLM reasoning. However, these structures are designed for reasoning rather than for selecting which prompt content should be hidden before cloud inference. III. P RELIMINARIES 
+
+A. Counterfactual Masking 
+
+Counterfactual analysis [15] estimates the effect of an input component by comparing a score before and after a controlled intervention. Let x = [ u1, u 2, . . . , u n] denote an input represented as a sequence of components, and let 
+
+T ⊆ { 1, . . . , n } be an intervention set. A masked counterfactual input is defined as: 
+
+x\T = [¯ u1, . . . , ¯un], ¯uk =
+
+(
+
+[MASK] , k ∈ T, uk, k / ∈ T. (1) For a scoring function H(·), the positive counterfactual contribution of component ui can be written as: 
+
+∆Hi = [ H(x) − H(x\{ i})] +, (2) where [·]+ = max( ·, 0) retains only positive score reductions caused by masking. This notation quantifies the marginal effect of an intervened component on the output of an estimator, without specifying how components are selected or how the estimator is implemented. 
+
+B. Threat Model 
+
+We consider black-box LLM inference with a local sanitizer. Given an original prompt q, the client sends only the sanitized prompt ˜q to the cloud model, receives a sanitized response ˜r,and locally restores the placeholders using a private restoration table to obtain the final response r.The cloud service is honest but curious and can observe only artifacts visible to the server: the sanitized prompt ˜q,the raw response ˜r, and the public sanitization procedure. It does not observe the original prompt q, the restoration table, local detector scores, or restoration decisions on the client. Under this view, we consider two risks on the server side. A recovery attack attempts to reconstruct hidden sensitive values from visible context. An attribute inference attack attempts to infer sensitive attribute types from residual cues even when the original values remain hidden. We exclude client compromise and attacks using records specific to the user. 3
+
+C. Problem Formulation 
+
+Let q = [u1, u 2, . . . , u n] be a prompt segmented into textual spans. A span may reveal sensitive information either directly through its surface form or indirectly through its contextual relations with other spans. Prompt sanitization aims to construct a sanitized prompt ˜q that reduces such evidence while preserving the information required for downstream inference. We formulate this problem over a prompt graph: 
+
+G(q) = ( V, E, P, I), (3) where V = {vi}ni=1 and each node vi corresponds to span ui.The edge set E ⊆ { (vi, v j ) : 1 ≤ i < j ≤ n} contains retained contextual relations, P stores span privacy scores Pi, and I
+
+stores utility-oriented dependency scores Iij . A protected set 
+
+S ⊆ V induces a sanitized prompt ˜q. Because replacing either endpoint makes the original pairwise context unavailable to the cloud, every edge incident to S is affected. We therefore select S to maximize privacy gain while minimizing the total weight of affected dependencies. IV. M ETHODOLOGY 
+
+A. Overview 
+
+The overview of PromptGraph is shown in Figure 2. It operates on the client side for prompt sanitization before inference and response restoration after inference. Given an original prompt, the local sanitizer first segments it into textual spans, estimates span privacy leakage risk, and scores contextual dependency for utility preservation for retained pairs. These scored spans and pairwise relations are then organized as a prompt graph that guides protection selection. The selection algorithm then identifies protected spans and replaces each of them with an opaque placeholder carrying only a local identifier generated by the client. Only the sanitized prompt is sent to the cloud LLM. After the cloud model returns a response, the local postprocessor checks placeholder consistency before restoration. Thus the cloud service observes only the sanitized prompt, the model response, and intentionally opaque placeholder identifiers. 
+
+B. Span Privacy Scoring 
+
+Span privacy leakage risk is estimated from two comple-mentary sources. The first is the direct evidence score Di,obtained from local rules. As a surface-form score, spans that exactly match or are confidently identified by privacy detectors receive high risk values, while unmatched spans receive low or zero scores. It captures explicit sensitive patterns such as email addresses, physical addresses, and database credentials. However, direct evidence covers only surface patterns that local detectors can explicitly match and therefore cannot capture attribute evidence implied by otherwise ordinary contextual spans. The second source relies on a local privacy estimator G(a|x),which returns an exposure score for sensitive attribute a ∈ A 
+
+in text x, where A denotes the set of sensitive attributes considered locally. Unlike Di, which scores a single span by direct surface matches, G scores the whole text and estimates attribute exposure from contextual cues. In practice, G can be implemented as an ensemble of lightweight attribute classifiers and cue detectors on the client. This local estimator enables counterfactual assessment of contextual evidence. Beyond explicitly sensitive strings, otherwise benign spans may become privacy sensitive through their contextual associations. For each span ui, we construct a counterfactual prompt q\i by replacing 
+
+ui with a designated placeholder. The placeholder preserves the span position while withholding its original content. We then estimate the contribution of ui by comparing attribute evidence before and after masking: 
+
+Ci = max 
+
+> a∈A
+
+G(a | q) − G(a | q\i) 
+
+> +
+
+, (4) where [·]+ retains only positive reductions in attribute evidence. Intuitively, a span receives a high contextual score when mask-ing it substantially reduces evidence for inferring a sensitive attribute. Consequently, spans without explicit sensitive strings may still receive high privacy scores if they make sensitive attributes easier to infer. Because both Di and Ci are on the same normalized scale, the final span privacy score combines both sources conservatively: 
+
+Pi = max( Di, C i). (5) The maximum operator protects explicitly sensitive spans even when the contextual estimator is uncertain, while still identifying ordinary spans whose removal substantially reduces sensitive attribute evidence. 
+
+C. Pairwise Dependency Scoring 
+
+For each retained candidate pair (ui, u j ), we assign a contextual dependency score Iij . Unlike the span privacy score 
+
+Pi, Iij estimates the potential utility loss caused by removing a relation. A pair is contextually dependent when either span supports local reconstruction of the other. To reduce computation, we score contextual dependencies only for a sparse candidate set C rather than for all span pairs. We construct C with the top k nearest neighbors in the span embedding space. Each span is encoded, compared with other spans by cosine similarity, and connected to its k most similar neighbors. We treat the resulting candidate pairs as undirected. This keeps the relation graph compact while retaining pairs that are likely to share useful context. Let ℓi(x) denote a local reconstruction score that measures how strongly the visible context x supports recovery of target span ui. It is a utility signal, rather than a privacy-risk or attack score. The pairwise construction below applies to any local scorer that produces ℓi(x). For example, a masked language model with parameters θ provides the following token-level instantiation [16]. Let ui = (wi, 1, . . . , w i,m i ) contain mi
+
+tokens. For a prompt x that retains ui but may mask other spans, let x\(i,t ) mask only wi,t :
+
+ℓi(x) = 1
+
+mimiX
+
+> t=1
+
+log Pθ
+
+ wi,t | x\(i,t )
+
+ . (6) Length normalization makes scores comparable across spans of different lengths. Larger ℓi(x) values indicate stronger contextual support for recovering ui.4Spans 
+
+Span Privacy Scoring 
+
+User with Prompt 
+
+> Segmentation
+> Pairwise Dependency Scoring
+> Masking & Normalizing
+
+Sanitization 
+
+> Selecting
+> [p3] [P2]
+> [P1]
+> Spans after Sanitization
+
+Sanitized Prompt 
+
+Cloud LLM 
+
+Local Restoration   
+
+> Response
+> [P1]
+> [P2]
+> [P3] [p4]
+> Response
+> Original Spans
+> Sanitized Spans Response Spans
+> [p4]
+> Sensitive Spans Restoring
+
+Fig. 2: Overview of PromptGraph . The local client segments the input prompt into textual spans, estimates span-level privacy risk and pairwise contextual dependency for utility preservation, and forms an attributed graph whose nodes correspond to spans and whose edges encode contextual dependencies. Graph-guided selection replaces protected spans with locally generated placeholders ([P1]–[P4]) before cloud inference. Only the sanitized prompt is sent to the cloud. The private mapping and restoration remain on the client after the response is returned. For a retained candidate pair (ui, u j ), we measure depen-dency by the reduction in one span’s reconstruction score when the other is masked: 
+
+aij = 12
+
+
+
+[ℓi(q) − ℓi(q\j )] +
+
++ [ ℓj (q) − ℓj (q\i)] +
+
+
+
+.
+
+(7) The two terms capture support in opposite directions, and the positive part retains only utility-relevant dependencies. Contextual dependency scores are then normalized within the retained candidate set C:
+
+Iij = aij / max   
+
+> (up,u q)∈C
+
+apq . (8) If all raw scores are zero, we set Iij = 0 for every candidate pair. After normalization, larger Iij values indicate stronger contextual dependency. An edge is affected once either endpoint is protected and is penalized only once. 
+
+D. Dependency-Aware Sanitization 
+
+After scoring, PromptGraph seeks a protected set that maximizes the following objective: 
+
+max  
+
+> S⊆V
+
+F (S), F (S) = R(S) − λL (S),
+
+where 
+
+
+
+R(S) = X
+
+> vi∈S
+
+Pi,Eaff (S) = {(vi, v j ) ∈ E : {vi, v j } ∩ S̸ = ∅},L(S) = X  
+
+> (vi,v j)∈Eaff (S)
+
+Iij .
+
+(9) Here, λ controls the privacy–utility trade-off. Each edge is charged when its first endpoint enters S and is not charged again if the other endpoint is later selected. When λ = 0 , the objective performs span-only sanitization. Larger λ increasingly prioritizes contextual-dependency preservation, trading privacy gain for utility. We approximately optimize this discrete objective with a greedy marginal heuristic. For each unprotected node, its marginal gain equals its privacy score minus the λ-weighted sum of newly affected edges to other unprotected nodes. Starting from S = ∅, PromptGraph repeatedly adds the node with the largest positive marginal gain and stops when none remains. After selection, each span in S is replaced with an opaque placeholder carrying a local identifier, producing the sanitized prompt ˜q. Only ˜q is sent to the cloud LLM for inference, 5
+
+while the original spans, placeholder mapping, and private type metadata remain local. 
+
+E. Local Restoration 
+
+After the cloud LLM returns a response ˜r, the local postprocessor scans it for placeholder strings. For each observed placeholder, it first checks whether its local identifier matches an entry in the private restoration table. It then applies the local consistency checks using the private metadata stored with that entry. A placeholder is restored only when both checks succeed, replacing it with the corresponding original protected span in the final response r. The restoration table and its metadata remain on the client throughout this process. If the model rewrites a placeholder, invents a new identi-fier, or omits a placeholder, the corresponding item remains unresolved rather than being mapped to a protected span. Thus, the postprocessor does not restore a placeholder merely because it resembles a valid one. This validation confines restoration to client-side entries that pass local checks and prevents malformed or fabricated placeholders from triggering unintended restoration of sensitive content. V. E XPERIMENTS 
+
+A. Experimental Setup 1) Datasets and Models: We evaluate PromptGraph on three task datasets: MedQA [17] is used for medical question answering, SAMSum [18] for dialogue summarization, and CodeAlpaca-20k for instruction-style code generation [19]. To evaluate response quality from LLMs, we use three mainstream downstream LLMs: Llama-3.1-8B [20], Mistral-7B [21], and Qwen3-8B [22]. 
+
+2) Baselines: We compare six baselines spanning rule-based masking and representative prompt privacy methods. 
+
+RegexMasking removes structured sensitive strings using predefined patterns. HaS [5] performs local hide-and-seek anonymization with restoration after generation. InferDPT [6] and DP-OPT [7] represent private inference by perturbation and differentially private prompt optimization, respectively. 
+
+ProSan [8] balances privacy risk with word importance, while 
+
+ALSA [9] further incorporates contextual importance and task relevance when assigning anonymization actions. 
+
+3) Evaluation Metrics: Privacy is measured with Privacy Hiding Rate (PHR) [8] and two attack metrics on the server side: Recovery Attack Success Rate (Rec-ASR) [23] and Attribute Inference Attack Success Rate (Attr-ASR) [24], [25]. Rec-ASR measures whether the attacker can recover the exact sensitive value, while Attr-ASR measures whether the attacker can infer the sensitive attribute type or meaning even without recovering the exact value. We utilize task utility to measure whether the cloud LLM’s response remains correct and useful after prompt privacy protection. Efficiency is evaluated by the local preprocessing overhead, including Sanitization Time Cost (STC) and Peak Memory Overhead (PMO). Please note that, because the three datasets represent distinct task types, we use task-specific utility metrics: answer accuracy for MedQA, ROUGE-L [26] for SAMSum, and equal-weight CodeBLEU [27] for CodeAlpaca. We collectively refer to these measures as Task Utility .                                                                                                                                      
+
+> Model Method PHR ↑ASR ↓
+> Med SAM Code Avg. Rec Attr Llama RegexMasking 0.652 0.662 0.547 0.620 0.087 0.700 HaS 0.859 0.884 0.458 0.734 0.283 0.705 InferDPT 0.759 0.780 0.898 0.812 0.078 0.472 DP-OPT 0.211 0.203 0.524 0.313 0.320 0.676 ProSan 0.653 0.749 0.547 0.650 0.094 0.612 ALSA 0.656 0.552 0.472 0.560 0.202 0.654 Ours 0.879 0.847 0.894 0.873 0.045 0.347
+> Mistral RegexMasking 0.652 0.662 0.547 0.620 0.089 0.700 HaS 0.869 0.887 0.391 0.716 0.298 0.717 InferDPT 0.755 0.784 0.816 0.785 0.087 0.477 DP-OPT 0.205 0.213 0.489 0.302 0.296 0.659 ProSan 0.650 0.750 0.551 0.650 0.099 0.616 ALSA 0.649 0.558 0.468 0.558 0.210 0.669 Ours 0.886 0.850 0.876 0.871 0.050 0.352
+> Qwen3 RegexMasking 0.652 0.662 0.547 0.620 0.086 0.700 HaS 0.851 0.892 0.438 0.727 0.288 0.710 InferDPT 0.736 0.777 0.884 0.799 0.082 0.483 DP-OPT 0.216 0.221 0.505 0.314 0.330 0.654 ProSan 0.647 0.748 0.528 0.641 0.093 0.615 ALSA 0.648 0.565 0.470 0.561 0.201 0.645 Ours 0.898 0.848 0.890 0.879 0.047 0.345
+
+TABLE I: Privacy evaluation across downstream LLMs, datasets, and attacks on the server side. 
+
+4) Parameter Settings: The main experiments set the trade-off coefficient to λ = 0.2 and the embedding neighbor sparsification parameter to k = 4 . The direct evidence term Di
+
+is computed from the outputs of rule-based entity recognizers and custom regular expression recognizers [28]. Mapped detector scores are normalized on the validation split of AI4Privacy PII-Masking-300k [29], a PII masking dataset used in recent evaluations of masking models. 
+
+B. Experimental Results 1) Privacy Evaluation: As shown in Table I, 
+
+PromptGraph achieved the highest average PHR for each of the three downstream LLMs. PHR is computed over the server-visible sanitized prompt and raw response before local restoration. The identical RegexMasking values across model blocks reflect its deterministic prompt-side masking behavior in these runs. The consistently high PHR of PromptGraph suggests that its selected spans protect both explicit sensitive values and contextually related attribute cues. Although some baselines performed particularly well in individual settings, including HaS on SAMSum and InferDPT on CodeAlpaca with Llama-3.1-8B, their PHR performance varied more substantially across datasets. Overall, 
+
+PromptGraph provided more stable privacy coverage across the three task formats. Attack results showed the same trend. PromptGraph 
+
+consistently achieved the lowest Rec-ASR and Attr-ASR, indicating reduced exposure of both exact sensitive values and attribute evidence. By comparison, RegexMasking remained susceptible to attribute inference, HaS still leaked contextual information despite its high SAMSum PHR, and InferDPT retained more attribute evidence. These results indicate that contextual span privacy scoring covered both explicit sensitive content and attribute cues, while the dependency-aware penalty helped preserve utility-relevant context during this privacy-driven selection. 6                                                                   
+
+> Model Method Task Utility ↑
+> MedQA SAMSum CodeAlpaca Llama RegexMasking 0.171 0.104 0.510 HaS 0.230 0.157 0.403 InferDPT 0.241 0.042 0.263 DP-OPT 0.241 0.088 0.439 ProSan 0.246 0.081 0.459 ALSA 0.234 0.103 0.321 Ours 0.248 0.149 0.536
+> Mistral RegexMasking 0.332 0.202 0.489
+> HaS 0.320 0.211 0.442 InferDPT 0.154 0.045 0.292 DP-OPT 0.327 0.194 0.457 ProSan 0.304 0.168 0.444 ALSA 0.318 0.154 0.380 Ours 0.335 0.234 0.472 Qwen3 RegexMasking 0.333 0.141 0.619
+> HaS 0.320 0.210 0.540 InferDPT 0.113 0.018 0.251 DP-OPT 0.331 0.145 0.570 ProSan 0.326 0.163 0.562 ALSA 0.289 0.170 0.381 Ours 0.336 0.240 0.592
+
+TABLE II: Utility evaluation across various LLM task models and datasets. 0.1 0.2 0.3 0.4 0.2 0.4 0.6 0.8    
+
+> Task Utility PHR
+> RegexMasking HaS InferDPT DP-OPT ProSan ALSA PromptGraph
+
+(a) PHR–utility trade-off 0.1 0.2 0.3 0.4 0.2 0.4 0.6  
+
+> Task Utility ASR
+
+(b) ASR–utility trade-off 
+
+Fig. 3: Privacy–utility trade-offs. Faint points indicate individual downstream task models, and larger points indicate method averages. ASR is computed as the average of Rec-ASR and Attr-ASR. 
+
+2) Utility Evaluation: The utility evaluation tests whether the privacy gains above came at the cost of downstream task performance. As shown in Table II, PromptGraph 
+
+achieved the best score in six of the nine model-dataset settings and remained close to the best baseline in the other three. This stable utility is especially clear on MedQA, where 
+
+PromptGraph was best across all models, and on SAMSum, where preserving high-dependency speaker and event relations kept summaries competitive. On CodeAlpaca, RegexMasking remained strong because many programming instructions survived simple masking, but PromptGraph still achieved the best score and stayed close on the other two models. These results indicate that the privacy gains of PromptGraph were not obtained by excessive removal of task-relevant content. Based on the results in Tables I and II, Figure 3 summarizes the trade-off between privacy and utility. Figure 3a shows that PromptGraph occupies the desirable high-privacy, high-utility region, achieving the highest average PHR while maintaining the highest average task utility among all compared methods. The results in Figure 3b show that PromptGraph 
+
+also achieves the lowest average ASR without sacrificing utility. These results demonstrate that PromptGraph strengthens                             
+
+> Metric Setting Full
+> PromptGraph
+> w/o contextual term Ci
+> w/o pairwise weights Iij
+> PHR ↑
+> MedQA 0.879 0.875 0.940 SAMSum 0.847 0.808 0.853 CodeAlpaca 0.894 0.750 0.985 ASR ↓Rec-ASR 0.045 0.233 0.021 Attr-ASR 0.347 0.555 0.238 Task Utility ↑
+> MedQA 0.248 0.252 0.117 SAMSum 0.149 0.197 0.057 CodeAlpaca 0.536 0.650 0.514
+
+TABLE III: Ablation of PromptGraph ’s contextual privacy term and pairwise dependency weights using Llama-3.1-8B. 0.00 0.25 0.50 0.75 1.00 0 0.1 0.2 0.5 1.0    
+
+> PHR
+> λvalue
+> k=1 k=2 k=4 k=8
+
+(a) PHR 0.34 0.35 0.36 0.37 0.38 0 0.1 0.2 0.5 1.0   
+
+> Task Utility
+> λvalue
+
+(b) Task Utility 
+
+Fig. 4: Effects of the trade-off coefficient λ and graph sparsity 
+
+k on PromptGraph ’s privacy and task utility. privacy protection while preserving task utility. 
+
+3) Ablation Studies: To disentangle the contributions of the two graph-aware signals, we ablate each component and observe complementary effects on privacy and utility. In Table III, removing the contextual term Ci lowered PHR and raised both attack success rates, while task utility increased. This setting still protects direct detector hits but no longer assigns privacy value to ordinary spans through counterfactual attribute evidence. The result is therefore consistent with Ci
+
+reducing inferential leakage at the cost of hiding some context that supports task execution. By contrast, eliminating the pairwise weights Iij strength-ened measured privacy but reduced utility, with the clearest drops on MedQA and SAMSum. Because the edge penalty then vanishes from the greedy marginal gain, selection is driven only by span privacy scores and becomes more aggressive. It consequently removes additional sensitive evidence, but can also break relationships that the downstream model uses. The full method retains both signals, thereby avoiding the two one-sided behaviors: high contextual exposure without Ci and excessive context removal without Iij .
+
+4) Sensitivity Analysis of Hyperparameters: We assessed the sensitivity of PromptGraph to the trade-off coefficient 
+
+λ and graph sparsity k. Figure 4 reveals a broad stable region as λ increases from 0 to 0.2, with nearly unchanged PHR and task utility across sparsity settings. The main configuration, with a coefficient of 0.2 and k set to 4, lies within this plateau. Beyond this region, larger coefficients shift selection toward retaining dependency-weighted context. When λ is 1.0, the edge-dependency penalty causes settings to select almost no content for protection. Privacy declined first for denser graphs, 7MedQA SAMSum CodeAlpaca 
+
+> 0
+> 1
+> 2
+> 3
+> STC (s)
+> RegexMasking
+> HaS
+> InferDPT
+> DP-OPT
+> ProSan
+> ALSA
+> PromptGraph
+
+(a) STC Results MedQA SAMSum CodeAlpaca  
+
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> STC (s)
+> <0.1
+> <0.1
+> <0.1
+> 0.59
+> 0.54
+> <0.1
+> <0.1
+> <0.1
+> <0.1
+> <0.1
+> <0.1
+> <0.1
+> Span Privacy Scoring
+> Pairwise Dependency Scoring
+> Dependency-Aware Sanitization
+> Local Restoration
+
+(b) Stage STC Breakdown MedQA SAMSum CodeAlpaca 
+
+> 0.0
+> 0.5
+> 1.0
+> 1.5
+> PMO (MB)
+> RegexMasking
+> HaS
+> InferDPT
+> DP-OPT
+> ProSan
+> ALSA
+> PromptGraph
+
+(c) PMO Results 64 128 192 256   
+
+> Textual spans
+> 0.0
+> 0.4
+> 0.8
+> 1.2
+> STC (s)
+> 0
+> 2
+> 4
+> 6
+> PMO (MB)
+> STC PMO
+
+(d) Impact of Span Count 
+
+Fig. 5: Overhead Results. PMO measures the additional memory used during sanitization, excluding resident local-model parameters. whereas utility improved only marginally until the largest coefficient, where privacy degradation became pronounced. Thus, the sensitivity analysis identifies a moderate trade-off coefficient as the most robust operating regime. 
+
+5) Overhead: Finally, we assessed the local preprocessing overhead of PromptGraph . As shown in Figure 5(a), its sanitization time cost was comparable to that of DP-OPT and ProSan, while remaining consistently below ALSA, particularly on MedQA and SAMSum. The stage breakdown in Fig-ure 5(b) identifies pairwise dependency scoring as the dominant preprocessing cost across all three datasets. Span privacy scoring, dependency-aware sanitization, and local restoration each contributed comparatively little. Figure 5(c) further shows that PMO, excluding resident local-model memory, remained below 0.5 MB across datasets, matching DP-OPT and ProSan and staying well below ALSA. Moreover, Figure 5(d) tracks the effect of prompt length. As the number of textual spans increased from 64 to 256, both STC and PMO rose monotonically, reaching approximately 1.1 s and 6 MB at the largest setting. This trend is consistent with the growth in candidate span pairs required for dependency scoring. Overall, the overhead is concentrated in contextual pair construction rather than in the subsequent selection or restoration steps. VI. C ONCLUSION 
+
+This paper introduced PromptGraph , a graph-guided prompt sanitizer for privacy-preserving LLM inference. 
+
+PromptGraph selects protected spans over a graph whose nodes capture privacy risks and whose edges capture contextual dependencies needed for utility, reducing privacy exposure through contextual span scoring while preserving task-relevant relations. Across diverse datasets and task models, it improves the balance between privacy and utility by increasing PHR and reducing attack success rates while preserving competitive utility. Future work will extend this graph formulation from single-turn prompts to multi-turn interactions, where privacy evidence and useful contextual dependencies evolve across dialogue turns. REFERENCES [1] L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. L. Wainwright, P. Mishkin, C. Zhang, S. Agarwal, K. Slama, A. Ray, J. Schulman, J. Hilton, F. Kelton, L. Miller, M. Simens, A. Askell, P. Welinder, P. Christiano, J. Leike, and R. Lowe, “Training language models to follow instructions with human feedback,” in Advances in Neural Information Processing Systems ,vol. 35, 2022, pp. 27 730–27 744. [2] E. M. Bender, T. Gebru, A. McMillan-Major, and S. Shmitchell, “On the dangers of stochastic parrots: Can language models be too big?” in 
+
+Proceedings of the 2021 ACM Conference on Fairness, Accountability, and Transparency , ser. FAccT ’21. ACM, 2021, pp. 610–623. [3] O. Feyisetan, B. Balle, T. Drake, and T. Diethe, “Privacy- and utility-preserving textual analysis via calibrated multivariate perturbations,” in 
+
+Proceedings of the Thirteenth ACM International Conference on Web Search and Data Mining . ACM, 2020, pp. 178–186. [4] S. Chen, F. Mo, Y. Wang, C. Chen, J.-Y. Nie, C. Wang, and J. Cui, “A customized text sanitization mechanism with differential privacy,” in 
+
+Findings of the Association for Computational Linguistics: ACL 2023 .Toronto, Canada: Association for Computational Linguistics, Jul. 2023, pp. 5747–5758. [5] Y. Chen, T. Li, H. Liu, and Y. Yu, “Hide and seek (HaS): A lightweight framework for prompt privacy protection,” 2023. [6] M. Tong, K. Chen, J. Zhang, Y. Qi, W. Zhang, N. Yu, T. Zhang, and Z. Zhang, “InferDPT: Privacy-preserving inference for closed-box large language models,” IEEE Transactions on Dependable and Secure Computing , vol. 22, no. 5, pp. 4625–4640, 2025. [7] J. Hong, J. T. Wang, C. Zhang, Z. Li, B. Li, and Z. Wang, “DP-OPT: Make large language model your privacy-preserving prompt engineer,” in International Conference on Learning Representations , 2024, pp. 58 003–58 026. [8] Z. Shen, Z. Xi, Y. He, W. Tong, J. Hua, and S. Zhong, “The fire thief is also the keeper: Balancing usability and privacy in prompts,” 2024. [9] H. Ma, W. Lu, Y. Liang, T. Wang, Q. Zhang, Y. Zhu, and J. Si, “ALSA: Context-sensitive prompt privacy preservation in large language models,” in Proceedings of the 31st ACM SIGKDD Conference on Knowledge Discovery and Data Mining V.2 , ser. KDD ’25. New York, NY, USA: ACM, 2025, pp. 2042–2053. [10] O. Rubin, J. Herzig, and J. Berant, “Learning to retrieve prompts for in-context learning,” in Proceedings of the 2022 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies , 2022, pp. 2655–2671. [11] Z. Zhao, E. Wallace, S. Feng, D. Klein, and S. Singh, “Calibrate before use: Improving few-shot performance of language models,” in 
+
+Proceedings of the 38th International Conference on Machine Learning ,ser. Proceedings of Machine Learning Research, vol. 139. PMLR, 2021, pp. 12 697–12 706. [12] N. F. Liu, K. Lin, J. Hewitt, A. Paranjape, M. Bevilacqua, F. Petroni, and P. Liang, “Lost in the middle: How language models use long contexts,” 
+
+Transactions of the Association for Computational Linguistics , vol. 12, pp. 157–173, 2024. [13] J. Wei, X. Wang, D. Schuurmans, M. Bosma, B. Ichter, F. Xia, E. Chi, Q. V. Le, and D. Zhou, “Chain-of-thought prompting elicits reasoning in large language models,” in Advances in Neural Information Processing Systems , vol. 35, 2022, pp. 24 824–24 837. [14] M. Besta, N. Blach, A. Kubicek, R. Gerstenberger, M. Podstawski, L. Gianinazzi, J. Gajda, T. Lehmann, H. Niewiadomski, P. Nyczyk, and T. Hoefler, “Graph of thoughts: Solving elaborate problems with large language models,” in Proceedings of the AAAI Conference on Artificial Intelligence , vol. 38, 2024, pp. 17 682–17 690. [15] S. Wachter, B. Mittelstadt, and C. Russell, “Counterfactual explanations without opening the black box: Automated decisions and the GDPR,” 
+
+Harvard Journal of Law & Technology , vol. 31, no. 2, pp. 841–887, 2018. [16] J. Salazar, D. Liang, T. Q. Nguyen, and K. Kirchhoff, “Masked language model scoring,” in Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics . Association for Computational Linguistics, 2020, pp. 2699–2712. [17] D. Jin, E. Pan, N. Oufattole, W.-H. Weng, H. Fang, and P. Szolovits, “What disease does this patient have? a large-scale open domain question answering dataset from medical exams,” Applied Sciences , vol. 11, no. 14, p. 6421, 2021. 8
+
+[18] B. Gliwa, I. Mochol, M. Biesek, and A. Wawer, “SAMSum corpus: A human-annotated dialogue dataset for abstractive summarization,” in 
+
+Proceedings of the 2nd Workshop on New Frontiers in Summarization ,2019, pp. 70–79. [19] S. Chaudhary, “Code alpaca: An instruction-following LLaMA model for code generation,” GitHub repository, 2023, gitHub repository. [20] A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Vaughan, A. Yang, A. Fan, A. Goyal, A. Hartshorn, A. Yang, A. Mitra, A. Sravankumar, A. Korenev, A. Hinsvark, A. Rao, A. Zhang, A. Rodriguez, A. Gregerson, A. Spataru, B. Roziere, B. Biron et al. , “The Llama 3 herd of models,” 2024. [21] A. Q. Jiang, A. Sablayrolles, A. Mensch, C. Bamford, D. S. Chaplot, D. de Las Casas, F. Bressand, G. Lengyel, G. Lample, L. Saulnier, L. R. Lavaud, M.-A. Lachaux, P. Stock, T. L. Scao, T. Lavril, T. Wang, T. Lacroix, and W. E. Sayed, “Mistral 7B,” 2023. [22] A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, C. Zheng, D. Liu, F. Zhou, F. Huang, F. Hu, H. Ge, H. Wei, H. Lin, J. Tang, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Zhou, J. Lin, K. Dang, K. Bao, K. Yang, L. Yu, L. Deng, M. Li, M. Xue, M. Li, P. Zhang, P. Wang, Q. Zhu, R. Men, R. Gao, S. Liu, S. Luo, T. Li, T. Tang, W. Yin, X. Ren, X. Wang, X. Zhang, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Zhang, Y. Wan, Y. Liu, Z. Wang, Z. Cui, Z. Zhang, Z. Zhou, and Z. Qiu, “Qwen3 technical report,” 2025. [23] N. Carlini, F. Tramer, E. Wallace, M. Jagielski, A. Herbert-Voss, K. Lee, A. Roberts, T. Brown, D. Song, U. Erlingsson, A. Oprea, and C. Raffel, “Extracting training data from large language models,” in 30th USENIX Security Symposium , 2021, pp. 2633–2650. [24] L. Melis, C. Song, E. D. Cristofaro, and V. Shmatikov, “Exploiting unintended feature leakage in collaborative learning,” in 2019 IEEE Symposium on Security and Privacy . IEEE, 2019, pp. 691–706. [25] R. Staab, M. Vero, M. Balunovic, and M. T. Vechev, “Beyond memo-rization: Violating privacy via inference with large language models,” in The Twelfth International Conference on Learning Representations, ICLR 2024, Vienna, Austria, May 7–11, 2024 . OpenReview.net, 2024. [26] C.-Y. Lin, “ROUGE: A package for automatic evaluation of summaries,” in Text Summarization Branches Out , 2004, pp. 74–81. [27] S. Ren, D. Guo, S. Lu, L. Zhou, S. Liu, D. Tang, N. Sundaresan, M. Zhou, A. Blanco, and S. Ma, “CodeBLEU: A method for automatic evaluation of code synthesis,” 2020. [28] I. Neamatullah, M. M. Douglass, L. wei H. Lehman, A. Reisner, M. Villarroel, W. J. Long, P. Szolovits, G. B. Moody, R. G. Mark, and G. D. Clifford, “Automated de-identification of free-text medical records,” BMC Medical Informatics and Decision Making , vol. 8, p. 32, 2008. [29] D. Singh and S. Narayanan, “Unmasking the reality of PII masking models: Performance gaps and the call for accountability,” 2025.
