@@ -13,6 +13,7 @@ class ConferenceWorkflowAndUiTest(unittest.TestCase):
         self.assertIn("MKL_THREADING_LAYER: GNU", text)
         self.assertIn("DPR_RERANK_GLOBAL_POOL_LIMIT: \"120\"", text)
         self.assertIn("DPR_RERANK_GUARANTEED_PER_LANE: \"2\"", text)
+        self.assertIn("DPR_LLM_MAX_OUTPUT_TOKENS: \"131072\"", text)
         self.assertIn("RERANK_PROFILE", text)
         self.assertIn("RERANK_API_KEY", text)
         self.assertIn("SILICONFLOW_API_KEY", text)
@@ -24,6 +25,7 @@ class ConferenceWorkflowAndUiTest(unittest.TestCase):
         root = pathlib.Path(__file__).resolve().parents[1]
         workflow_path = root / ".github" / "workflows" / "conference-paper-retrieval.yml"
         text = workflow_path.read_text(encoding="utf-8")
+        self.assertIn("DPR_LLM_MAX_OUTPUT_TOKENS: \"131072\"", text)
         workflow = yaml.safe_load(text) or {}
         on_block = workflow.get("on") or workflow.get(True) or {}
         inputs = (((on_block.get("workflow_dispatch") or {}).get("inputs")) or {})
