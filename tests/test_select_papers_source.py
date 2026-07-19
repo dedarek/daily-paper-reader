@@ -25,17 +25,28 @@ class SelectPapersSourceTagTest(unittest.TestCase):
 
     def test_build_candidates_marks_selection_source(self):
         scored = [
-            {"id": "fresh-1", "title": "Fresh", "llm_score": 8.2},
-            {"id": "fresh-2", "title": "Fresh2", "llm_score": 8.1},
+            {"id": "fresh-1", "title": "Fresh", "llm_score": 8.2, "quality_gate_pass": True},
+            {"id": "fresh-2", "title": "Fresh2", "llm_score": 8.1, "quality_gate_pass": True},
         ]
         carryover = [
-            {"id": "carry-1", "title": "Carry", "llm_score": 9.0},
+            {"id": "carry-1", "title": "Carry", "llm_score": 9.0, "quality_gate_pass": True},
         ]
         out = self.mod.build_candidates(scored, carryover, set())
         source_map = {item.get("id"): item.get("selection_source") for item in out}
         self.assertEqual(source_map.get("fresh-1"), "fresh_fetch")
         self.assertEqual(source_map.get("fresh-2"), "fresh_fetch")
         self.assertEqual(source_map.get("carry-1"), "carryover_cache")
+
+    def test_build_candidates_rejects_missing_or_failed_quality_gate(self):
+        scored = [
+            {"id": "pass", "llm_score": 8.5, "quality_gate_pass": True},
+            {"id": "fail", "llm_score": 9.5, "quality_gate_pass": False},
+            {"id": "legacy", "llm_score": 9.8},
+        ]
+
+        out = self.mod.build_candidates(scored, [], set())
+
+        self.assertEqual([item["id"] for item in out], ["pass"])
 
     def test_build_carryover_out_marks_source(self):
         out = self.mod.build_carryover_out(

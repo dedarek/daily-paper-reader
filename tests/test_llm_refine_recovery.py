@@ -34,6 +34,10 @@ class LlmRefineRecoveryTest(unittest.TestCase):
             "method_cn": "论文方法围绕需求中的技术核心展开，给出了较明确的建模思路、算法流程或实现策略。",
             "result_cn": "论文结果显示该方法在相关任务或实验设置中取得了有效提升，具备进一步参考价值。",
             "conclusion_cn": "论文结论表明该方向具有继续探索价值，并能为用户关注的问题提供可复用思路。",
+            "motivation_quality": "strong",
+            "data_benchmark_status": "public",
+            "public_resource_evidence": "doc",
+            "quality_gate_reason_cn": "动机具体且基准公开。",
             "score": score,
         }
 
@@ -189,12 +193,81 @@ class LlmRefineRecoveryTest(unittest.TestCase):
         self.assertEqual(user_content.count("Papers:"), 2)
         self.assertIn("method_cn", user_content)
         self.assertIn("title_zh", user_content)
+        self.assertIn("MANDATORY QUALITY GATES", user_content)
+        self.assertIn("obvious distinction", user_content)
+        self.assertIn("absence of evidence is unclear", user_content)
+        self.assertIn("data_benchmark_status", user_content)
         self.assertIn("150-220 Chinese characters", user_content)
         self.assertIn("30-70 Chinese characters", user_content)
         self.assertIn("length targets are guidance", user_content)
         self.assertIn("same style as a paper-page TLDR abstract", user_content)
         self.assertNotIn("<= 60 Chinese characters", user_content)
         self.assertTrue(user_content.rstrip().endswith("Output must be strict JSON only, no markdown, no fences, no extra text."))
+
+    def test_quality_gate_rejects_weak_motivation(self):
+        item = self.relevant_result(score=9)
+        item["motivation_quality"] = "weak"
+
+        normalized = self.mod._normalize_filter_result_item(item)
+
+        self.assertFalse(normalized["quality_gate_pass"])
+        self.assertEqual(normalized["score"], 0)
+        self.assertEqual(normalized["matched_requirement_index"], 0)
+        self.assertIn("研究动机薄弱", normalized["quality_gate_reason_cn"])
+
+    def test_quality_gate_rejects_unverified_dataset_or_benchmark(self):
+        item = self.relevant_result(score=9)
+        item["data_benchmark_status"] = "unclear"
+
+        normalized = self.mod._normalize_filter_result_item(item)
+
+        self.assertFalse(normalized["quality_gate_pass"])
+        self.assertEqual(normalized["score"], 0)
+        self.assertIn("缺少可验证的公开证据", normalized["quality_gate_reason_cn"])
+
+    def test_quality_gate_accepts_strong_non_empirical_paper(self):
+        item = self.relevant_result(score=8)
+        item["data_benchmark_status"] = "not_applicable"
+
+        normalized = self.mod._normalize_filter_result_item(item)
+
+        self.assertTrue(normalized["quality_gate_pass"])
+        self.assertEqual(normalized["score"], 8)
+
+    def test_quality_gate_rejects_public_label_without_evidence(self):
+        item = self.relevant_result(score=9)
+        item["public_resource_evidence"] = ""
+
+        normalized = self.mod._normalize_filter_result_item(item)
+
+        self.assertFalse(normalized["quality_gate_pass"])
+        self.assertEqual(normalized["score"], 0)
+        self.assertIn("未提供公开证据", normalized["quality_gate_reason_cn"])
+
+    def test_quality_gate_rejects_ungrounded_public_evidence(self):
+        item = self.relevant_result(score=9)
+        item["public_resource_evidence"] = "a benchmark never mentioned in the paper"
+
+        normalized = self.mod.validate_filter_results(
+            [{"id": "p-1", "content": "Title: Test\nAbstract: We report experiments."}],
+            [item],
+        )[0]
+
+        self.assertFalse(normalized["quality_gate_pass"])
+        self.assertEqual(normalized["score"], 0)
+        self.assertIn("逐字定位", normalized["quality_gate_reason_cn"])
+
+    def test_quality_gate_accepts_grounded_public_evidence(self):
+        item = self.relevant_result(score=9)
+        item["public_resource_evidence"] = "PublicBench"
+
+        normalized = self.mod.validate_filter_results(
+            [{"id": "p-1", "content": "Title: Test\nAbstract: Evaluated on PublicBench."}],
+            [item],
+        )[0]
+
+        self.assertTrue(normalized["quality_gate_pass"])
+        self.assertEqual(normalized["score"], 9)
 
 
 if __name__ == "__main__":

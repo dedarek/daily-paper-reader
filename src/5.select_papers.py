@@ -442,6 +442,17 @@ def build_scored_papers(papers: List[Dict[str, Any]], llm_ranked: List[Dict[str,
         paper["matched_query_tag"] = matched_query_tag
         paper["matched_query_text"] = str(item.get("matched_query_text") or "").strip()
         paper["matched_requirement_id"] = str(item.get("matched_requirement_id") or "").strip()
+        paper["motivation_quality"] = str(item.get("motivation_quality") or "unclear").strip()
+        paper["data_benchmark_status"] = str(
+            item.get("data_benchmark_status") or "unclear"
+        ).strip()
+        paper["public_resource_evidence"] = str(
+            item.get("public_resource_evidence") or ""
+        ).strip()
+        paper["quality_gate_pass"] = item.get("quality_gate_pass") is True
+        paper["quality_gate_reason_cn"] = str(
+            item.get("quality_gate_reason_cn") or ""
+        ).strip()
         merged[pid] = paper
 
     return list(merged.values())
@@ -456,6 +467,8 @@ def build_candidates(
 
     for item in carryover_items:
         pid = str(item.get("id") or item.get("paper_id") or "").strip()
+        if item.get("quality_gate_pass") is not True:
+            continue
         if float(item.get("llm_score", 0)) < CARRYOVER_MIN_SCORE:
             continue
         if not pid or pid in seen_ids:
@@ -468,6 +481,8 @@ def build_candidates(
 
     for item in scored_papers:
         pid = str(item.get("id") or "").strip()
+        if item.get("quality_gate_pass") is not True:
+            continue
         if not pid or pid in seen_ids:
             continue
         copied = dict(item)
@@ -1063,6 +1078,8 @@ def main() -> None:
             candidates = []
             for item in carryover_items:
                 pid = str(item.get("id") or item.get("paper_id") or "").strip()
+                if item.get("quality_gate_pass") is not True:
+                    continue
                 if float(item.get("llm_score", 0)) < CARRYOVER_MIN_SCORE:
                     continue
                 if not pid:

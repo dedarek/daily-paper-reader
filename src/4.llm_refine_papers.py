@@ -29,6 +29,8 @@ DEFAULT_FILTER_MODEL = (
 DEFAULT_DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL") or os.getenv("SUMMARY_BASE_URL") or "https://api.deepseek.com"
 DEFAULT_FILTER_CONCURRENCY = 4
 MAX_FILTER_RETRIES = 3
+MOTIVATION_QUALITY_VALUES = {"strong", "weak", "unclear"}
+DATA_BENCHMARK_STATUS_VALUES = {"public", "not_public", "not_applicable", "unclear"}
 
 
 class FilterOutputTruncatedError(ValueError):
@@ -301,8 +303,8 @@ def build_paper_map(papers: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     return paper_map
 
 
-def format_doc(title: str, abstract: str, max_chars: int) -> str:
-    content = f"Title: {title}\nAbstract: {abstract}".strip()
+def format_doc(title: str, abstract: str, max_chars: int, metadata: str = "") -> str:
+    content = f"Title: {title}\n{metadata}Abstract: {abstract}".strip()
     if len(content) > max_chars:
         content = content[:max_chars]
     return content
@@ -346,6 +348,16 @@ def call_filter(
                         "method_cn": {"type": "string"},
                         "result_cn": {"type": "string"},
                         "conclusion_cn": {"type": "string"},
+                        "motivation_quality": {
+                            "type": "string",
+                            "enum": ["strong", "weak", "unclear"],
+                        },
+                        "data_benchmark_status": {
+                            "type": "string",
+                            "enum": ["public", "not_public", "not_applicable", "unclear"],
+                        },
+                        "public_resource_evidence": {"type": "string"},
+                        "quality_gate_reason_cn": {"type": "string"},
                         "score": {"type": "number"},
                     },
                     "required": [
@@ -360,6 +372,10 @@ def call_filter(
                         "method_cn",
                         "result_cn",
                         "conclusion_cn",
+                        "motivation_quality",
+                        "data_benchmark_status",
+                        "public_resource_evidence",
+                        "quality_gate_reason_cn",
                         "score",
                     ],
                     "additionalProperties": False,
@@ -371,10 +387,11 @@ def call_filter(
     }
 
     system_prompt = (
-        "You are an intelligent Research Relevance Evaluator. "
-        "Score papers (0-10) based purely on relevance to ANY item in user's requirement list. "
+        "You are a strict academic-paper quality gate and Research Relevance Evaluator. "
+        "First reject papers with weak/unclear motivation or unverifiably public data/benchmarks; "
+        "only then score surviving papers (0-10) for relevance to ANY item in the user's requirement list. "
         "Prioritize conceptual/method relevance over exact term overlap. "
-        "Use the rubric and return JSON only."
+        "Never invent evidence that is absent from the supplied paper text. Use the rubric and return JSON only."
     )
     req_lines = []
     for idx, req in enumerate(all_requirements, start=1):
@@ -406,10 +423,30 @@ def call_filter(
         "6) Some requirements may be profile-level composite requirements built from multiple keywords. "
         "Use them when a paper is clearly central to the overall theme but does not fit a narrower requirement cleanly.\n"
         "7) Do not over-score generic LLM-for-science or infrastructure papers under a composite requirement unless they materially advance the core task.\n\n"
+        "MANDATORY QUALITY GATES (apply before relevance scoring):\n"
+        "A) MOTIVATION GATE. Set motivation_quality=strong only when the supplied text identifies a clear, specific, "
+        "non-trivial unsolved problem and explains a credible practical or scientific consequence. Reject as weak when the "
+        "main novelty is merely an obvious distinction, relabeling, taxonomy, extra routing class, routine decomposition, "
+        "backbone/domain swap, or marginal metric improvement without a substantive gap. A claim that prior work conflates "
+        "two concepts is not enough when those concepts are already plainly separable; require concrete evidence or a convincing "
+        "mechanism showing why existing methods cannot handle the distinction. Unsupported broad claims and motivation that cannot "
+        "be judged from the supplied text are unclear. Only strong passes.\n"
+        "B) PUBLIC DATA/BENCHMARK GATE. For every empirical paper whose claims depend on a dataset, benchmark, test suite, "
+        "evaluation corpus, or newly collected examples, set data_benchmark_status=public only when the supplied text gives positive "
+        "evidence that the resource is publicly accessible/released, or explicitly names an established benchmark/dataset whose public "
+        "accessibility is well established. A paper landing-page URL does not prove that its data or benchmark is public. Set not_public "
+        "for private, proprietary, internal, closed, or explicitly unreleased resources. Set unclear when public access cannot be verified "
+        "from the supplied text; absence of evidence is unclear, not public. Use not_applicable only for genuinely theoretical/formal or "
+        "non-empirical work whose claims do not rely on any dataset or benchmark. Empirical results, accuracy/recall claims, baseline "
+        "comparisons, or reported experiments make not_applicable invalid. Only public or genuinely not_applicable passes.\n"
+        "C) HARD OVERRIDE. If either gate fails, score must be 0 and matched_requirement_index must be 0 regardless of topical relevance. "
+        "Briefly explain the decision in quality_gate_reason_cn. When data_benchmark_status=public, public_resource_evidence must be "
+        "a short verbatim span copied exactly from that paper's supplied text; it must either state public/open release or contain the exact "
+        "name of an established public dataset/benchmark. Do not paraphrase this evidence.\n\n"
         "Papers:\n"
         f"{json.dumps(docs, ensure_ascii=False)}\n\n"
         "Output JSON format example:\n"
-        "{\"results\": [{\"id\": \"paper_id\", \"matched_requirement_index\": 1, \"evidence_en\": \"short English phrase\", \"evidence_cn\": \"简短中文短语\", \"tldr_en\": \"one-sentence TLDR\", \"tldr_cn\": \"中文摘要式 TLDR\", \"title_zh\": \"中文论文标题\", \"motivation_cn\": \"中文研究动机\", \"method_cn\": \"中文方法概括\", \"result_cn\": \"中文结果概括\", \"conclusion_cn\": \"中文结论\", \"score\": 7}]}\n\n"
+        "{\"results\": [{\"id\": \"paper_id\", \"matched_requirement_index\": 1, \"evidence_en\": \"short English phrase\", \"evidence_cn\": \"简短中文短语\", \"tldr_en\": \"one-sentence TLDR\", \"tldr_cn\": \"中文摘要式 TLDR\", \"title_zh\": \"中文论文标题\", \"motivation_cn\": \"中文研究动机\", \"method_cn\": \"中文方法概括\", \"result_cn\": \"中文结果概括\", \"conclusion_cn\": \"中文结论\", \"motivation_quality\": \"strong\", \"data_benchmark_status\": \"public\", \"public_resource_evidence\": \"the supplied abstract explicitly says the benchmark is released\", \"quality_gate_reason_cn\": \"动机具体且评测资源公开\", \"score\": 7}]}\n\n"
         "Requirement: You MUST return exactly one result for every input paper. "
         "The results length must match the papers length, and every input id must appear once.\n\n"
         "Output must be a single-line JSON string. "
@@ -512,6 +549,74 @@ def _coerce_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _normalize_choice(value: Any, allowed: set[str], default: str) -> str:
+    choice = _norm_text(value).lower().replace("-", "_").replace(" ", "_")
+    return choice if choice in allowed else default
+
+
+def _apply_quality_gate(item: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = dict(item)
+    motivation_quality = _normalize_choice(
+        normalized.get("motivation_quality"),
+        MOTIVATION_QUALITY_VALUES,
+        "unclear",
+    )
+    data_status = _normalize_choice(
+        normalized.get("data_benchmark_status"),
+        DATA_BENCHMARK_STATUS_VALUES,
+        "unclear",
+    )
+    public_resource_evidence = _norm_text(normalized.get("public_resource_evidence"))
+    reasons: List[str] = []
+    if motivation_quality != "strong":
+        label = "薄弱" if motivation_quality == "weak" else "无法从现有信息确认"
+        reasons.append(f"研究动机{label}")
+    if data_status not in {"public", "not_applicable"}:
+        label = "明确未公开" if data_status == "not_public" else "缺少可验证的公开证据"
+        reasons.append(f"数据集或基准{label}")
+    elif data_status == "public" and not public_resource_evidence:
+        reasons.append("数据集或基准虽被标为公开，但未提供公开证据")
+
+    gate_pass = not reasons
+    normalized["motivation_quality"] = motivation_quality
+    normalized["data_benchmark_status"] = data_status
+    normalized["public_resource_evidence"] = public_resource_evidence
+    normalized["quality_gate_pass"] = gate_pass
+    if gate_pass:
+        normalized["quality_gate_reason_cn"] = _norm_text(
+            normalized.get("quality_gate_reason_cn")
+        ) or "研究动机充分，且数据集/基准公开或确属不适用"
+    else:
+        normalized["quality_gate_reason_cn"] = "；".join(reasons)
+        normalized["score"] = 0.0
+        normalized["matched_requirement_index"] = 0
+    return normalized
+
+
+def _verify_public_evidence_is_grounded(
+    item: Dict[str, Any],
+    paper_content: str,
+) -> Dict[str, Any]:
+    normalized = dict(item)
+    if normalized.get("data_benchmark_status") != "public":
+        return normalized
+
+    evidence = " ".join(_norm_text(normalized.get("public_resource_evidence")).split()).lower()
+    content = " ".join(_norm_text(paper_content).split()).lower()
+    if evidence and evidence in content:
+        return normalized
+
+    reason = "数据集或基准的公开证据无法在所给论文文本中逐字定位"
+    existing = _norm_text(normalized.get("quality_gate_reason_cn"))
+    if normalized.get("quality_gate_pass") is not True and existing:
+        reason = f"{existing}；{reason}"
+    normalized["quality_gate_pass"] = False
+    normalized["quality_gate_reason_cn"] = reason
+    normalized["score"] = 0.0
+    normalized["matched_requirement_index"] = 0
+    return normalized
+
+
 def _normalize_filter_result_item(item: Dict[str, Any]) -> Dict[str, Any]:
     legacy = _norm_text(item.get("evidence"))
     evidence_en = _norm_text(item.get("evidence_en") or legacy)
@@ -524,7 +629,7 @@ def _normalize_filter_result_item(item: Dict[str, Any]) -> Dict[str, Any]:
     method_cn = _norm_text(item.get("method_cn")) or ("不相关" if score <= 0 else "方法细节请参考摘要与原文")
     result_cn = _norm_text(item.get("result_cn")) or ("不相关" if score <= 0 else tldr_cn)
     conclusion_cn = _norm_text(item.get("conclusion_cn")) or ("不相关" if score <= 0 else tldr_cn)
-    return {
+    normalized = {
         "id": _norm_text(item.get("id")),
         "matched_requirement_index": _coerce_int(item.get("matched_requirement_index"), 0),
         "evidence_en": evidence_en,
@@ -536,8 +641,13 @@ def _normalize_filter_result_item(item: Dict[str, Any]) -> Dict[str, Any]:
         "method_cn": method_cn,
         "result_cn": result_cn,
         "conclusion_cn": conclusion_cn,
+        "motivation_quality": item.get("motivation_quality"),
+        "data_benchmark_status": item.get("data_benchmark_status"),
+        "public_resource_evidence": item.get("public_resource_evidence"),
+        "quality_gate_reason_cn": item.get("quality_gate_reason_cn"),
         "score": score,
     }
+    return _apply_quality_gate(normalized)
 
 
 def validate_filter_results(
@@ -551,6 +661,11 @@ def validate_filter_results(
         raise ValueError("results must be a list")
 
     expected_set = set(expected_ids)
+    content_by_id = {
+        _norm_text(doc.get("id")): _norm_text(doc.get("content"))
+        for doc in batch_docs
+        if _norm_text(doc.get("id"))
+    }
     normalized_by_id: Dict[str, Dict[str, Any]] = {}
     problems: List[str] = []
 
@@ -569,7 +684,10 @@ def validate_filter_results(
         if pid in normalized_by_id:
             problems.append(f"item#{idx}: duplicate id={pid}")
             continue
-        normalized_by_id[pid] = normalized
+        normalized_by_id[pid] = _verify_public_evidence_is_grounded(
+            normalized,
+            content_by_id.get(pid, ""),
+        )
 
     missing_ids = [pid for pid in expected_ids if pid not in normalized_by_id]
     if missing_ids:
@@ -689,6 +807,15 @@ def merge_filter_result(
     method_cn = _norm_text(item.get("method_cn"))
     result_cn = _norm_text(item.get("result_cn"))
     conclusion_cn = _norm_text(item.get("conclusion_cn"))
+    motivation_quality = _normalize_choice(
+        item.get("motivation_quality"), MOTIVATION_QUALITY_VALUES, "unclear"
+    )
+    data_benchmark_status = _normalize_choice(
+        item.get("data_benchmark_status"), DATA_BENCHMARK_STATUS_VALUES, "unclear"
+    )
+    public_resource_evidence = _norm_text(item.get("public_resource_evidence"))
+    quality_gate_pass = item.get("quality_gate_pass") is True
+    quality_gate_reason_cn = _norm_text(item.get("quality_gate_reason_cn"))
     legacy = _norm_text(item.get("evidence"))
     if not evidence_en:
         evidence_en = legacy
@@ -728,6 +855,11 @@ def merge_filter_result(
             "method_cn": method_cn,
             "result_cn": result_cn,
             "conclusion_cn": conclusion_cn,
+            "motivation_quality": motivation_quality,
+            "data_benchmark_status": data_benchmark_status,
+            "public_resource_evidence": public_resource_evidence,
+            "quality_gate_pass": quality_gate_pass,
+            "quality_gate_reason_cn": quality_gate_reason_cn,
             "matched_requirement_id": matched_id,
             "matched_query_tag": matched_tag,
             "matched_query_text": matched_query,
@@ -828,7 +960,10 @@ def process_file(
             continue
         title = (paper.get("title") or "").strip()
         abstract = (paper.get("abstract") or "").strip()
-        content = format_doc(title, abstract, max_chars)
+        source = _norm_text(paper.get("source"))
+        link = _norm_text(paper.get("link") or paper.get("pdf_url"))
+        metadata = f"Source: {source}\nPaper URL: {link}\n" if source or link else ""
+        content = format_doc(title, abstract, max_chars, metadata=metadata)
         docs.append({"id": pid, "content": content})
 
     if not docs:
@@ -917,6 +1052,20 @@ def process_file(
         return
 
     llm_ranked = sorted(merged.values(), key=lambda x: x.get("score", 0), reverse=True)
+    gate_rejected = [item for item in llm_ranked if item.get("quality_gate_pass") is not True]
+    weak_motivation = sum(
+        1 for item in gate_rejected if item.get("motivation_quality") != "strong"
+    )
+    closed_or_unclear_resources = sum(
+        1
+        for item in gate_rejected
+        if item.get("data_benchmark_status") not in {"public", "not_applicable"}
+    )
+    log(
+        f"[INFO] quality gate: passed={len(llm_ranked) - len(gate_rejected)} "
+        f"rejected={len(gate_rejected)} weak_or_unclear_motivation={weak_motivation} "
+        f"closed_or_unclear_data_benchmark={closed_or_unclear_resources}"
+    )
     data["llm_ranked"] = llm_ranked
 
     data["llm_ranked_at"] = datetime.now(timezone.utc).isoformat()
@@ -961,7 +1110,7 @@ def main() -> None:
     parser.add_argument(
         "--max-chars",
         type=int,
-        default=850,
+        default=2600,
         help="max chars per doc (title+abstract).",
     )
     parser.add_argument(
