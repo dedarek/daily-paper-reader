@@ -7,36 +7,27 @@
 
 ## 每次日报
 - 最新运行日期：2026-07-19
-- 运行时间：2026-07-19 11:04:08 UTC
+- 运行时间：2026-07-19 11:53:10 UTC
 - 运行状态：成功
-- 本次总论文数：5
-- 精读区：4
+- 本次总论文数：2
+- 精读区：1
 - 速读区：1
 
 ### 今日简报（AI）
-1) 今日精读4篇速读1篇，聚焦智能体与微调大模型的安全防线构建。
-2) 最值得看：通过生成式推理实现智能体可扩展护栏（SingGuard-NSFA），以及推理阶段的安全恢复机制（HyperSafe）。
-3) 建议关注大模型安全防护如何从训练期向推理与运行期转移，以应对越狱与失控风险。
+1) 深度探析智能体安全：从生成推理护栏到行为物理风险空间。
+2) 最值得关注：SingGuard-NSFA以生成推理与实时分类为Agentic AI构建可扩展护栏（9.0分），以及揭示文本安全但行为致命的隐态物理风险（7.0分）。
+3) 建议关注AI应用落地安全，警惕大模型“说一套做一套”的潜在物理伤害。
 - 详情：[/202607/19/README](/202607/19/README)
 
 ### 精读区论文标签
 1. [SingGuard-NSFA: Extensible Guardrails for Agentic AI via Generative Reasoning and Real-Time Classification](/202607/19/2607.13081v1-singguard-nsfa-extensible-guardrails-for-agentic-ai-via-generative-reasoning-and-real-time-classification)  
    标签：评分：9.0/10、query:small-model-content-safety
-   evidence：小参数护栏模型(0.8B-9B)用于实时安全分类
-2. [HyperSafe: Inference-Time Safety Recovery for Fine-Tuned Language Models](/202607/19/2607.11475v1-hypersafe-inference-time-safety-recovery-for-fine-tuned-language-models)  
-   标签：评分：8.0/10、query:small-model-content-safety
-   evidence：无需训练的安全侧网络用于提示级安全分类且不修改模型权重
-3. [PVDetector: Detecting Prompt Injection Attacks on Purpose-Specific LLM Agents through Policy-Violation Concept Analysis](/202607/19/2607.12624v1-pvdetector-detecting-prompt-injection-attacks-on-purpose-specific-llm-agents-through-policy-violation-concept-analysis)  
-   标签：评分：8.0/10、query:small-model-content-safety
-   evidence：无训练框架通过隐状态对齐检测不安全提示
-4. [When Words Are Safe But Actions Kill: Probing Physical Danger Beyond Text Safety in Hidden-State Risk Space](/202607/19/2607.15218v1-when-words-are-safe-but-actions-kill-probing-physical-danger-beyond-text-safety-in-hidden-state-risk-space)  
-   标签：评分：8.0/10、query:small-model-content-safety
-   evidence：用于LLM物理危险分类的单层逻辑探针，低误报率
+   evidence：紧凑型护栏模型(0.8B-9B)用于实时LLM安全分类
 
 ### 速读区论文标签
-1. [Data-Efficient Adaptation of LLMs via Attention Head Reweighting](/202607/19/2607.13425v1-data-efficient-adaptation-of-llms-via-attention-head-reweighting)  
+1. [When Words Are Safe But Actions Kill: Probing Physical Danger Beyond Text Safety in Hidden-State Risk Space](/202607/19/2607.15218v1-when-words-are-safe-but-actions-kill-probing-physical-danger-beyond-text-safety-in-hidden-state-risk-space)  
    标签：评分：7.0/10、query:small-model-content-safety
-   evidence：每个注意力头仅学习一个标量的参数高效LLM适配方法
+   evidence：单层逻辑探针用于物理危险分类且误报率低
 
 
 <div class="dpr-home-promo-card">
