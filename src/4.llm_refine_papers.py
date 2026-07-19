@@ -31,6 +31,12 @@ DEFAULT_FILTER_CONCURRENCY = 4
 MAX_FILTER_RETRIES = 3
 MOTIVATION_QUALITY_VALUES = {"strong", "weak", "unclear"}
 DATA_BENCHMARK_STATUS_VALUES = {"public", "not_public", "not_applicable", "unclear"}
+PUBLIC_RESOURCE_BASIS_VALUES = {
+    "explicit_public_statement",
+    "named_established_resource",
+    "not_applicable",
+    "none",
+}
 
 
 class FilterOutputTruncatedError(ValueError):
@@ -357,6 +363,15 @@ def call_filter(
                             "enum": ["public", "not_public", "not_applicable", "unclear"],
                         },
                         "public_resource_evidence": {"type": "string"},
+                        "public_resource_basis": {
+                            "type": "string",
+                            "enum": [
+                                "explicit_public_statement",
+                                "named_established_resource",
+                                "not_applicable",
+                                "none",
+                            ],
+                        },
                         "quality_gate_reason_cn": {"type": "string"},
                         "score": {"type": "number"},
                     },
@@ -375,6 +390,7 @@ def call_filter(
                         "motivation_quality",
                         "data_benchmark_status",
                         "public_resource_evidence",
+                        "public_resource_basis",
                         "quality_gate_reason_cn",
                         "score",
                     ],
@@ -438,15 +454,19 @@ def call_filter(
         "for private, proprietary, internal, closed, or explicitly unreleased resources. Set unclear when public access cannot be verified "
         "from the supplied text; absence of evidence is unclear, not public. Use not_applicable only for genuinely theoretical/formal or "
         "non-empirical work whose claims do not rely on any dataset or benchmark. Empirical results, accuracy/recall claims, baseline "
-        "comparisons, or reported experiments make not_applicable invalid. Only public or genuinely not_applicable passes.\n"
+        "comparisons, or reported experiments make not_applicable invalid. Code, model weights, a GitHub repository, or the paper itself "
+        "being public does NOT prove that the dataset or benchmark is public. Generic phrases such as multiple benchmarks/datasets also "
+        "do not prove public access. Only public or genuinely not_applicable passes.\n"
         "C) HARD OVERRIDE. If either gate fails, score must be 0 and matched_requirement_index must be 0 regardless of topical relevance. "
         "Briefly explain the decision in quality_gate_reason_cn. When data_benchmark_status=public, public_resource_evidence must be "
         "a short verbatim span copied exactly from that paper's supplied text; it must either state public/open release or contain the exact "
-        "name of an established public dataset/benchmark. Do not paraphrase this evidence.\n\n"
+        "name of an established public dataset/benchmark. Set public_resource_basis=explicit_public_statement for the former, "
+        "named_established_resource for the latter, not_applicable only when the data gate truly does not apply, and none otherwise. "
+        "Do not paraphrase this evidence.\n\n"
         "Papers:\n"
         f"{json.dumps(docs, ensure_ascii=False)}\n\n"
         "Output JSON format example:\n"
-        "{\"results\": [{\"id\": \"paper_id\", \"matched_requirement_index\": 1, \"evidence_en\": \"short English phrase\", \"evidence_cn\": \"简短中文短语\", \"tldr_en\": \"one-sentence TLDR\", \"tldr_cn\": \"中文摘要式 TLDR\", \"title_zh\": \"中文论文标题\", \"motivation_cn\": \"中文研究动机\", \"method_cn\": \"中文方法概括\", \"result_cn\": \"中文结果概括\", \"conclusion_cn\": \"中文结论\", \"motivation_quality\": \"strong\", \"data_benchmark_status\": \"public\", \"public_resource_evidence\": \"the supplied abstract explicitly says the benchmark is released\", \"quality_gate_reason_cn\": \"动机具体且评测资源公开\", \"score\": 7}]}\n\n"
+        "{\"results\": [{\"id\": \"paper_id\", \"matched_requirement_index\": 1, \"evidence_en\": \"short English phrase\", \"evidence_cn\": \"简短中文短语\", \"tldr_en\": \"one-sentence TLDR\", \"tldr_cn\": \"中文摘要式 TLDR\", \"title_zh\": \"中文论文标题\", \"motivation_cn\": \"中文研究动机\", \"method_cn\": \"中文方法概括\", \"result_cn\": \"中文结果概括\", \"conclusion_cn\": \"中文结论\", \"motivation_quality\": \"strong\", \"data_benchmark_status\": \"public\", \"public_resource_evidence\": \"we release the public evaluation dataset\", \"public_resource_basis\": \"explicit_public_statement\", \"quality_gate_reason_cn\": \"动机具体且评测资源公开\", \"score\": 7}]}\n\n"
         "Requirement: You MUST return exactly one result for every input paper. "
         "The results length must match the papers length, and every input id must appear once.\n\n"
         "Output must be a single-line JSON string. "
@@ -567,6 +587,11 @@ def _apply_quality_gate(item: Dict[str, Any]) -> Dict[str, Any]:
         "unclear",
     )
     public_resource_evidence = _norm_text(normalized.get("public_resource_evidence"))
+    public_resource_basis = _normalize_choice(
+        normalized.get("public_resource_basis"),
+        PUBLIC_RESOURCE_BASIS_VALUES,
+        "none",
+    )
     reasons: List[str] = []
     if motivation_quality != "strong":
         label = "薄弱" if motivation_quality == "weak" else "无法从现有信息确认"
@@ -576,11 +601,41 @@ def _apply_quality_gate(item: Dict[str, Any]) -> Dict[str, Any]:
         reasons.append(f"数据集或基准{label}")
     elif data_status == "public" and not public_resource_evidence:
         reasons.append("数据集或基准虽被标为公开，但未提供公开证据")
+    elif data_status == "public" and public_resource_basis not in {
+        "explicit_public_statement",
+        "named_established_resource",
+    }:
+        reasons.append("数据集或基准虽被标为公开，但公开依据类型无效")
+    elif data_status == "public" and public_resource_basis == "explicit_public_statement":
+        lowered = public_resource_evidence.lower()
+        has_public_marker = re.search(
+            r"\b(public(?:ly)?|open(?:[- ](?:source|access))?|released?|available)\b",
+            lowered,
+        )
+        has_resource_marker = re.search(
+            r"\b(data(?:set)?s?|benchmarks?|corpus|corpora|test[- ]?suite|evaluation[- ]?(?:set|data))\b",
+            lowered,
+        )
+        if not (has_public_marker and has_resource_marker):
+            reasons.append("公开证据没有明确说明数据集或基准可公开获取")
+    elif data_status == "public" and public_resource_basis == "named_established_resource":
+        lowered = public_resource_evidence.lower()
+        if re.search(r"github|source code|code is|our code|repository|model weights?", lowered):
+            reasons.append("代码或模型公开不能替代数据集/基准公开")
+        elif re.fullmatch(
+            r"(?:multiple|several|various|diverse|many|two|three|four|five)?\s*"
+            r"(?:public\s+)?(?:safety\s+)?(?:datasets?|benchmarks?|evaluation sets?)",
+            lowered,
+        ):
+            reasons.append("泛指若干数据集或基准，未给出可核验的公开资源名称")
+    if data_status == "not_applicable" and public_resource_basis != "not_applicable":
+        reasons.append("不适用判定与公开资源依据类型不一致")
 
     gate_pass = not reasons
     normalized["motivation_quality"] = motivation_quality
     normalized["data_benchmark_status"] = data_status
     normalized["public_resource_evidence"] = public_resource_evidence
+    normalized["public_resource_basis"] = public_resource_basis
     normalized["quality_gate_pass"] = gate_pass
     if gate_pass:
         normalized["quality_gate_reason_cn"] = _norm_text(
@@ -644,6 +699,7 @@ def _normalize_filter_result_item(item: Dict[str, Any]) -> Dict[str, Any]:
         "motivation_quality": item.get("motivation_quality"),
         "data_benchmark_status": item.get("data_benchmark_status"),
         "public_resource_evidence": item.get("public_resource_evidence"),
+        "public_resource_basis": item.get("public_resource_basis"),
         "quality_gate_reason_cn": item.get("quality_gate_reason_cn"),
         "score": score,
     }
@@ -814,6 +870,9 @@ def merge_filter_result(
         item.get("data_benchmark_status"), DATA_BENCHMARK_STATUS_VALUES, "unclear"
     )
     public_resource_evidence = _norm_text(item.get("public_resource_evidence"))
+    public_resource_basis = _normalize_choice(
+        item.get("public_resource_basis"), PUBLIC_RESOURCE_BASIS_VALUES, "none"
+    )
     quality_gate_pass = item.get("quality_gate_pass") is True
     quality_gate_reason_cn = _norm_text(item.get("quality_gate_reason_cn"))
     legacy = _norm_text(item.get("evidence"))
@@ -858,6 +917,7 @@ def merge_filter_result(
             "motivation_quality": motivation_quality,
             "data_benchmark_status": data_benchmark_status,
             "public_resource_evidence": public_resource_evidence,
+            "public_resource_basis": public_resource_basis,
             "quality_gate_pass": quality_gate_pass,
             "quality_gate_reason_cn": quality_gate_reason_cn,
             "matched_requirement_id": matched_id,

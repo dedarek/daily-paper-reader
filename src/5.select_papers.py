@@ -449,6 +449,9 @@ def build_scored_papers(papers: List[Dict[str, Any]], llm_ranked: List[Dict[str,
         paper["public_resource_evidence"] = str(
             item.get("public_resource_evidence") or ""
         ).strip()
+        paper["public_resource_basis"] = str(
+            item.get("public_resource_basis") or "none"
+        ).strip()
         paper["quality_gate_pass"] = item.get("quality_gate_pass") is True
         paper["quality_gate_reason_cn"] = str(
             item.get("quality_gate_reason_cn") or ""

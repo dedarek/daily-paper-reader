@@ -121,6 +121,7 @@ class QueryTagFlowTest(unittest.TestCase):
                 "motivation_quality": "strong",
                 "data_benchmark_status": "public",
                 "public_resource_evidence": "Public benchmark is named.",
+                "public_resource_basis": "named_established_resource",
                 "quality_gate_pass": True,
                 "quality_gate_reason_cn": "通过",
             }

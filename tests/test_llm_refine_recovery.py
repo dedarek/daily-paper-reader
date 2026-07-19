@@ -37,6 +37,7 @@ class LlmRefineRecoveryTest(unittest.TestCase):
             "motivation_quality": "strong",
             "data_benchmark_status": "public",
             "public_resource_evidence": "doc",
+            "public_resource_basis": "named_established_resource",
             "quality_gate_reason_cn": "动机具体且基准公开。",
             "score": score,
         }
@@ -196,7 +197,9 @@ class LlmRefineRecoveryTest(unittest.TestCase):
         self.assertIn("MANDATORY QUALITY GATES", user_content)
         self.assertIn("obvious distinction", user_content)
         self.assertIn("absence of evidence is unclear", user_content)
+        self.assertIn("Code, model weights, a GitHub repository", user_content)
         self.assertIn("data_benchmark_status", user_content)
+        self.assertIn("public_resource_basis", user_content)
         self.assertIn("150-220 Chinese characters", user_content)
         self.assertIn("30-70 Chinese characters", user_content)
         self.assertIn("length targets are guidance", user_content)
@@ -228,6 +231,7 @@ class LlmRefineRecoveryTest(unittest.TestCase):
     def test_quality_gate_accepts_strong_non_empirical_paper(self):
         item = self.relevant_result(score=8)
         item["data_benchmark_status"] = "not_applicable"
+        item["public_resource_basis"] = "not_applicable"
 
         normalized = self.mod._normalize_filter_result_item(item)
 
@@ -265,6 +269,27 @@ class LlmRefineRecoveryTest(unittest.TestCase):
             [{"id": "p-1", "content": "Title: Test\nAbstract: Evaluated on PublicBench."}],
             [item],
         )[0]
+
+        self.assertTrue(normalized["quality_gate_pass"])
+        self.assertEqual(normalized["score"], 9)
+
+    def test_quality_gate_rejects_code_release_as_public_data_evidence(self):
+        item = self.relevant_result(score=9)
+        item["public_resource_evidence"] = "Our code is available at https://github.com/example/repo"
+        item["public_resource_basis"] = "named_established_resource"
+
+        normalized = self.mod._normalize_filter_result_item(item)
+
+        self.assertFalse(normalized["quality_gate_pass"])
+        self.assertEqual(normalized["score"], 0)
+        self.assertIn("代码或模型公开不能替代", normalized["quality_gate_reason_cn"])
+
+    def test_quality_gate_accepts_explicit_public_dataset_statement(self):
+        item = self.relevant_result(score=9)
+        item["public_resource_evidence"] = "five public agent-security datasets"
+        item["public_resource_basis"] = "explicit_public_statement"
+
+        normalized = self.mod._normalize_filter_result_item(item)
 
         self.assertTrue(normalized["quality_gate_pass"])
         self.assertEqual(normalized["score"], 9)
