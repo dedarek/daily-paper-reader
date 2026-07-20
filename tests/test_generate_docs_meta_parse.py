@@ -115,6 +115,23 @@ class GenerateDocsMetaParseTest(unittest.TestCase):
         self.assertNotIn(("query", "sr:composite"), tags)
         self.assertEqual(tags.count(("query", "sr")), 1)
 
+    def test_daily_summary_labels_recent_replay_without_calling_it_new(self):
+        summary = self.mod.build_daily_brief_summary(
+            date_label="2026-07-20",
+            deep_entries=[("p1", "Recent paper", [("score", "9.0")])],
+            quick_entries=[],
+            total_count=1,
+            run_status="成功",
+            replay_info={
+                "used": True,
+                "replayed_from_date": "20260719",
+            },
+        )
+
+        self.assertIn("近期精选回顾", summary)
+        self.assertIn("来源：2026-07-19", summary)
+        self.assertIn("不是今日新论文", summary)
+
     def test_build_markdown_content_writes_media_json_front_matter(self):
         paper = {
             "title": "Figure Test",

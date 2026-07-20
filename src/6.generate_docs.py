@@ -932,9 +932,20 @@ def build_daily_brief_summary(
     quick_entries: List[Tuple[str, str, List[Tuple[str, str]]]],
     total_count: int,
     run_status: str,
+    replay_info: Dict[str, Any] | None = None,
 ) -> str:
     if total_count == 0:
         return "> 今日无新推荐，系统未产出可展示论文。"
+
+    replay = replay_info if isinstance(replay_info, dict) else {}
+    if replay.get("used"):
+        source_date = str(replay.get("replayed_from_date") or "").strip()
+        source_label = format_date_str(source_date) if re.fullmatch(r"\d{8}", source_date) else source_date
+        source_text = f"（来源：{source_label}）" if source_label else ""
+        return (
+            f"> 今日没有新增合格论文。为避免日报空白，以下展示最近一次通过严格质量门的 "
+            f"{total_count} 篇近期精选回顾{source_text}；这些论文不是今日新论文。"
+        )
 
     def _format_preview_item(paper_id: str, title: str, tags: List[Tuple[str, str]]) -> str:
         name = ((title or "").strip() or paper_id)
@@ -1022,6 +1033,7 @@ def build_latest_report_section(
     deep_entries: List[Tuple[str, str, List[Tuple[str, str]]]],
     quick_entries: List[Tuple[str, str, List[Tuple[str, str]]]],
     paper_evidence_by_id: Dict[str, str],
+    replay_info: Dict[str, Any] | None = None,
 ) -> str:
     effective_label = (date_label or "").strip() or format_date_str(date_str)
     run_status = "成功" if recommend_exists else "未产出 recommend 文件（视为无结果）"
@@ -1032,6 +1044,7 @@ def build_latest_report_section(
         quick_entries=quick_entries,
         total_count=total,
         run_status=run_status,
+        replay_info=replay_info,
     )
 
     lines: List[str] = []
@@ -1041,6 +1054,11 @@ def build_latest_report_section(
     lines.append(f"- 本次总论文数：{total}")
     lines.append(f"- 精读区：{len(deep_entries)}")
     lines.append(f"- 速读区：{len(quick_entries)}")
+    if isinstance(replay_info, dict) and replay_info.get("used"):
+        source_date = str(replay_info.get("replayed_from_date") or "").strip()
+        source_label = format_date_str(source_date) if re.fullmatch(r"\d{8}", source_date) else source_date
+        suffix = f"（来源：{source_label}）" if source_label else ""
+        lines.append(f"- 内容类型：近期精选回顾{suffix}")
     if summary:
         lines.append("")
         lines.append("### 今日简报（AI）")
@@ -1834,6 +1852,7 @@ def build_day_report_markdown(
     deep_entries: List[Tuple[str, str, List[Tuple[str, str]]]],
     quick_entries: List[Tuple[str, str, List[Tuple[str, str]]]],
     recommend_exists: bool,
+    replay_info: Dict[str, Any] | None = None,
 ) -> str:
     effective_label = (date_label or "").strip() or format_date_str(date_str)
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -1845,6 +1864,7 @@ def build_day_report_markdown(
         quick_entries=quick_entries,
         total_count=total,
         run_status=run_status,
+        replay_info=replay_info,
     )
 
     lines: List[str] = []
@@ -1854,6 +1874,11 @@ def build_day_report_markdown(
     lines.append(f"- 当次推荐总数：{total}")
     lines.append(f"- 精读区：{len(deep_entries)}")
     lines.append(f"- 速读区：{len(quick_entries)}")
+    if isinstance(replay_info, dict) and replay_info.get("used"):
+        source_date = str(replay_info.get("replayed_from_date") or "").strip()
+        source_label = format_date_str(source_date) if re.fullmatch(r"\d{8}", source_date) else source_date
+        suffix = f"（来源：{source_label}）" if source_label else ""
+        lines.append(f"- 内容类型：近期精选回顾{suffix}")
     if summary:
         lines.append("")
         lines.append("## 今日简报（AI）")
@@ -1902,6 +1927,7 @@ def write_day_report_readme(
     deep_entries: List[Tuple[str, str, List[Tuple[str, str]]]],
     quick_entries: List[Tuple[str, str, List[Tuple[str, str]]]],
     recommend_exists: bool,
+    replay_info: Dict[str, Any] | None = None,
 ) -> str:
     day_dir, day_readme = prepare_day_report_paths(docs_dir, date_str)
     os.makedirs(day_dir, exist_ok=True)
@@ -1911,6 +1937,7 @@ def write_day_report_readme(
         deep_entries=deep_entries,
         quick_entries=quick_entries,
         recommend_exists=recommend_exists,
+        replay_info=replay_info,
     )
     with open(day_readme, "w", encoding="utf-8") as f:
         f.write(content)
@@ -1959,6 +1986,7 @@ def build_home_readme_content(
     deep_entries: List[Tuple[str, str, List[Tuple[str, str]]]],
     quick_entries: List[Tuple[str, str, List[Tuple[str, str]]]],
     paper_evidence_by_id: Dict[str, str],
+    replay_info: Dict[str, Any] | None = None,
 ) -> str:
     notice_path, promo_path = ensure_home_module_files(docs_dir)
     notice_md = _read_module_markdown(notice_path)
@@ -1971,6 +1999,7 @@ def build_home_readme_content(
         deep_entries=deep_entries,
         quick_entries=quick_entries,
         paper_evidence_by_id=paper_evidence_by_id,
+        replay_info=replay_info,
     )
 
     lines: List[str] = []
@@ -1993,6 +2022,7 @@ def sync_home_readme_from_day_report(
     deep_entries: List[Tuple[str, str, List[Tuple[str, str]]]],
     quick_entries: List[Tuple[str, str, List[Tuple[str, str]]]],
     paper_evidence_by_id: Dict[str, str],
+    replay_info: Dict[str, Any] | None = None,
 ) -> str:
     home_readme = os.path.join(docs_dir, "README.md")
     # 首页由三段模块拼接：公告栏（独立 md）+ 本次日报 + 宣传栏（独立 md）
@@ -2005,6 +2035,7 @@ def sync_home_readme_from_day_report(
         deep_entries=deep_entries,
         quick_entries=quick_entries,
         paper_evidence_by_id=paper_evidence_by_id,
+        replay_info=replay_info,
     )
     with open(home_readme, "w", encoding="utf-8") as f:
         f.write(content)
@@ -2556,6 +2587,7 @@ def main() -> None:
         log_substep("6.1", "读取 recommend 结果", "END")
     deep_list = payload.get("deep_dive") or []
     quick_list = payload.get("quick_skim") or []
+    replay_info = payload.get("fallback") if isinstance(payload.get("fallback"), dict) else {}
 
     def _paper_score(p: dict) -> float:
         try:
@@ -2675,6 +2707,7 @@ def main() -> None:
         deep_entries=deep_entries,
         quick_entries=quick_entries,
         recommend_exists=recommend_exists,
+        replay_info=replay_info,
     )
     home_readme = sync_home_readme_from_day_report(
         docs_dir=docs_dir,
@@ -2685,6 +2718,7 @@ def main() -> None:
         deep_entries=deep_entries,
         quick_entries=quick_entries,
         paper_evidence_by_id=sidebar_evidence_by_id,
+        replay_info=replay_info,
     )
     log(f"[OK] day report saved: {day_readme}")
     log(f"[OK] home README synced: {home_readme}")

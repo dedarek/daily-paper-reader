@@ -48,6 +48,49 @@ class SelectPapersSourceTagTest(unittest.TestCase):
 
         self.assertEqual([item["id"] for item in out], ["pass"])
 
+    def test_load_recent_qualified_recommendations_for_zero_result_fallback(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            rec_dir = root / "20260719" / "recommend"
+            rec_dir.mkdir(parents=True)
+            payload = {
+                "deep_dive": [
+                    {
+                        "id": "qualified",
+                        "title": "Qualified",
+                        "llm_score": 9.0,
+                        "quality_gate_pass": True,
+                        "matched_query_tag": "query:small-model-content-safety",
+                    },
+                    {
+                        "id": "failed-gate",
+                        "title": "Failed",
+                        "llm_score": 9.8,
+                        "quality_gate_pass": False,
+                        "matched_query_tag": "query:small-model-content-safety",
+                    },
+                ],
+                "quick_skim": [],
+            }
+            (rec_dir / "arxiv_papers_20260719.standard.json").write_text(
+                json.dumps(payload, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+            items, source_date = self.mod.load_recent_qualified_recommendations(
+                str(root),
+                "20260720",
+                "standard",
+                active_tags=["small-model-content-safety"],
+                max_days=5,
+            )
+
+        self.assertEqual(source_date, "20260719")
+        self.assertEqual([item["id"] for item in items], ["qualified"])
+        self.assertEqual(items[0]["selection_source"], "recent_replay")
+        self.assertTrue(items[0]["is_recent_replay"])
+        self.assertEqual(items[0]["replayed_from_date"], "20260719")
+
     def test_build_carryover_out_marks_source(self):
         out = self.mod.build_carryover_out(
             [

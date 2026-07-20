@@ -52,6 +52,7 @@ CARRYOVER_DAYS = 5
 CARRYOVER_RATIO = 0.5
 SOURCE_FRESH_FETCH = "fresh_fetch"
 SOURCE_CARRYOVER_CACHE = "carryover_cache"
+SOURCE_RECENT_REPLAY = "recent_replay"
 PRIORITY_DEEP_SCORE = 9.0
 CARRYOVER_MIN_SCORE = 8.0
 CARRYOVER_UNTAGGED = "untagged"
@@ -392,6 +393,76 @@ def collect_seen_ids(
                             continue
                     seen.add(pid)
     return seen
+
+
+def load_recent_qualified_recommendations(
+    archive_root: str,
+    today_str: str,
+    mode: str,
+    active_tags: List[str] | None = None,
+    max_days: int = CARRYOVER_DAYS,
+) -> Tuple[List[Dict[str, Any]], str]:
+    """Return the newest prior day's qualified recommendations for zero-result fallback."""
+    today_date = parse_date_str(today_str)
+    active_tag_keys = {
+        normalize_carryover_tag(tag).lower()
+        for tag in (active_tags or [])
+        if normalize_carryover_tag(tag)
+    }
+
+    for day in reversed(list_date_dirs(archive_root)):
+        if day == today_str:
+            continue
+        try:
+            age_days = (today_date - parse_date_str(day)).days
+        except Exception:
+            continue
+        if age_days <= 0 or age_days > max(1, int(max_days)):
+            continue
+
+        rec_path = os.path.join(
+            archive_root,
+            day,
+            "recommend",
+            f"arxiv_papers_{day}.{mode}.json",
+        )
+        if not os.path.exists(rec_path):
+            continue
+        try:
+            payload = load_json(rec_path)
+        except Exception:
+            continue
+
+        picked: List[Dict[str, Any]] = []
+        seen_ids: set[str] = set()
+        for section in ("deep_dive", "quick_skim"):
+            for item in payload.get(section) or []:
+                if not isinstance(item, dict) or item.get("quality_gate_pass") is not True:
+                    continue
+                pid = str(item.get("id") or item.get("paper_id") or "").strip()
+                if not pid or pid in seen_ids or float(item.get("llm_score", 0)) < 6.0:
+                    continue
+                if active_tag_keys:
+                    item_tag_keys = {
+                        normalize_carryover_tag(tag).lower()
+                        for tag in resolve_carryover_tags(item)
+                        if normalize_carryover_tag(tag)
+                    }
+                    if not item_tag_keys.intersection(active_tag_keys):
+                        continue
+                copied = dict(item)
+                copied["id"] = pid
+                copied["_source"] = "replay"
+                copied["selection_source"] = SOURCE_RECENT_REPLAY
+                copied["is_recent_replay"] = True
+                copied["replayed_from_date"] = day
+                picked.append(copied)
+                seen_ids.add(pid)
+
+        if picked:
+            return sort_by_score(picked), day
+
+    return [], ""
 
 
 def parse_score(value: Any) -> float:
@@ -1098,38 +1169,7 @@ def main() -> None:
         log_substep("5.3", "加载 carryover 并构建候选集", "END")
 
     if not candidates:
-        log("[INFO] 没有候选论文（新论文=0 且 carryover=0），将写入空推荐结果并更新 carryover。")
-        os.makedirs(output_dir, exist_ok=True)
-        for mode in modes:
-            output_path = os.path.join(output_dir, f"arxiv_papers_{TODAY_STR}.{mode}.json")
-            empty = {
-                "mode": mode,
-                "generated_at": datetime.now(timezone.utc).isoformat(),
-                "stats": {
-                    "mode": mode,
-                    "tag_count": tag_count,
-                    "deep_divecandidates": 0,
-                    "deep_cap": None,
-                    "deep_selected": 0,
-                    "quick_candidates": 0,
-                    "quick_skim_target": int((MODES.get(mode) or {}).get("quick_base") or 0) + tag_count,
-                    "quick_selected": 0,
-                },
-                "deep_dive": [],
-                "quick_skim": [],
-            }
-            save_json(empty, output_path)
-
-        carryover_payload = build_carryover_payload(
-            load_carryover_payload(CARRYOVER_PATH),
-            [],
-            active_tags=active_carryover_tags,
-            carryover_days=carryover_days,
-            updated_date=TODAY_STR,
-        )
-        save_json(carryover_payload, CARRYOVER_PATH)
-        group_end()
-        return
+        log("[INFO] 没有新的候选论文，将尝试回填最近一次已通过质量门的推荐。")
 
     recommended_ids: set = set()
 
@@ -1152,6 +1192,48 @@ def main() -> None:
             )
             if args.all_quick:
                 result = force_all_into_quick(result)
+
+        selected_total = len(result.get("deep_dive") or []) + len(result.get("quick_skim") or [])
+        if selected_total == 0 and not args.carryover_only:
+            replay_candidates, replayed_from_date = load_recent_qualified_recommendations(
+                archive_root,
+                TODAY_STR,
+                mode,
+                active_tags=active_carryover_tags,
+                max_days=carryover_days,
+            )
+            if replay_candidates:
+                log(
+                    f"[INFO] mode={mode} 新增推荐为 0，回填 {replayed_from_date} "
+                    f"的严格质量门结果 {len(replay_candidates)} 篇。"
+                )
+                if args.all_quick_min_score is not None:
+                    result = process_mode_all_quick_min_score(
+                        candidates=replay_candidates,
+                        mode=mode,
+                        min_score=float(args.all_quick_min_score),
+                    )
+                else:
+                    result = process_mode(
+                        replay_candidates,
+                        tag_count,
+                        mode,
+                        cfg,
+                        carryover_ratio=0.0,
+                    )
+                    if args.all_quick:
+                        result = force_all_into_quick(result)
+                stats = result.setdefault("stats", {})
+                stats["fallback_used"] = True
+                stats["fallback_reason"] = "no_new_qualified_papers"
+                stats["replayed_from_date"] = replayed_from_date
+                stats["replayed_candidates"] = len(replay_candidates)
+                result["fallback"] = {
+                    "used": True,
+                    "reason": "no_new_qualified_papers",
+                    "replayed_from_date": replayed_from_date,
+                    "message_cn": "今日无新增合格论文，以下为近期精选回顾。",
+                }
         output_path = os.path.join(output_dir, f"arxiv_papers_{TODAY_STR}.{mode}.json")
         stats = result.get("stats") or {}
         log(f"[STATS] {json.dumps(stats, ensure_ascii=False)}")
