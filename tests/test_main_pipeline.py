@@ -74,6 +74,16 @@ class MainPipelineTest(unittest.TestCase):
         self.assertEqual(env["LLM_PRIMARY_BASE_URL"], "https://summary.example.com/v1")
         self.assertEqual(env["DEEPSEEK_MODEL"], "deepseek-v4-flash")
 
+    def test_explicit_run_date_keeps_daily_label_with_long_retrieval_window(self):
+        self.assertEqual(
+            self.mod.resolve_run_date_token(10, "20260721"),
+            "20260721",
+        )
+
+    def test_explicit_run_date_rejects_invalid_format(self):
+        with self.assertRaisesRegex(ValueError, "YYYYMMDD"):
+            self.mod.resolve_run_date_token(10, "2026-07-21")
+
     def test_main_runs_local_rerank_without_remote_rerank_base(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

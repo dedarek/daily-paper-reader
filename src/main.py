@@ -81,12 +81,18 @@ def build_run_date_token(days: int) -> str:
     return f"{start_date:%Y%m%d}-{end_date:%Y%m%d}"
 
 
-def resolve_run_date_token(fetch_days: int | None) -> str:
+def resolve_run_date_token(fetch_days: int | None, explicit_run_date: str = "") -> str:
     """
     统一运行日期标识：
     - 大窗口（>=阈值）使用区间 token：YYYYMMDD-YYYYMMDD
     - 其它情况使用单日 token：YYYYMMDD
     """
+    explicit = str(explicit_run_date or "").strip()
+    if explicit:
+        if not re.fullmatch(r"\d{8}", explicit):
+            raise ValueError("--run-date must use YYYYMMDD format")
+        return explicit
+
     if fetch_days is not None:
         if fetch_days >= LONG_RANGE_DAYS_THRESHOLD:
             return build_run_date_token(fetch_days)
@@ -536,6 +542,11 @@ def main() -> None:
         help="Pass --days to Step1 (fetch arxiv). Default: use config.yaml/state logic.",
     )
     parser.add_argument(
+        "--run-date",
+        default="",
+        help="Force the daily output date in YYYYMMDD format without changing the retrieval window.",
+    )
+    parser.add_argument(
         "--fetch-mode",
         default="auto",
         choices=("auto", "standard", "skims"),
@@ -569,8 +580,8 @@ def main() -> None:
 
     python = sys.executable
 
-    sidebar_date_label = resolve_sidebar_date_label(args.fetch_days)
-    run_date_token = resolve_run_date_token(args.fetch_days)
+    sidebar_date_label = None if args.run_date else resolve_sidebar_date_label(args.fetch_days)
+    run_date_token = resolve_run_date_token(args.fetch_days, args.run_date)
     os.environ["DPR_RUN_DATE"] = run_date_token
     print(f"[INFO] DPR_RUN_DATE={run_date_token}", flush=True)
     profile_tag = str(args.profile_tag or os.getenv("DPR_FILTER_PROFILE_TAG") or "").strip()

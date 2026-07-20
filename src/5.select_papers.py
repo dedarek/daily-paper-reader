@@ -541,8 +541,10 @@ def build_candidates(
     scored_papers: List[Dict[str, Any]],
     carryover_items: List[Dict[str, Any]],
     seen_ids: set,
+    excluded_ids: set[str] | None = None,
 ) -> List[Dict[str, Any]]:
     merged: Dict[str, Dict[str, Any]] = {}
+    excluded = {str(pid).strip().lower() for pid in (excluded_ids or set()) if str(pid).strip()}
 
     for item in carryover_items:
         pid = str(item.get("id") or item.get("paper_id") or "").strip()
@@ -550,7 +552,7 @@ def build_candidates(
             continue
         if float(item.get("llm_score", 0)) < CARRYOVER_MIN_SCORE:
             continue
-        if not pid or pid in seen_ids:
+        if not pid or pid in seen_ids or pid.lower() in excluded:
             continue
         copied = dict(item)
         copied["id"] = pid
@@ -562,7 +564,7 @@ def build_candidates(
         pid = str(item.get("id") or "").strip()
         if item.get("quality_gate_pass") is not True:
             continue
-        if not pid or pid in seen_ids:
+        if not pid or pid in seen_ids or pid.lower() in excluded:
             continue
         copied = dict(item)
         copied["_source"] = "new"
@@ -1094,6 +1096,11 @@ def main() -> None:
         output_dir = os.path.abspath(os.path.join(ROOT_DIR, output_dir))
 
     setting = load_arxiv_paper_setting()
+    excluded_paper_ids = {
+        str(pid).strip().lower()
+        for pid in (setting.get("exclude_paper_ids") or [])
+        if str(pid).strip()
+    }
     carryover_days = int(setting.get("days_window") or CARRYOVER_DAYS)
     mode_text = args.modes
     if not mode_text:
@@ -1177,7 +1184,20 @@ def main() -> None:
                 copied["selection_source"] = SOURCE_CARRYOVER_CACHE
                 candidates.append(copied)
         else:
-            candidates = build_candidates(scored_papers, carryover_items, seen_ids)
+            candidates = build_candidates(
+                scored_papers,
+                carryover_items,
+                seen_ids,
+                excluded_ids=excluded_paper_ids,
+            )
+        if excluded_paper_ids:
+            candidates = [
+                item
+                for item in candidates
+                if str(item.get("id") or item.get("paper_id") or "").strip().lower()
+                not in excluded_paper_ids
+            ]
+            log(f"[INFO] user exclusions active: {len(excluded_paper_ids)} paper(s)")
     finally:
         log_substep("5.3", "加载 carryover 并构建候选集", "END")
 

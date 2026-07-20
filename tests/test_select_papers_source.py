@@ -48,6 +48,21 @@ class SelectPapersSourceTagTest(unittest.TestCase):
 
         self.assertEqual([item["id"] for item in out], ["pass"])
 
+    def test_build_candidates_honors_user_exclusions(self):
+        scored = [
+            {"id": "keep", "llm_score": 8.5, "quality_gate_pass": True},
+            {"id": "2607.13594v1", "llm_score": 9.5, "quality_gate_pass": True},
+        ]
+
+        out = self.mod.build_candidates(
+            scored,
+            [],
+            set(),
+            excluded_ids={"2607.13594V1"},
+        )
+
+        self.assertEqual([item["id"] for item in out], ["keep"])
+
     def test_load_recent_qualified_recommendations_for_zero_result_fallback(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir)
