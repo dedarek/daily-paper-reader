@@ -1011,6 +1011,41 @@ def process_mode_all_quick_min_score(
         "quick_skim": sanitize_items(picked),
     }
 
+
+def process_novelty_fallback(
+    candidates: List[Dict[str, Any]],
+    mode: str,
+    min_score: float = 4.0,
+    max_items: int = 3,
+) -> Dict[str, Any]:
+    """Prefer unseen papers with weaker relevance over replaying an older daily report."""
+    eligible = [
+        item
+        for item in candidates
+        if item.get("quality_gate_pass") is True
+        and item.get("selection_source") != SOURCE_RECENT_REPLAY
+        and float(item.get("llm_score", 0)) >= float(min_score)
+    ]
+    picked = sort_by_score(eligible)[: max(int(max_items), 0)]
+    stats = {
+        "mode": mode,
+        "novelty_floor_used": bool(picked),
+        "novelty_min_score": float(min_score),
+        "deep_divecandidates": 0,
+        "deep_cap": 0,
+        "deep_selected": 0,
+        "quick_candidates": len(eligible),
+        "quick_skim_target": max(int(max_items), 0),
+        "quick_selected": len(picked),
+    }
+    return {
+        "mode": mode,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "stats": stats,
+        "deep_dive": [],
+        "quick_skim": sanitize_items(picked),
+    }
+
 def force_all_into_quick(result: Dict[str, Any]) -> Dict[str, Any]:
     """
     将精读区合并进速览区，确保所有论文都归入 quick_skim。
@@ -1227,6 +1262,16 @@ def main() -> None:
                 result = force_all_into_quick(result)
 
         selected_total = len(result.get("deep_dive") or []) + len(result.get("quick_skim") or [])
+        if selected_total == 0 and not args.carryover_only:
+            novelty_result = process_novelty_fallback(candidates, mode)
+            novelty_total = len(novelty_result.get("quick_skim") or [])
+            if novelty_total:
+                log(
+                    f"[INFO] mode={mode} 常规推荐为 0，改为展示 {novelty_total} "
+                    "篇未展示的低分新候选，避免旧稿回放。"
+                )
+                result = novelty_result
+                selected_total = novelty_total
         if selected_total == 0 and not args.carryover_only:
             replay_candidates, replayed_from_date = load_recent_qualified_recommendations(
                 archive_root,

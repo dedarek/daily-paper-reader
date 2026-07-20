@@ -63,6 +63,33 @@ class SelectPapersSourceTagTest(unittest.TestCase):
 
         self.assertEqual([item["id"] for item in out], ["keep"])
 
+    def test_novelty_fallback_prefers_unseen_lower_score_over_replay(self):
+        candidates = [
+            {
+                "id": "new-weak-match",
+                "llm_score": 4.5,
+                "quality_gate_pass": True,
+                "selection_source": "fresh_fetch",
+            },
+            {
+                "id": "old-replay",
+                "llm_score": 9.0,
+                "quality_gate_pass": True,
+                "selection_source": "recent_replay",
+            },
+            {
+                "id": "too-low",
+                "llm_score": 3.0,
+                "quality_gate_pass": True,
+                "selection_source": "fresh_fetch",
+            },
+        ]
+
+        result = self.mod.process_novelty_fallback(candidates, "standard")
+
+        self.assertEqual([item["id"] for item in result["quick_skim"]], ["new-weak-match"])
+        self.assertTrue(result["stats"]["novelty_floor_used"])
+
     def test_load_recent_qualified_recommendations_for_zero_result_fallback(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir)
