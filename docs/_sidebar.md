@@ -1,6 +1,9 @@
 * <a class="dpr-sidebar-root-link" href="#/">首页</a>
 * <a class="dpr-sidebar-root-link dpr-sidebar-noactive-link" href="javascript:void(0)" data-dpr-hash="#/tutorial/README">使用教程</a>
 * Daily Papers
+  * 2026-07-21 <!--dpr-date:20260721-->
+    * 速读区
+      * <a class="dpr-sidebar-item-link dpr-sidebar-item-structured" href="#/202607/21/2607.15607v1-ask-nn-an-asymmetric-nearest-neighbor-test-that-detects-distribution-drifts-in-natural-language" data-sidebar-item="{&quot;title&quot;: &quot;ASK-NN: An Asymmetric Nearest-Neighbor Test that detects Distribution Drifts in Natural Language&quot;, &quot;link&quot;: &quot;https://arxiv.org/abs/2607.15607v1-ask-nn-an-asymmetric-nearest-neighbor-test-that-detects-distribution-drifts-in-natural-language&quot;, &quot;score&quot;: &quot;6.0&quot;, &quot;tags&quot;: [{&quot;kind&quot;: &quot;query&quot;, &quot;label&quot;: &quot;small-model-content-safety&quot;}], &quot;evidence&quot;: &quot;无需训练的非对称最近邻检验检测LLM幻觉与人工文本&quot;}">ASK-NN: An Asymmetric Nearest-Neighbor Test that detects Distribution Drifts in Natural Language</a>
   * 2026-07-11 ~ 2026-07-20 <!--dpr-date:20260711-20260720-->
     * 精读区
       * <a class="dpr-sidebar-item-link dpr-sidebar-item-structured" href="#/20260711-20260720/2607.13594v1-safety-sentry-context-aware-human-intervention-via-execute-ask-refuse-routing" data-sidebar-item="{&quot;title&quot;: &quot;SAFETY SENTRY: Context-Aware Human Intervention via EXECUTE-ASK-REFUSE Routing&quot;, &quot;link&quot;: &quot;https://arxiv.org/abs/2607.13594v1-safety-sentry-context-aware-human-intervention-via-execute-ask-refuse-routing&quot;, &quot;score&quot;: &quot;8.0&quot;, &quot;tags&quot;: [{&quot;kind&quot;: &quot;query&quot;, &quot;label&quot;: &quot;small-model-content-safety&quot;}], &quot;evidence&quot;: &quot;轻量级防护模型单次解码实现LLM动作安全路由&quot;}">SAFETY SENTRY: Context-Aware Human Intervention via EXECUTE-ASK-REFUSE Routing</a>
