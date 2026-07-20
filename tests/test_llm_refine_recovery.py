@@ -194,7 +194,7 @@ class LlmRefineRecoveryTest(unittest.TestCase):
         self.assertEqual(user_content.count("Papers:"), 2)
         self.assertIn("method_cn", user_content)
         self.assertIn("title_zh", user_content)
-        self.assertIn("MANDATORY QUALITY GATES", user_content)
+        self.assertIn("QUALITY ASSESSMENT AND LIMITED HARD REJECTIONS", user_content)
         self.assertIn("obvious distinction", user_content)
         self.assertIn("absence of evidence is unclear", user_content)
         self.assertIn("Code, model weights, a GitHub repository", user_content)
@@ -218,15 +218,27 @@ class LlmRefineRecoveryTest(unittest.TestCase):
         self.assertEqual(normalized["matched_requirement_index"], 0)
         self.assertIn("研究动机薄弱", normalized["quality_gate_reason_cn"])
 
-    def test_quality_gate_rejects_unverified_dataset_or_benchmark(self):
+    def test_quality_gate_relaxes_unverified_dataset_or_benchmark(self):
         item = self.relevant_result(score=9)
         item["data_benchmark_status"] = "unclear"
 
         normalized = self.mod._normalize_filter_result_item(item)
 
-        self.assertFalse(normalized["quality_gate_pass"])
-        self.assertEqual(normalized["score"], 0)
+        self.assertTrue(normalized["quality_gate_pass"])
+        self.assertEqual(normalized["quality_tier"], "relaxed")
+        self.assertEqual(normalized["score"], 9)
         self.assertIn("缺少可验证的公开证据", normalized["quality_gate_reason_cn"])
+
+    def test_quality_gate_rejects_explicitly_non_public_dataset(self):
+        item = self.relevant_result(score=9)
+        item["data_benchmark_status"] = "not_public"
+
+        normalized = self.mod._normalize_filter_result_item(item)
+
+        self.assertFalse(normalized["quality_gate_pass"])
+        self.assertEqual(normalized["quality_tier"], "rejected")
+        self.assertEqual(normalized["score"], 0)
+        self.assertIn("明确未公开", normalized["quality_gate_reason_cn"])
 
     def test_quality_gate_accepts_strong_non_empirical_paper(self):
         item = self.relevant_result(score=8)
@@ -238,17 +250,18 @@ class LlmRefineRecoveryTest(unittest.TestCase):
         self.assertTrue(normalized["quality_gate_pass"])
         self.assertEqual(normalized["score"], 8)
 
-    def test_quality_gate_rejects_public_label_without_evidence(self):
+    def test_quality_gate_relaxes_public_label_without_evidence(self):
         item = self.relevant_result(score=9)
         item["public_resource_evidence"] = ""
 
         normalized = self.mod._normalize_filter_result_item(item)
 
-        self.assertFalse(normalized["quality_gate_pass"])
-        self.assertEqual(normalized["score"], 0)
+        self.assertTrue(normalized["quality_gate_pass"])
+        self.assertEqual(normalized["quality_tier"], "relaxed")
+        self.assertEqual(normalized["score"], 9)
         self.assertIn("未提供公开证据", normalized["quality_gate_reason_cn"])
 
-    def test_quality_gate_rejects_ungrounded_public_evidence(self):
+    def test_quality_gate_relaxes_ungrounded_public_evidence(self):
         item = self.relevant_result(score=9)
         item["public_resource_evidence"] = "a benchmark never mentioned in the paper"
 
@@ -257,8 +270,9 @@ class LlmRefineRecoveryTest(unittest.TestCase):
             [item],
         )[0]
 
-        self.assertFalse(normalized["quality_gate_pass"])
-        self.assertEqual(normalized["score"], 0)
+        self.assertTrue(normalized["quality_gate_pass"])
+        self.assertEqual(normalized["quality_tier"], "relaxed")
+        self.assertEqual(normalized["score"], 9)
         self.assertIn("逐字定位", normalized["quality_gate_reason_cn"])
 
     def test_quality_gate_accepts_grounded_public_evidence(self):
@@ -273,15 +287,16 @@ class LlmRefineRecoveryTest(unittest.TestCase):
         self.assertTrue(normalized["quality_gate_pass"])
         self.assertEqual(normalized["score"], 9)
 
-    def test_quality_gate_rejects_code_release_as_public_data_evidence(self):
+    def test_quality_gate_relaxes_code_release_as_public_data_evidence(self):
         item = self.relevant_result(score=9)
         item["public_resource_evidence"] = "Our code is available at https://github.com/example/repo"
         item["public_resource_basis"] = "named_established_resource"
 
         normalized = self.mod._normalize_filter_result_item(item)
 
-        self.assertFalse(normalized["quality_gate_pass"])
-        self.assertEqual(normalized["score"], 0)
+        self.assertTrue(normalized["quality_gate_pass"])
+        self.assertEqual(normalized["quality_tier"], "relaxed")
+        self.assertEqual(normalized["score"], 9)
         self.assertIn("代码或模型公开不能替代", normalized["quality_gate_reason_cn"])
 
     def test_quality_gate_accepts_explicit_public_dataset_statement(self):

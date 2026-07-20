@@ -403,9 +403,10 @@ def call_filter(
     }
 
     system_prompt = (
-        "You are a strict academic-paper quality gate and Research Relevance Evaluator. "
-        "First reject papers with weak/unclear motivation or unverifiably public data/benchmarks; "
-        "only then score surviving papers (0-10) for relevance to ANY item in the user's requirement list. "
+        "You are a quality-aware academic-paper and Research Relevance Evaluator. "
+        "Hard-reject only papers with explicitly weak motivation or explicitly non-public data/benchmarks. "
+        "When motivation or resource availability is unclear, keep the paper eligible and record the uncertainty; "
+        "score every otherwise eligible paper (0-10) for relevance to ANY item in the user's requirement list. "
         "Prioritize conceptual/method relevance over exact term overlap. "
         "Never invent evidence that is absent from the supplied paper text. Use the rubric and return JSON only."
     )
@@ -439,15 +440,15 @@ def call_filter(
         "6) Some requirements may be profile-level composite requirements built from multiple keywords. "
         "Use them when a paper is clearly central to the overall theme but does not fit a narrower requirement cleanly.\n"
         "7) Do not over-score generic LLM-for-science or infrastructure papers under a composite requirement unless they materially advance the core task.\n\n"
-        "MANDATORY QUALITY GATES (apply before relevance scoring):\n"
+        "QUALITY ASSESSMENT AND LIMITED HARD REJECTIONS:\n"
         "A) MOTIVATION GATE. Set motivation_quality=strong only when the supplied text identifies a clear, specific, "
         "non-trivial unsolved problem and explains a credible practical or scientific consequence. Reject as weak when the "
         "main novelty is merely an obvious distinction, relabeling, taxonomy, extra routing class, routine decomposition, "
         "backbone/domain swap, or marginal metric improvement without a substantive gap. A claim that prior work conflates "
         "two concepts is not enough when those concepts are already plainly separable; require concrete evidence or a convincing "
         "mechanism showing why existing methods cannot handle the distinction. Unsupported broad claims and motivation that cannot "
-        "be judged from the supplied text are unclear. Only strong passes.\n"
-        "B) PUBLIC DATA/BENCHMARK GATE. For every empirical paper whose claims depend on a dataset, benchmark, test suite, "
+        "be judged from the supplied text are unclear. Weak is a hard rejection; unclear remains eligible with a quality caution.\n"
+        "B) PUBLIC DATA/BENCHMARK ASSESSMENT. For every empirical paper whose claims depend on a dataset, benchmark, test suite, "
         "evaluation corpus, or newly collected examples, set data_benchmark_status=public only when the supplied text gives positive "
         "evidence that the resource is publicly accessible/released, or explicitly names an established benchmark/dataset whose public "
         "accessibility is well established. A paper landing-page URL does not prove that its data or benchmark is public. Set not_public "
@@ -456,8 +457,10 @@ def call_filter(
         "non-empirical work whose claims do not rely on any dataset or benchmark. Empirical results, accuracy/recall claims, baseline "
         "comparisons, or reported experiments make not_applicable invalid. Code, model weights, a GitHub repository, or the paper itself "
         "being public does NOT prove that the dataset or benchmark is public. Generic phrases such as multiple benchmarks/datasets also "
-        "do not prove public access. Only public or genuinely not_applicable passes.\n"
-        "C) HARD OVERRIDE. If either gate fails, score must be 0 and matched_requirement_index must be 0 regardless of topical relevance. "
+        "do not prove public access. Explicitly not_public is a hard rejection; unclear remains eligible with a quality caution.\n"
+        "C) HARD OVERRIDE. Only motivation_quality=weak or data_benchmark_status=not_public forces score=0 and "
+        "matched_requirement_index=0 regardless of topical relevance. Do not zero a paper merely because the supplied abstract lacks "
+        "enough evidence to decide motivation quality or resource availability. "
         "Briefly explain the decision in quality_gate_reason_cn. When data_benchmark_status=public, public_resource_evidence must be "
         "a short verbatim span copied exactly from that paper's supplied text; it must either state public/open release or contain the exact "
         "name of an established public dataset/benchmark. Set public_resource_basis=explicit_public_statement for the former, "
@@ -592,20 +595,23 @@ def _apply_quality_gate(item: Dict[str, Any]) -> Dict[str, Any]:
         PUBLIC_RESOURCE_BASIS_VALUES,
         "none",
     )
-    reasons: List[str] = []
-    if motivation_quality != "strong":
-        label = "薄弱" if motivation_quality == "weak" else "无法从现有信息确认"
-        reasons.append(f"研究动机{label}")
-    if data_status not in {"public", "not_applicable"}:
-        label = "明确未公开" if data_status == "not_public" else "缺少可验证的公开证据"
-        reasons.append(f"数据集或基准{label}")
+    hard_reasons: List[str] = []
+    cautions: List[str] = []
+    if motivation_quality == "weak":
+        hard_reasons.append("研究动机薄弱")
+    elif motivation_quality == "unclear":
+        cautions.append("研究动机无法从现有信息确认")
+    if data_status == "not_public":
+        hard_reasons.append("数据集或基准明确未公开")
+    elif data_status == "unclear":
+        cautions.append("数据集或基准缺少可验证的公开证据")
     elif data_status == "public" and not public_resource_evidence:
-        reasons.append("数据集或基准虽被标为公开，但未提供公开证据")
+        cautions.append("数据集或基准虽被标为公开，但未提供公开证据")
     elif data_status == "public" and public_resource_basis not in {
         "explicit_public_statement",
         "named_established_resource",
     }:
-        reasons.append("数据集或基准虽被标为公开，但公开依据类型无效")
+        cautions.append("数据集或基准虽被标为公开，但公开依据类型无效")
     elif data_status == "public" and public_resource_basis == "explicit_public_statement":
         lowered = public_resource_evidence.lower()
         has_public_marker = re.search(
@@ -617,34 +623,41 @@ def _apply_quality_gate(item: Dict[str, Any]) -> Dict[str, Any]:
             lowered,
         )
         if not (has_public_marker and has_resource_marker):
-            reasons.append("公开证据没有明确说明数据集或基准可公开获取")
+            cautions.append("公开证据没有明确说明数据集或基准可公开获取")
     elif data_status == "public" and public_resource_basis == "named_established_resource":
         lowered = public_resource_evidence.lower()
         if re.search(r"github|source code|code is|our code|repository|model weights?", lowered):
-            reasons.append("代码或模型公开不能替代数据集/基准公开")
+            cautions.append("代码或模型公开不能替代数据集/基准公开")
         elif re.fullmatch(
             r"(?:multiple|several|various|diverse|many|two|three|four|five)?\s*"
             r"(?:public\s+)?(?:safety\s+)?(?:datasets?|benchmarks?|evaluation sets?)",
             lowered,
         ):
-            reasons.append("泛指若干数据集或基准，未给出可核验的公开资源名称")
+            cautions.append("泛指若干数据集或基准，未给出可核验的公开资源名称")
     if data_status == "not_applicable" and public_resource_basis != "not_applicable":
-        reasons.append("不适用判定与公开资源依据类型不一致")
+        cautions.append("不适用判定与公开资源依据类型不一致")
 
-    gate_pass = not reasons
+    gate_pass = not hard_reasons
     normalized["motivation_quality"] = motivation_quality
     normalized["data_benchmark_status"] = data_status
     normalized["public_resource_evidence"] = public_resource_evidence
     normalized["public_resource_basis"] = public_resource_basis
     normalized["quality_gate_pass"] = gate_pass
-    if gate_pass:
+    normalized["quality_caution"] = bool(cautions)
+    normalized["quality_caution_reason_cn"] = "；".join(cautions)
+    if not gate_pass:
+        normalized["quality_tier"] = "rejected"
+        normalized["quality_gate_reason_cn"] = "；".join(hard_reasons)
+        normalized["score"] = 0.0
+        normalized["matched_requirement_index"] = 0
+    elif cautions:
+        normalized["quality_tier"] = "relaxed"
+        normalized["quality_gate_reason_cn"] = f"宽松收录：{'；'.join(cautions)}"
+    else:
+        normalized["quality_tier"] = "strict"
         normalized["quality_gate_reason_cn"] = _norm_text(
             normalized.get("quality_gate_reason_cn")
         ) or "研究动机充分，且数据集/基准公开或确属不适用"
-    else:
-        normalized["quality_gate_reason_cn"] = "；".join(reasons)
-        normalized["score"] = 0.0
-        normalized["matched_requirement_index"] = 0
     return normalized
 
 
@@ -662,13 +675,13 @@ def _verify_public_evidence_is_grounded(
         return normalized
 
     reason = "数据集或基准的公开证据无法在所给论文文本中逐字定位"
-    existing = _norm_text(normalized.get("quality_gate_reason_cn"))
-    if normalized.get("quality_gate_pass") is not True and existing:
-        reason = f"{existing}；{reason}"
-    normalized["quality_gate_pass"] = False
-    normalized["quality_gate_reason_cn"] = reason
-    normalized["score"] = 0.0
-    normalized["matched_requirement_index"] = 0
+    existing_caution = _norm_text(normalized.get("quality_caution_reason_cn"))
+    cautions = [part for part in [existing_caution, reason] if part]
+    normalized["quality_caution"] = True
+    normalized["quality_caution_reason_cn"] = "；".join(cautions)
+    if normalized.get("quality_gate_pass") is True:
+        normalized["quality_tier"] = "relaxed"
+        normalized["quality_gate_reason_cn"] = f"宽松收录：{'；'.join(cautions)}"
     return normalized
 
 
@@ -875,6 +888,11 @@ def merge_filter_result(
     )
     quality_gate_pass = item.get("quality_gate_pass") is True
     quality_gate_reason_cn = _norm_text(item.get("quality_gate_reason_cn"))
+    quality_tier = _norm_text(item.get("quality_tier")) or (
+        "strict" if quality_gate_pass else "rejected"
+    )
+    quality_caution = item.get("quality_caution") is True
+    quality_caution_reason_cn = _norm_text(item.get("quality_caution_reason_cn"))
     legacy = _norm_text(item.get("evidence"))
     if not evidence_en:
         evidence_en = legacy
@@ -920,6 +938,9 @@ def merge_filter_result(
             "public_resource_basis": public_resource_basis,
             "quality_gate_pass": quality_gate_pass,
             "quality_gate_reason_cn": quality_gate_reason_cn,
+            "quality_tier": quality_tier,
+            "quality_caution": quality_caution,
+            "quality_caution_reason_cn": quality_caution_reason_cn,
             "matched_requirement_id": matched_id,
             "matched_query_tag": matched_tag,
             "matched_query_text": matched_query,
@@ -1113,18 +1134,20 @@ def process_file(
 
     llm_ranked = sorted(merged.values(), key=lambda x: x.get("score", 0), reverse=True)
     gate_rejected = [item for item in llm_ranked if item.get("quality_gate_pass") is not True]
+    strict_passed = [item for item in llm_ranked if item.get("quality_tier") == "strict"]
+    relaxed_passed = [item for item in llm_ranked if item.get("quality_tier") == "relaxed"]
     weak_motivation = sum(
-        1 for item in gate_rejected if item.get("motivation_quality") != "strong"
+        1 for item in gate_rejected if item.get("motivation_quality") == "weak"
     )
-    closed_or_unclear_resources = sum(
+    closed_resources = sum(
         1
         for item in gate_rejected
-        if item.get("data_benchmark_status") not in {"public", "not_applicable"}
+        if item.get("data_benchmark_status") == "not_public"
     )
     log(
-        f"[INFO] quality gate: passed={len(llm_ranked) - len(gate_rejected)} "
-        f"rejected={len(gate_rejected)} weak_or_unclear_motivation={weak_motivation} "
-        f"closed_or_unclear_data_benchmark={closed_or_unclear_resources}"
+        f"[INFO] quality tiers: strict={len(strict_passed)} relaxed={len(relaxed_passed)} "
+        f"rejected={len(gate_rejected)} weak_motivation={weak_motivation} "
+        f"not_public_data_benchmark={closed_resources}"
     )
     data["llm_ranked"] = llm_ranked
 

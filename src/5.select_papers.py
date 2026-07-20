@@ -527,6 +527,11 @@ def build_scored_papers(papers: List[Dict[str, Any]], llm_ranked: List[Dict[str,
         paper["quality_gate_reason_cn"] = str(
             item.get("quality_gate_reason_cn") or ""
         ).strip()
+        paper["quality_tier"] = str(item.get("quality_tier") or "strict").strip()
+        paper["quality_caution"] = item.get("quality_caution") is True
+        paper["quality_caution_reason_cn"] = str(
+            item.get("quality_caution_reason_cn") or ""
+        ).strip()
         merged[pid] = paper
 
     return list(merged.values())
@@ -568,7 +573,15 @@ def build_candidates(
 
 
 def sort_by_score(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    return sorted(items, key=lambda x: (-float(x.get("llm_score", 0)), str(x.get("id") or "")))
+    quality_rank = {"strict": 0, "relaxed": 1, "rejected": 2}
+    return sorted(
+        items,
+        key=lambda x: (
+            -float(x.get("llm_score", 0)),
+            quality_rank.get(str(x.get("quality_tier") or "relaxed"), 1),
+            str(x.get("id") or ""),
+        ),
+    )
 
 
 def build_tag_map(candidates: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
