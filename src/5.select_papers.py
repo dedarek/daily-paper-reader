@@ -56,6 +56,9 @@ SOURCE_RECENT_REPLAY = "recent_replay"
 PRIORITY_DEEP_SCORE = 9.0
 CARRYOVER_MIN_SCORE = 8.0
 CARRYOVER_UNTAGGED = "untagged"
+DAILY_MIN_DEEP = 3
+DAILY_MIN_QUICK = 5
+DAILY_MIN_FILL_SCORE = 0.1
 
 
 def log(message: str) -> None:
@@ -401,14 +404,25 @@ def load_recent_qualified_recommendations(
     mode: str,
     active_tags: List[str] | None = None,
     max_days: int = CARRYOVER_DAYS,
+    aggregate_days: bool = False,
+    max_items: int | None = None,
+    excluded_ids: set[str] | None = None,
 ) -> Tuple[List[Dict[str, Any]], str]:
-    """Return the newest prior day's qualified recommendations for zero-result fallback."""
+    """Return recent qualified recommendations for fallback, optionally across several days."""
     today_date = parse_date_str(today_str)
     active_tag_keys = {
         normalize_carryover_tag(tag).lower()
         for tag in (active_tags or [])
         if normalize_carryover_tag(tag)
     }
+    excluded = {
+        str(pid).strip().lower()
+        for pid in (excluded_ids or set())
+        if str(pid).strip()
+    }
+    picked: List[Dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    source_dates: List[str] = []
 
     for day in reversed(list_date_dirs(archive_root)):
         if day == today_str:
@@ -433,14 +447,18 @@ def load_recent_qualified_recommendations(
         except Exception:
             continue
 
-        picked: List[Dict[str, Any]] = []
-        seen_ids: set[str] = set()
+        picked_before_day = len(picked)
         for section in ("deep_dive", "quick_skim"):
             for item in payload.get(section) or []:
                 if not isinstance(item, dict) or item.get("quality_gate_pass") is not True:
                     continue
                 pid = str(item.get("id") or item.get("paper_id") or "").strip()
-                if not pid or pid in seen_ids or float(item.get("llm_score", 0)) < 6.0:
+                if (
+                    not pid
+                    or pid in seen_ids
+                    or pid.lower() in excluded
+                    or float(item.get("llm_score", 0)) < 6.0
+                ):
                     continue
                 if active_tag_keys:
                     item_tag_keys = {
@@ -459,10 +477,19 @@ def load_recent_qualified_recommendations(
                 picked.append(copied)
                 seen_ids.add(pid)
 
-        if picked:
-            return sort_by_score(picked), day
+        if len(picked) > picked_before_day:
+            source_dates.append(day)
+            if not aggregate_days:
+                return sort_by_score(picked), day
+            if max_items is not None and len(picked) >= max(int(max_items), 0):
+                break
 
-    return [], ""
+    if not picked:
+        return [], ""
+    ranked = sort_by_score(picked)
+    if max_items is not None:
+        ranked = ranked[: max(int(max_items), 0)]
+    return ranked, ",".join(source_dates)
 
 
 def parse_score(value: Any) -> float:
@@ -1046,6 +1073,81 @@ def process_novelty_fallback(
         "quick_skim": sanitize_items(picked),
     }
 
+
+def ensure_daily_minimum_sections(
+    result: Dict[str, Any],
+    candidates: List[Dict[str, Any]],
+    min_deep: int = DAILY_MIN_DEEP,
+    min_quick: int = DAILY_MIN_QUICK,
+    min_score: float = DAILY_MIN_FILL_SCORE,
+    fill_source: str = "unseen_candidates",
+) -> Dict[str, Any]:
+    """Fill daily quotas from the best remaining papers that still pass quality checks."""
+    copied = dict(result)
+    deep = [dict(item) for item in (copied.get("deep_dive") or []) if isinstance(item, dict)]
+    quick = [dict(item) for item in (copied.get("quick_skim") or []) if isinstance(item, dict)]
+    selected_ids = {
+        str(item.get("id") or item.get("paper_id") or "").strip()
+        for item in deep + quick
+        if str(item.get("id") or item.get("paper_id") or "").strip()
+    }
+    fill_count = 0
+    if len(deep) < max(int(min_deep), 0) and quick:
+        quick = sort_by_score(quick)
+        while len(deep) < max(int(min_deep), 0) and quick:
+            promoted = dict(quick.pop(0))
+            promoted["minimum_quota_fill"] = True
+            promoted["minimum_quota_role"] = "deep_dive"
+            promoted["minimum_quota_source"] = "promoted_from_quick"
+            deep.append(promoted)
+            fill_count += 1
+
+    eligible: List[Dict[str, Any]] = []
+    for item in sort_by_score(candidates):
+        if not isinstance(item, dict) or item.get("quality_gate_pass") is not True:
+            continue
+        pid = str(item.get("id") or item.get("paper_id") or "").strip()
+        if not pid or pid in selected_ids:
+            continue
+        if float(item.get("llm_score", 0)) < float(min_score):
+            continue
+        eligible.append(item)
+
+    def take_for(section: List[Dict[str, Any]], target: int, role: str) -> None:
+        nonlocal fill_count
+        while len(section) < max(int(target), 0) and eligible:
+            item = dict(eligible.pop(0))
+            pid = str(item.get("id") or item.get("paper_id") or "").strip()
+            if not pid or pid in selected_ids:
+                continue
+            item.pop("_source", None)
+            item.pop("carry_days", None)
+            item["minimum_quota_fill"] = True
+            item["minimum_quota_role"] = role
+            item["minimum_quota_source"] = fill_source
+            section.append(item)
+            selected_ids.add(pid)
+            fill_count += 1
+
+    take_for(deep, min_deep, "deep_dive")
+    take_for(quick, min_quick, "quick_skim")
+
+    stats = dict(copied.get("stats") or {})
+    stats["minimum_deep_target"] = int(min_deep)
+    stats["minimum_quick_target"] = int(min_quick)
+    stats["minimum_fill_score"] = float(min_score)
+    stats["minimum_fill_used"] = bool(stats.get("minimum_fill_used")) or fill_count > 0
+    stats["minimum_fill_count"] = int(stats.get("minimum_fill_count") or 0) + fill_count
+    stats["minimum_shortfall"] = max(int(min_deep) - len(deep), 0) + max(
+        int(min_quick) - len(quick), 0
+    )
+    stats["deep_selected"] = len(deep)
+    stats["quick_selected"] = len(quick)
+    copied["stats"] = stats
+    copied["deep_dive"] = deep
+    copied["quick_skim"] = quick
+    return copied
+
 def force_all_into_quick(result: Dict[str, Any]) -> Dict[str, Any]:
     """
     将精读区合并进速览区，确保所有论文都归入 quick_skim。
@@ -1261,6 +1363,19 @@ def main() -> None:
             if args.all_quick:
                 result = force_all_into_quick(result)
 
+        if (
+            mode == "standard"
+            and not args.all_quick
+            and args.all_quick_min_score is None
+        ):
+            result = ensure_daily_minimum_sections(result, candidates)
+            minimum_shortfall = int((result.get("stats") or {}).get("minimum_shortfall") or 0)
+            if minimum_shortfall:
+                log(
+                    f"[WARN] mode={mode} 未展示候选不足，3+5 配额仍缺 {minimum_shortfall} 篇；"
+                    "将继续尝试近期合格论文兜底。"
+                )
+
         selected_total = len(result.get("deep_dive") or []) + len(result.get("quick_skim") or [])
         if selected_total == 0 and not args.carryover_only:
             novelty_result = process_novelty_fallback(candidates, mode)
@@ -1272,20 +1387,47 @@ def main() -> None:
                 )
                 result = novelty_result
                 selected_total = novelty_total
-        if selected_total == 0 and not args.carryover_only:
+        minimum_shortfall = int((result.get("stats") or {}).get("minimum_shortfall") or 0)
+        if (selected_total == 0 or minimum_shortfall > 0) and not args.carryover_only:
             replay_candidates, replayed_from_date = load_recent_qualified_recommendations(
                 archive_root,
                 TODAY_STR,
                 mode,
                 active_tags=active_carryover_tags,
-                max_days=carryover_days,
+                max_days=max(carryover_days, 30) if minimum_shortfall > 0 else carryover_days,
+                aggregate_days=minimum_shortfall > 0,
+                max_items=DAILY_MIN_DEEP + DAILY_MIN_QUICK if minimum_shortfall > 0 else None,
+                excluded_ids=excluded_paper_ids,
             )
             if replay_candidates:
-                log(
-                    f"[INFO] mode={mode} 新增推荐为 0，回填 {replayed_from_date} "
-                    f"的严格质量门结果 {len(replay_candidates)} 篇。"
-                )
-                if args.all_quick_min_score is not None:
+                if minimum_shortfall > 0:
+                    log(
+                        f"[INFO] mode={mode} 3+5 配额缺 {minimum_shortfall} 篇，"
+                        f"从 {replayed_from_date} 聚合近期合格论文 {len(replay_candidates)} 篇补位。"
+                    )
+                else:
+                    log(
+                        f"[INFO] mode={mode} 新增推荐为 0，回填 {replayed_from_date} "
+                        f"的质量合格结果 {len(replay_candidates)} 篇。"
+                    )
+                if minimum_shortfall > 0 and mode == "standard" and args.all_quick_min_score is None:
+                    result = ensure_daily_minimum_sections(
+                        result,
+                        replay_candidates,
+                        fill_source="recent_qualified_replay",
+                    )
+                    stats = result.setdefault("stats", {})
+                    stats["fallback_used"] = True
+                    stats["fallback_reason"] = "insufficient_unseen_candidates"
+                    stats["replayed_from_date"] = replayed_from_date
+                    stats["replayed_candidates"] = len(replay_candidates)
+                    result["fallback"] = {
+                        "used": True,
+                        "reason": "insufficient_unseen_candidates",
+                        "replayed_from_date": replayed_from_date,
+                        "message_cn": "今日未展示候选不足，少量位置由近期合格论文补齐。",
+                    }
+                elif args.all_quick_min_score is not None:
                     result = process_mode_all_quick_min_score(
                         candidates=replay_candidates,
                         mode=mode,
@@ -1301,17 +1443,18 @@ def main() -> None:
                     )
                     if args.all_quick:
                         result = force_all_into_quick(result)
-                stats = result.setdefault("stats", {})
-                stats["fallback_used"] = True
-                stats["fallback_reason"] = "no_new_qualified_papers"
-                stats["replayed_from_date"] = replayed_from_date
-                stats["replayed_candidates"] = len(replay_candidates)
-                result["fallback"] = {
-                    "used": True,
-                    "reason": "no_new_qualified_papers",
-                    "replayed_from_date": replayed_from_date,
-                    "message_cn": "今日无新增合格论文，以下为近期精选回顾。",
-                }
+                if not result.get("fallback"):
+                    stats = result.setdefault("stats", {})
+                    stats["fallback_used"] = True
+                    stats["fallback_reason"] = "no_new_qualified_papers"
+                    stats["replayed_from_date"] = replayed_from_date
+                    stats["replayed_candidates"] = len(replay_candidates)
+                    result["fallback"] = {
+                        "used": True,
+                        "reason": "no_new_qualified_papers",
+                        "replayed_from_date": replayed_from_date,
+                        "message_cn": "今日无新增合格论文，以下为近期精选回顾。",
+                    }
         output_path = os.path.join(output_dir, f"arxiv_papers_{TODAY_STR}.{mode}.json")
         stats = result.get("stats") or {}
         log(f"[STATS] {json.dumps(stats, ensure_ascii=False)}")

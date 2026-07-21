@@ -90,6 +90,51 @@ class SelectPapersSourceTagTest(unittest.TestCase):
         self.assertEqual([item["id"] for item in result["quick_skim"]], ["new-weak-match"])
         self.assertTrue(result["stats"]["novelty_floor_used"])
 
+    def test_daily_minimum_fills_three_deep_and_five_quick(self):
+        candidates = [
+            {
+                "id": f"paper-{idx}",
+                "llm_score": score,
+                "quality_gate_pass": True,
+                "quality_tier": "strict" if idx % 2 else "relaxed",
+                "selection_source": "fresh_fetch",
+            }
+            for idx, score in enumerate([8.5, 7.2, 6.4, 5.8, 5.2, 4.8, 3.5, 1.0], start=1)
+        ]
+        regular = self.mod.process_mode(
+            candidates=candidates,
+            tag_count=1,
+            mode="standard",
+            cfg=self.mod.MODES["standard"],
+            carryover_ratio=0.5,
+        )
+
+        result = self.mod.ensure_daily_minimum_sections(regular, candidates)
+
+        self.assertEqual(len(result["deep_dive"]), 3)
+        self.assertEqual(len(result["quick_skim"]), 5)
+        self.assertEqual(result["stats"]["minimum_shortfall"], 0)
+        self.assertTrue(result["stats"]["minimum_fill_used"])
+        selected = result["deep_dive"] + result["quick_skim"]
+        self.assertTrue(all(float(item["llm_score"]) > 0 for item in selected))
+
+    def test_daily_minimum_never_uses_failed_quality_gate_or_zero_score(self):
+        candidates = [
+            {"id": "good", "llm_score": 4.0, "quality_gate_pass": True},
+            {"id": "zero", "llm_score": 0.0, "quality_gate_pass": True},
+            {"id": "bad-gate", "llm_score": 9.0, "quality_gate_pass": False},
+        ]
+        result = self.mod.ensure_daily_minimum_sections(
+            {"deep_dive": [], "quick_skim": [], "stats": {}},
+            candidates,
+        )
+
+        selected_ids = {
+            item["id"] for item in result["deep_dive"] + result["quick_skim"]
+        }
+        self.assertEqual(selected_ids, {"good"})
+        self.assertEqual(result["stats"]["minimum_shortfall"], 7)
+
     def test_load_recent_qualified_recommendations_for_zero_result_fallback(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = pathlib.Path(tmpdir)
@@ -132,6 +177,46 @@ class SelectPapersSourceTagTest(unittest.TestCase):
         self.assertEqual(items[0]["selection_source"], "recent_replay")
         self.assertTrue(items[0]["is_recent_replay"])
         self.assertEqual(items[0]["replayed_from_date"], "20260719")
+
+    def test_aggregate_replay_fills_across_days_and_honors_exclusions(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = pathlib.Path(tmpdir)
+            for day, paper_ids in {
+                "20260718": ["older-1", "blocked"],
+                "20260719": ["newer-1"],
+            }.items():
+                rec_dir = root / day / "recommend"
+                rec_dir.mkdir(parents=True)
+                payload = {
+                    "deep_dive": [
+                        {
+                            "id": pid,
+                            "llm_score": 8.0,
+                            "quality_gate_pass": True,
+                            "matched_query_tag": "query:small-model-content-safety",
+                        }
+                        for pid in paper_ids
+                    ],
+                    "quick_skim": [],
+                }
+                (rec_dir / f"arxiv_papers_{day}.standard.json").write_text(
+                    json.dumps(payload, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+
+            items, source_dates = self.mod.load_recent_qualified_recommendations(
+                str(root),
+                "20260720",
+                "standard",
+                active_tags=["small-model-content-safety"],
+                max_days=5,
+                aggregate_days=True,
+                max_items=8,
+                excluded_ids={"BLOCKED"},
+            )
+
+        self.assertEqual({item["id"] for item in items}, {"newer-1", "older-1"})
+        self.assertEqual(source_dates, "20260719,20260718")
 
     def test_build_carryover_out_marks_source(self):
         out = self.mod.build_carryover_out(
