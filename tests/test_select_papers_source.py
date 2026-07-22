@@ -63,6 +63,31 @@ class SelectPapersSourceTagTest(unittest.TestCase):
 
         self.assertEqual([item["id"] for item in out], ["keep"])
 
+    def test_topic_gate_rejects_generic_methods_but_keeps_safety_targets(self):
+        self.assertFalse(
+            self.mod.is_topic_relevant(
+                {"title": "SmartRAG: Native Graph-Based RAG for Mobile Device", "abstract": "A graph RAG assistant."}
+            )
+        )
+        self.assertFalse(
+            self.mod.is_topic_relevant(
+                {"title": "Domain-Conditional Position Offsets", "abstract": "Improves language model perplexity."}
+            )
+        )
+        self.assertTrue(
+            self.mod.is_topic_relevant(
+                {"title": "A Lightweight Hate Speech Detector", "abstract": "Content moderation for abusive language."}
+            )
+        )
+
+    def test_build_candidates_applies_topic_gate(self):
+        scored = [
+            {"id": "generic", "title": "Generic RAG", "abstract": "A retrieval system.", "llm_score": 9.0, "quality_gate_pass": True},
+            {"id": "safety", "title": "Toxicity Guard", "abstract": "A toxicity classifier for content moderation.", "llm_score": 6.0, "quality_gate_pass": True},
+        ]
+        out = self.mod.build_candidates(scored, [], set())
+        self.assertEqual([item["id"] for item in out], ["safety"])
+
     def test_novelty_fallback_prefers_unseen_lower_score_over_replay(self):
         candidates = [
             {

@@ -59,6 +59,43 @@ CARRYOVER_UNTAGGED = "untagged"
 DAILY_MIN_DEEP = 3
 DAILY_MIN_QUICK = 5
 DAILY_MIN_FILL_SCORE = 0.1
+TOPIC_CORE_PATTERNS = (
+    r"\bcontent\s+safety\b",
+    r"\bcontent\s+moderation\b",
+    r"\bmoderation\b",
+    r"\bharmful\s+(?:content|prompt|response|text)\b",
+    r"\btoxicity\b|\btoxic\s+(?:content|language|speech)\b",
+    r"\bhate\s+speech\b",
+    r"\boffensive\s+(?:language|speech|content)\b",
+    r"\babuse\s+detection\b|\babusive\s+(?:content|language)\b",
+    r"\bguardrails?\b|\bguard\s+models?\b",
+    r"\bsafety\s+classifiers?\b|\bunsafe\s+(?:prompt|response|content)\b",
+    r"\bjailbreak(?:ing|s)?\b|\bprompt\s+injection\b",
+    r"\bdanger\s+recognition\b|\brisk\s+recognition\b",
+    r"\bpolicy\s+violation\b|\bsafety\s+alignment\b",
+)
+
+
+def is_topic_relevant(item: Dict[str, Any]) -> bool:
+    """Require a concrete content-safety target; generic methods do not count as bridges."""
+    rich_fields = (
+        "abstract", "evidence_en", "evidence_cn", "llm_evidence_en",
+        "llm_evidence_cn", "tldr_en", "method_cn", "conclusion_cn",
+    )
+    if not any(str(item.get(key) or "").strip() for key in rich_fields):
+        # Legacy carryover/test records may only have an id and score; do not
+        # silently discard them before the richer metadata is available.
+        return True
+    text = " ".join(
+        str(item.get(key) or "")
+        for key in (
+            "title", "abstract", "evidence_en", "evidence_cn",
+            "llm_evidence_en", "llm_evidence_cn", "tldr_en", "method_cn", "conclusion_cn",
+        )
+    ).lower()
+    if not text.strip():
+        return True
+    return any(re.search(pattern, text) for pattern in TOPIC_CORE_PATTERNS)
 
 
 def log(message: str) -> None:
@@ -460,6 +497,8 @@ def load_recent_qualified_recommendations(
                     or float(item.get("llm_score", 0)) < 6.0
                 ):
                     continue
+                if not is_topic_relevant(item):
+                    continue
                 if active_tag_keys:
                     item_tag_keys = {
                         normalize_carryover_tag(tag).lower()
@@ -575,6 +614,8 @@ def build_candidates(
 
     for item in carryover_items:
         pid = str(item.get("id") or item.get("paper_id") or "").strip()
+        if not is_topic_relevant(item):
+            continue
         if item.get("quality_gate_pass") is not True:
             continue
         if float(item.get("llm_score", 0)) < CARRYOVER_MIN_SCORE:
@@ -589,6 +630,8 @@ def build_candidates(
 
     for item in scored_papers:
         pid = str(item.get("id") or "").strip()
+        if not is_topic_relevant(item):
+            continue
         if item.get("quality_gate_pass") is not True:
             continue
         if not pid or pid in seen_ids or pid.lower() in excluded:
