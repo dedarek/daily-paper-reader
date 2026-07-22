@@ -1,26 +1,25 @@
 # 日报 · 2026-07-22
 
-- 生成时间：2026-07-22 05:29:29 UTC
+- 生成时间：2026-07-22 10:15:24 UTC
 - 当次推荐总数：8
 - 精读区：3
 - 速读区：5
+- 内容类型：近期精选回顾（来源：20260721,20260720,20260711-20260720）
 
 ## 今日简报（AI）
-1) 7月22日日报：8篇文本分类与安全检测论文速递，精读聚焦自进化分类与端侧图谱RAG。
-2) 最值得关注：SIFT方法让分类器实现“自我教学”式动态进化，SmartRAG则打通了移动端原生图谱检索增强的落地路径。
-3) 建议关注动态分类或端侧RAG的读者，精读这两篇高分论文以获取前沿架构思路。
+> 今日没有新增合格论文。为避免日报空白，以下展示最近一次通过严格质量门的 8 篇近期精选回顾（来源：20260721,20260720,20260711-20260720）；这些论文不是今日新论文。
 
 ## 精读区
-1. [A Classifier That Teaches Itself: Self-Improving, Frozen-gate Training (SIFT) for Dynamic Document Classification](/202607/22/2607.18358v1-a-classifier-that-teaches-itself-self-improving-frozen-gate-training-sift-for-dynamic-document-classification) （8.0/10）
-2. [SmartRAG: Native Graph-Based RAG for Mobile Device](/202607/22/2607.14661v2-smartrag-native-graph-based-rag-for-mobile-device) （6.0/10）
-3. [A Better Start for Language Models: Domain-Conditional Position Offsets](/202607/22/2607.18302v1-a-better-start-for-language-models-domain-conditional-position-offsets) （6.0/10）
+1. [Silent Alarm: A J-Space Protocol for Comparing Danger Recognition Across Models and Quantization Levels](/202607/22/2607.12792v1-silent-alarm-a-j-space-protocol-for-comparing-danger-recognition-across-models-and-quantization-levels) （4.0/10）
+2. [Automatic Hard Example Synthesis with Multi-Level Agentic Data Curation](/202607/22/2607.14256v1-automatic-hard-example-synthesis-with-multi-level-agentic-data-curation) （4.0/10）
+3. [Mark, Don't Erase: Token Inoculation for Dual-Use Knowledge in LLMs](/202607/22/2607.18639v1-mark-dont-erase-token-inoculation-for-dual-use-knowledge-in-llms) （2.0/10）
 
 ## 速读区
-1. [Rationale-Guided Knowledge Distillation for Cross-Lingual Stance Detection](/202607/22/2607.18693v1-rationale-guided-knowledge-distillation-for-cross-lingual-stance-detection) （6.0/10）
-2. [FAD-SA-GRU: Enhancing Hate Speech Detection in Algerian Dialect Through Feature-Augmented Self-Attention GRU Networks](/202607/22/2607.11279v1-fad-sa-gru-enhancing-hate-speech-detection-in-algerian-dialect-through-feature-augmented-self-attention-gru-networks) （5.0/10）
-3. [Silent Alarm: A J-Space Protocol for Comparing Danger Recognition Across Models and Quantization Levels](/202607/22/2607.12792v1-silent-alarm-a-j-space-protocol-for-comparing-danger-recognition-across-models-and-quantization-levels) （5.0/10）
-4. [Efficient and Privacy Aware Edge Cloud Collaborative Inference for Large Language Models](/202607/22/2607.13093v2-efficient-and-privacy-aware-edge-cloud-collaborative-inference-for-large-language-models) （5.0/10）
-5. [When to Trust the Map: Confidence-Aware LLM Routing for Automotive CVE-to-ATM Mapping](/202607/22/2607.18684v1-when-to-trust-the-map-confidence-aware-llm-routing-for-automotive-cve-to-atm-mapping) （5.0/10）
+1. [SingGuard-NSFA: Extensible Guardrails for Agentic AI via Generative Reasoning and Real-Time Classification](/202607/22/2607.13081v1-singguard-nsfa-extensible-guardrails-for-agentic-ai-via-generative-reasoning-and-real-time-classification) （9.0/10）
+2. [A Dual-Hypothesis Reasoning Framework for LLM Guardrails](/202607/22/2607.17575v1-a-dual-hypothesis-reasoning-framework-for-llm-guardrails) （8.0/10）
+3. [HyperSafe: Inference-Time Safety Recovery for Fine-Tuned Language Models](/202607/22/2607.11475v1-hypersafe-inference-time-safety-recovery-for-fine-tuned-language-models) （7.0/10）
+4. [PVDetector: Detecting Prompt Injection Attacks on Purpose-Specific LLM Agents through Policy-Violation Concept Analysis](/202607/22/2607.12624v1-pvdetector-detecting-prompt-injection-attacks-on-purpose-specific-llm-agents-through-policy-violation-concept-analysis) （7.0/10）
+5. [When Words Are Safe But Actions Kill: Probing Physical Danger Beyond Text Safety in Hidden-State Risk Space](/202607/22/2607.15218v1-when-words-are-safe-but-actions-kill-probing-physical-danger-beyond-text-safety-in-hidden-state-risk-space) （7.0/10）
 
 ---
 使用键盘方向键可在日报/论文之间快速切换。

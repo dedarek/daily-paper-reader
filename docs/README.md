@@ -7,45 +7,44 @@
 
 ## 每次日报
 - 最新运行日期：2026-07-22
-- 运行时间：2026-07-22 05:29:29 UTC
+- 运行时间：2026-07-22 10:15:24 UTC
 - 运行状态：成功
 - 本次总论文数：8
 - 精读区：3
 - 速读区：5
+- 内容类型：近期精选回顾（来源：20260721,20260720,20260711-20260720）
 
 ### 今日简报（AI）
-1) 7月22日日报：8篇论文速递，自改进分类器与端侧图RAG领衔精读。
-2) 最值得关注：SIFT方法让分类器实现“自我教学”式动态进化，以及SmartRAG探索移动端原生图检索增强生成。
-3) 建议关注动态自训练机制在业务数据流中的应用潜力，或体验轻量级图RAG在端侧设备的部署效果。
+> 今日没有新增合格论文。为避免日报空白，以下展示最近一次通过严格质量门的 8 篇近期精选回顾（来源：20260721,20260720,20260711-20260720）；这些论文不是今日新论文。
 - 详情：[/202607/22/README](/202607/22/README)
 
 ### 精读区论文标签
-1. [A Classifier That Teaches Itself: Self-Improving, Frozen-gate Training (SIFT) for Dynamic Document Classification](/202607/22/2607.18358v1-a-classifier-that-teaches-itself-self-improving-frozen-gate-training-sift-for-dynamic-document-classification)  
-   标签：评分：8.0/10、query:small-model-content-safety
-   evidence：廉价CPU分类器将低置信样本升级至LLM裁判，LLM裁决反哺小模型
-2. [SmartRAG: Native Graph-Based RAG for Mobile Device](/202607/22/2607.14661v2-smartrag-native-graph-based-rag-for-mobile-device)  
-   标签：评分：6.0/10、query:small-model-content-safety
-   evidence：端侧框架使用量化1.7B骨干与教师蒸馏EvoNER在手机上运行
-3. [A Better Start for Language Models: Domain-Conditional Position Offsets](/202607/22/2607.18302v1-a-better-start-for-language-models-domain-conditional-position-offsets)  
-   标签：评分：6.0/10、query:small-model-content-safety
-   evidence：每域单向量冻结权重，参数比LoRA少200-1000倍
+1. [Silent Alarm: A J-Space Protocol for Comparing Danger Recognition Across Models and Quantization Levels](/202607/22/2607.12792v1-silent-alarm-a-j-space-protocol-for-comparing-danger-recognition-across-models-and-quantization-levels)  
+   标签：评分：4.0/10、query:small-model-content-safety
+   evidence：基于雅可比空间比较LLM量化级别(INT8/INT4)下危险识别能力的协议
+2. [Automatic Hard Example Synthesis with Multi-Level Agentic Data Curation](/202607/22/2607.14256v1-automatic-hard-example-synthesis-with-multi-level-agentic-data-curation)  
+   标签：评分：4.0/10、query:small-model-content-safety
+   evidence：面向内容安全审核的智能体红队测试
+3. [Mark, Don't Erase: Token Inoculation for Dual-Use Knowledge in LLMs](/202607/22/2607.18639v1-mark-dont-erase-token-inoculation-for-dual-use-knowledge-in-llms)  
+   标签：评分：2.0/10
+   evidence：不相关
 
 ### 速读区论文标签
-1. [Rationale-Guided Knowledge Distillation for Cross-Lingual Stance Detection](/202607/22/2607.18693v1-rationale-guided-knowledge-distillation-for-cross-lingual-stance-detection)  
-   标签：评分：6.0/10、query:small-model-content-safety
-   evidence：将LLM推理知识蒸馏到紧凑学生模型用于文本分类
-2. [FAD-SA-GRU: Enhancing Hate Speech Detection in Algerian Dialect Through Feature-Augmented Self-Attention GRU Networks](/202607/22/2607.11279v1-fad-sa-gru-enhancing-hate-speech-detection-in-algerian-dialect-through-feature-augmented-self-attention-gru-networks)  
-   标签：评分：5.0/10、query:small-model-content-safety
-   evidence：基于GRU的轻量仇恨言论分类器用于内容审核
-3. [Silent Alarm: A J-Space Protocol for Comparing Danger Recognition Across Models and Quantization Levels](/202607/22/2607.12792v1-silent-alarm-a-j-space-protocol-for-comparing-danger-recognition-across-models-and-quantization-levels)  
-   标签：评分：5.0/10、query:small-model-content-safety
-   evidence：评估LLM在不同量化级别(BF16, INT8, INT4)下的安全识别能力
-4. [Efficient and Privacy Aware Edge Cloud Collaborative Inference for Large Language Models](/202607/22/2607.13093v2-efficient-and-privacy-aware-edge-cloud-collaborative-inference-for-large-language-models)  
-   标签：评分：5.0/10、query:small-model-content-safety
-   evidence：边云协作推理，量化ONNX部署，本地轻量模块，降低延迟
-5. [When to Trust the Map: Confidence-Aware LLM Routing for Automotive CVE-to-ATM Mapping](/202607/22/2607.18684v1-when-to-trust-the-map-confidence-aware-llm-routing-for-automotive-cve-to-atm-mapping)  
-   标签：评分：5.0/10、query:small-model-content-safety
-   evidence：置信度感知路由将候选映射至自动/审核/保留三档实现选择性自动化
+1. [SingGuard-NSFA: Extensible Guardrails for Agentic AI via Generative Reasoning and Real-Time Classification](/202607/22/2607.13081v1-singguard-nsfa-extensible-guardrails-for-agentic-ai-via-generative-reasoning-and-real-time-classification)  
+   标签：评分：9.0/10、query:small-model-content-safety
+   evidence：紧凑型护栏模型(0.8B-9B)用于实时LLM安全分类
+2. [A Dual-Hypothesis Reasoning Framework for LLM Guardrails](/202607/22/2607.17575v1-a-dual-hypothesis-reasoning-framework-for-llm-guardrails)  
+   标签：评分：8.0/10、query:small-model-content-safety
+   evidence：基于LoRA的参数高效防护栏，使用自生成推理轨迹进行安全审核
+3. [HyperSafe: Inference-Time Safety Recovery for Fine-Tuned Language Models](/202607/22/2607.11475v1-hypersafe-inference-time-safety-recovery-for-fine-tuned-language-models)  
+   标签：评分：7.0/10、query:small-model-content-safety
+   evidence：无需训练的提示级安全分类器与冻结LLM并行运行
+4. [PVDetector: Detecting Prompt Injection Attacks on Purpose-Specific LLM Agents through Policy-Violation Concept Analysis](/202607/22/2607.12624v1-pvdetector-detecting-prompt-injection-attacks-on-purpose-specific-llm-agents-through-policy-violation-concept-analysis)  
+   标签：评分：7.0/10、query:small-model-content-safety
+   evidence：无需训练框架，通过隐状态与策略违规概念对齐检测提示注入攻击
+5. [When Words Are Safe But Actions Kill: Probing Physical Danger Beyond Text Safety in Hidden-State Risk Space](/202607/22/2607.15218v1-when-words-are-safe-but-actions-kill-probing-physical-danger-beyond-text-safety-in-hidden-state-risk-space)  
+   标签：评分：7.0/10、query:small-model-content-safety
+   evidence：单层逻辑探针用于物理危险分类且误报率低
 
 
 <div class="dpr-home-promo-card">
