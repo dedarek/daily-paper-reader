@@ -6,45 +6,43 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-22
-- 运行时间：2026-07-22 10:15:24 UTC
+- 最新运行日期：2026-07-14 ~ 2026-07-23
+- 运行时间：2026-07-23 03:32:10 UTC
 - 运行状态：成功
-- 本次总论文数：8
+- 本次总论文数：7
 - 精读区：3
-- 速读区：5
-- 内容类型：近期精选回顾（来源：20260721,20260720,20260711-20260720）
+- 速读区：4
 
 ### 今日简报（AI）
-> 今日没有新增合格论文。为避免日报空白，以下展示最近一次通过严格质量门的 8 篇近期精选回顾（来源：20260721,20260720,20260711-20260720）；这些论文不是今日新论文。
-- 详情：[/202607/22/README](/202607/22/README)
+1) 本期日报精选7篇大模型安全与风险防范论文，精读3篇速读4篇。
+2) 最值得关注双假设推理框架构建LLM护栏，以及文本安全但行为致命的物理风险探测。
+3) 建议读者重点关注大模型从文本到物理层面的越狱风险，并审视现有安全对齐策略的盲区。
+- 详情：[/20260714-20260723/README](/20260714-20260723/README)
 
 ### 精读区论文标签
-1. [Silent Alarm: A J-Space Protocol for Comparing Danger Recognition Across Models and Quantization Levels](/202607/22/2607.12792v1-silent-alarm-a-j-space-protocol-for-comparing-danger-recognition-across-models-and-quantization-levels)  
-   标签：评分：4.0/10、query:small-model-content-safety
-   evidence：基于雅可比空间比较LLM量化级别(INT8/INT4)下危险识别能力的协议
-2. [Automatic Hard Example Synthesis with Multi-Level Agentic Data Curation](/202607/22/2607.14256v1-automatic-hard-example-synthesis-with-multi-level-agentic-data-curation)  
-   标签：评分：4.0/10、query:small-model-content-safety
-   evidence：面向内容安全审核的智能体红队测试
-3. [Mark, Don't Erase: Token Inoculation for Dual-Use Knowledge in LLMs](/202607/22/2607.18639v1-mark-dont-erase-token-inoculation-for-dual-use-knowledge-in-llms)  
-   标签：评分：2.0/10
-   evidence：不相关
+1. [A Dual-Hypothesis Reasoning Framework for LLM Guardrails](/20260714-20260723/2607.17575v1-a-dual-hypothesis-reasoning-framework-for-llm-guardrails)  
+   标签：评分：8.0/10、query:smcs
+   evidence：使用LoRA参数高效微调和自生成策略的LLM安全护栏
+2. [When Words Are Safe But Actions Kill: Probing Physical Danger Beyond Text Safety in Hidden-State Risk Space](/20260714-20260723/2607.15218v1-when-words-are-safe-but-actions-kill-probing-physical-danger-beyond-text-safety-in-hidden-state-risk-space)  
+   标签：评分：7.0/10、query:smcs
+   evidence：用于LLM安全分类的单层L2正则逻辑探针，低误报率
+3. [Conditional Reliability of Toxicity Signals for Multilingual and Code-Mixed Abuse Detection](/20260714-20260723/2607.15861v1-conditional-reliability-of-toxicity-signals-for-multilingual-and-code-mixed-abuse-detection)  
+   标签：评分：7.0/10、query:smcs
+   evidence：ToxGate信任融合头用于滥用检测，对毒性信号进行条件门控
 
 ### 速读区论文标签
-1. [SingGuard-NSFA: Extensible Guardrails for Agentic AI via Generative Reasoning and Real-Time Classification](/202607/22/2607.13081v1-singguard-nsfa-extensible-guardrails-for-agentic-ai-via-generative-reasoning-and-real-time-classification)  
-   标签：评分：9.0/10、query:small-model-content-safety
-   evidence：紧凑型护栏模型(0.8B-9B)用于实时LLM安全分类
-2. [A Dual-Hypothesis Reasoning Framework for LLM Guardrails](/202607/22/2607.17575v1-a-dual-hypothesis-reasoning-framework-for-llm-guardrails)  
-   标签：评分：8.0/10、query:small-model-content-safety
-   evidence：基于LoRA的参数高效防护栏，使用自生成推理轨迹进行安全审核
-3. [HyperSafe: Inference-Time Safety Recovery for Fine-Tuned Language Models](/202607/22/2607.11475v1-hypersafe-inference-time-safety-recovery-for-fine-tuned-language-models)  
-   标签：评分：7.0/10、query:small-model-content-safety
-   evidence：无需训练的提示级安全分类器与冻结LLM并行运行
-4. [PVDetector: Detecting Prompt Injection Attacks on Purpose-Specific LLM Agents through Policy-Violation Concept Analysis](/202607/22/2607.12624v1-pvdetector-detecting-prompt-injection-attacks-on-purpose-specific-llm-agents-through-policy-violation-concept-analysis)  
-   标签：评分：7.0/10、query:small-model-content-safety
-   evidence：无需训练框架，通过隐状态与策略违规概念对齐检测提示注入攻击
-5. [When Words Are Safe But Actions Kill: Probing Physical Danger Beyond Text Safety in Hidden-State Risk Space](/202607/22/2607.15218v1-when-words-are-safe-but-actions-kill-probing-physical-danger-beyond-text-safety-in-hidden-state-risk-space)  
-   标签：评分：7.0/10、query:small-model-content-safety
-   evidence：单层逻辑探针用于物理危险分类且误报率低
+1. [Cascading versus Joint Modeling for Hierarchical Offensive Language Detection](/20260714-20260723/2607.16790v1-cascading-versus-joint-modeling-for-hierarchical-offensive-language-detection)  
+   标签：评分：7.0/10、query:smcs
+   evidence：级联攻击性语言检测，报告了准确率、参数量和推理延迟权衡
+2. [PVDetector: Detecting Prompt Injection Attacks on Purpose-Specific LLM Agents through Policy-Violation Concept Analysis](/20260714-20260723/2607.12624v1-pvdetector-detecting-prompt-injection-attacks-on-purpose-specific-llm-agents-through-policy-violation-concept-analysis)  
+   标签：评分：6.0/10、query:smcs
+   evidence：通过隐状态与策略违规概念对齐进行免训练提示注入检测
+3. [Silent Alarm: A J-Space Protocol for Comparing Danger Recognition Across Models and Quantization Levels](/20260714-20260723/2607.12792v1-silent-alarm-a-j-space-protocol-for-comparing-danger-recognition-across-models-and-quantization-levels)  
+   标签：评分：6.0/10、query:smcs
+   evidence：比较不同模型和量化等级(BF16, INT8, INT4)的危险识别能力
+4. [AEGIS: Awareness-Enhanced Guidance for Iterative Safeguard](/20260714-20260723/2607.17713v1-aegis-awareness-enhanced-guidance-for-iterative-safeguard)  
+   标签：评分：5.0/10、query:smcs
+   evidence：基于span级检测器输出的多语言文本去毒框架
 
 
 <div class="dpr-home-promo-card">
