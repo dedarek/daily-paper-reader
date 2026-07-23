@@ -1470,6 +1470,22 @@
           '请先点击“测试”，确认当前接口和模型可用。';
         deepseekStatusEl.style.color = '#999';
       };
+      const isBrowserFetchBlocked = (error) => {
+        const message = normalizeText(error && error.message).toLowerCase();
+        return message === 'failed to fetch'
+          || message === 'load failed'
+          || message.includes('networkerror')
+          || message.includes('cors');
+      };
+      const allowServerSideProviderTest = (error) => {
+        const provider = selectedProvider();
+        if (provider === 'deepseek' || !isBrowserFetchBlocked(error)) return false;
+        deepseekStatusEl.textContent =
+          '⚠️ 浏览器跨域限制，无法在此页面直测；配置仍可保存，GitHub Actions 将在服务端验证接口。';
+        deepseekStatusEl.style.color = '#996c00';
+        deepseekOk = true;
+        return true;
+      };
       const resetCustomStatus = () => {
         customStatusEl.innerHTML =
           '将依次用已填写聊天模型发送 <code>hello world</code>，检查接口与模型是否可用。';
@@ -1739,9 +1755,11 @@
           deepseekStatusEl.style.color = '#28a745';
           deepseekOk = true;
         } catch (e) {
-          deepseekStatusEl.textContent = `❌ 验证失败：${e.message || e}`;
-          deepseekStatusEl.style.color = '#c00';
-          deepseekOk = false;
+          if (!allowServerSideProviderTest(e)) {
+            deepseekStatusEl.textContent = `❌ 验证失败：${e.message || e}`;
+            deepseekStatusEl.style.color = '#c00';
+            deepseekOk = false;
+          }
         } finally {
           deepseekVerifyBtn.disabled = false;
         }
@@ -1756,9 +1774,11 @@
           deepseekStatusEl.style.color = '#28a745';
           deepseekOk = true;
         } catch (e) {
-          deepseekStatusEl.textContent = `❌ 测试失败：${e.message || e}`;
-          deepseekStatusEl.style.color = '#c00';
-          deepseekOk = false;
+          if (!allowServerSideProviderTest(e)) {
+            deepseekStatusEl.textContent = `❌ 测试失败：${e.message || e}`;
+            deepseekStatusEl.style.color = '#c00';
+            deepseekOk = false;
+          }
         } finally {
           deepseekTestBtn.disabled = false;
           deepseekVerifyBtn.disabled = false;

@@ -148,11 +148,14 @@ class ConferenceWorkflowAndUiTest(unittest.TestCase):
     def test_config_and_chat_scripts_bypass_stale_cdn(self):
         root = pathlib.Path(__file__).resolve().parents[1]
         index = (root / "index.html").read_text(encoding="utf-8")
+        secret_js = (root / "app" / "secret.session.js").read_text(encoding="utf-8")
         self.assertIn("LOCAL_ONLY_SCRIPTS", index)
         self.assertIn("app/llm-config-utils.js", index)
         self.assertIn("app/secret.session.js", index)
         self.assertIn("app/chat.discussion.js", index)
         self.assertIn("shouldUseCdnScript", index)
+        self.assertIn("浏览器跨域限制", secret_js)
+        self.assertIn("allowServerSideProviderTest", secret_js)
 
 
 if __name__ == "__main__":
