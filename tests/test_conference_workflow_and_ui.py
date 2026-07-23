@@ -36,6 +36,7 @@ class ConferenceWorkflowAndUiTest(unittest.TestCase):
 
         self.assertIn("conference", inputs)
         self.assertIn("years", inputs)
+        self.assertIn("conference_pairs", inputs)
         self.assertEqual((inputs.get("top_k") or {}).get("default"), "50")
         self.assertEqual((inputs.get("rrf_top_n") or {}).get("default"), "200")
         self.assertEqual((inputs.get("run_rerank") or {}).get("default"), "true")
@@ -56,6 +57,8 @@ class ConferenceWorkflowAndUiTest(unittest.TestCase):
         self.assertIn("--run-llm-refine", text)
         self.assertIn("--output-dir \"archive/${RUN_DATE}/filtered\"", text)
         self.assertIn("DPR_FILTER_PROFILE_TAG", text)
+        self.assertIn("CONFERENCE_PAIRS", text)
+        self.assertIn("Unexpected inputs 422", text)
 
     def test_frontend_triggers_conference_retrieval_workflow(self):
         root = pathlib.Path(__file__).resolve().parents[1]
@@ -163,6 +166,7 @@ class ConferenceWorkflowAndUiTest(unittest.TestCase):
         self.assertIn("app/secret.session.js", index)
         self.assertIn("app/chat.discussion.js", index)
         self.assertIn("shouldUseCdnScript", index)
+        self.assertIn("DPR_ASSET_VERSION", index)
         self.assertIn("conference_pairs", index)
         self.assertIn("浏览器跨域限制", secret_js)
         self.assertIn("allowServerSideProviderTest", secret_js)

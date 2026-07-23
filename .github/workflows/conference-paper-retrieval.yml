@@ -7,6 +7,10 @@ on:
         description: "会议名：AAAI、ACL、EMNLP、ICLR、ICML 或 NeurIPS"
         required: true
         default: "ICML"
+      conference_pairs:
+        description: "旧版前端兼容输入，例如 ICLR:2025,ICML:2025；新页面无需填写"
+        required: false
+        default: ""
       years:
         description: "年份列表，例如 2024,2025"
         required: true
@@ -215,6 +219,7 @@ jobs:
 
           CONFERENCE="${{ github.event.inputs.conference }}"
           YEARS="${{ github.event.inputs.years }}"
+          CONFERENCE_PAIRS="${{ github.event.inputs.conference_pairs }}"
           TOP_K="${{ github.event.inputs.top_k }}"
           RRF_TOP_N="${{ github.event.inputs.rrf_top_n }}"
           RUN_RERANK="${{ github.event.inputs.run_rerank }}"
@@ -231,6 +236,38 @@ jobs:
           fi
           if [ -z "$RRF_TOP_N" ]; then
             RRF_TOP_N="200"
+          fi
+
+          # 兼容尚未刷新页面的旧前端：它会发送 conference_pairs，并把
+          # conference 写成 unified。解析为现有检索器支持的会议/年份列表，
+          # 避免 GitHub Actions 直接返回 Unexpected inputs 422。
+          if [ -n "$CONFERENCE_PAIRS" ]; then
+            TOKENS="$(CONFERENCE_PAIRS_INPUT="$CONFERENCE_PAIRS" python - <<'PY'
+          import os
+
+          conferences = []
+          years = []
+          seen_conferences = set()
+          seen_years = set()
+          for raw in os.environ.get("CONFERENCE_PAIRS_INPUT", "").split(","):
+              raw = raw.strip()
+              if not raw or ":" not in raw:
+                  continue
+              conference, year = raw.rsplit(":", 1)
+              conference = conference.strip()
+              year = year.strip()
+              if conference and conference.lower() not in seen_conferences:
+                  seen_conferences.add(conference.lower())
+                  conferences.append(conference)
+              if year and year not in seen_years:
+                  seen_years.add(year)
+                  years.append(year)
+          print(",".join(conferences))
+          print(",".join(years))
+          PY
+            )"
+            CONFERENCE="$(echo "$TOKENS" | sed -n '1p')"
+            YEARS="$(echo "$TOKENS" | sed -n '2p')"
           fi
 
           TOKENS="$(CONFERENCE_INPUT="$CONFERENCE" YEARS_INPUT="$YEARS" python -c 'import os, sys; sys.path.insert(0, "src"); from conference_retrieval import build_years_token, parse_conferences, parse_years; print("-".join(parse_conferences(os.environ.get("CONFERENCE_INPUT", "")))); print(build_years_token(parse_years(os.environ.get("YEARS_INPUT", ""))))')"
