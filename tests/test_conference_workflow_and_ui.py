@@ -154,6 +154,7 @@ class ConferenceWorkflowAndUiTest(unittest.TestCase):
         self.assertIn("app/secret.session.js", index)
         self.assertIn("app/chat.discussion.js", index)
         self.assertIn("shouldUseCdnScript", index)
+        self.assertIn("conference_pairs", index)
         self.assertIn("浏览器跨域限制", secret_js)
         self.assertIn("allowServerSideProviderTest", secret_js)
 
