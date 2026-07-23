@@ -145,6 +145,15 @@ class ConferenceWorkflowAndUiTest(unittest.TestCase):
         self.assertIn("DEFAULT_RERANKER_PROFILE.value", secret_js)
         self.assertIn("secret.private", gitignore)
 
+    def test_config_and_chat_scripts_bypass_stale_cdn(self):
+        root = pathlib.Path(__file__).resolve().parents[1]
+        index = (root / "index.html").read_text(encoding="utf-8")
+        self.assertIn("LOCAL_ONLY_SCRIPTS", index)
+        self.assertIn("app/llm-config-utils.js", index)
+        self.assertIn("app/secret.session.js", index)
+        self.assertIn("app/chat.discussion.js", index)
+        self.assertIn("shouldUseCdnScript", index)
+
 
 if __name__ == "__main__":
     unittest.main()
