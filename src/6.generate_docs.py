@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Tuple
 
 import fitz  # PyMuPDF
 import requests
-from llm import DeepSeekClient
+from llm import LLMClient, create_llm_client
 
 SCRIPT_DIR = os.path.dirname(__file__)
 ROOT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
@@ -34,30 +34,31 @@ CONFIG_FILE = os.path.join(ROOT_DIR, "config.yaml")
 TODAY_STR = str(os.getenv("DPR_RUN_DATE") or "").strip() or datetime.now(timezone.utc).strftime("%Y%m%d")
 RANGE_DATE_RE = re.compile(r"^(\d{8})-(\d{8})$")
 
-# LLM 配置（使用 llm.py 内的 DeepSeek 客户端）
+# LLM 配置（支持 OpenAI-compatible 与 Anthropic）
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY") or os.getenv("SUMMARY_API_KEY")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL") or os.getenv("SUMMARY_BASE_URL") or "https://api.deepseek.com"
 DEEPSEEK_MODEL = os.getenv("SUMMARY_MODEL") or os.getenv("DEEPSEEK_MODEL") or "deepseek-v4-flash"
 STEP6_STRUCTURED_MAX_TOKENS = 16 * 1024
 
 
-def create_llm_client() -> DeepSeekClient | None:
+def create_configured_llm_client() -> LLMClient | None:
     if not DEEPSEEK_API_KEY:
         return None
-    return DeepSeekClient(
+    return create_llm_client(
         api_key=DEEPSEEK_API_KEY,
         model=DEEPSEEK_MODEL,
         base_url=DEEPSEEK_BASE_URL,
+        provider=os.getenv("LLM_PROVIDER") or os.getenv("SUMMARY_PROVIDER") or "deepseek",
     )
 
 
-LLM_CLIENT = create_llm_client()
+LLM_CLIENT = create_configured_llm_client()
 
 DEFAULT_DOCS_CONCURRENCY = 4
 
 
 def call_llm_text(
-    client: DeepSeekClient,
+    client: LLMClient,
     messages: List[Dict[str, str]],
     temperature: float,
     max_tokens: int,
@@ -74,7 +75,7 @@ def call_llm_text(
 
 
 def call_llm_structured_json(
-    client: DeepSeekClient,
+    client: LLMClient,
     messages: List[Dict[str, str]],
     schema_name: str,
     schema: Dict[str, Any],
@@ -292,7 +293,7 @@ def fetch_arxiv_paper_meta(arxiv_id: str) -> Dict[str, Any]:
 def translate_title_and_abstract_to_zh(
     title: str,
     abstract: str,
-    client: DeepSeekClient | None = None,
+    client: LLMClient | None = None,
 ) -> Tuple[str, str]:
     active_client = client or LLM_CLIENT
     if active_client is None:
@@ -537,11 +538,11 @@ def generate_deep_summary(
     md_file_path: str,
     txt_file_path: str,
     max_retries: int = 3,
-    client: DeepSeekClient | None = None,
+    client: LLMClient | None = None,
 ) -> str | None:
     active_client = client or LLM_CLIENT
     if active_client is None:
-        log("[WARN] 未配置 DEEPSEEK_API_KEY 或 SUMMARY_API_KEY，跳过精读总结。")
+        log("[WARN] 未配置 LLM API Key（SUMMARY_API_KEY 或 DEEPSEEK_API_KEY），跳过精读总结。")
         return None
     if not os.path.exists(md_file_path):
         return None
@@ -613,7 +614,7 @@ def generate_glance_overview(
     title: str,
     abstract: str,
     max_retries: int = 3,
-    client: DeepSeekClient | None = None,
+    client: LLMClient | None = None,
 ) -> str | None:
     """
     生成论文速览（包含 TLDR、Motivation、Method、Result、Conclusion）。
@@ -1469,7 +1470,7 @@ def process_paper(
     md_path, txt_path, paper_id = prepare_paper_paths(docs_dir, date_str, title, arxiv_id)
     abstract_en = (paper.get("abstract") or "").strip()
     pdf_url = str(paper.get("link") or paper.get("pdf_url") or "").strip()
-    paper_llm_client = create_llm_client()
+    paper_llm_client = create_configured_llm_client()
 
     glance = ""
 

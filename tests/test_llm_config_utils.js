@@ -8,6 +8,9 @@ const {
   resolveSummaryLLM,
   inferProviderType,
   getDeepSeekPreset,
+  getProviderPreset,
+  buildAnthropicMessagesEndpoint,
+  LLM_PROVIDER_PRESETS,
   inferChatApiProfile,
   resolveJsonResponseMode,
   isDeepSeekV4Model,
@@ -94,6 +97,41 @@ function testInferProviderType() {
       },
     }),
     'deepseek',
+  );
+  assert.equal(
+    inferProviderType({
+      llmProvider: { type: 'openai-compatible' },
+      summarizedLLM: {
+        apiKey: 'sk',
+        baseUrl: 'https://example.com/v2',
+        model: 'astron-code-latest',
+      },
+    }),
+    'openai-compatible',
+  );
+  assert.equal(
+    inferProviderType({
+      summarizedLLM: {
+        apiKey: 'sk',
+        baseUrl: 'https://api.example.com/anthropic',
+        model: 'claude-sonnet',
+      },
+    }),
+    'anthropic',
+  );
+}
+
+function testProviderPresetsAndAnthropicEndpoint() {
+  assert.equal(LLM_PROVIDER_PRESETS['openai-compatible'].protocol, 'chat-completions');
+  assert.equal(getProviderPreset('openai-compatible').baseUrl, 'https://api.openai.com/v1');
+  assert.equal(getProviderPreset('anthropic').protocol, 'anthropic-messages');
+  assert.equal(
+    buildAnthropicMessagesEndpoint('https://maas.example.com/anthropic'),
+    'https://maas.example.com/anthropic/v1/messages',
+  );
+  assert.equal(
+    buildAnthropicMessagesEndpoint('https://api.anthropic.com/v1/messages'),
+    'https://api.anthropic.com/v1/messages',
   );
 }
 
@@ -210,6 +248,25 @@ function testBuildStreamingChatPayload() {
       messages: [{ role: 'user', content: 'hi' }],
       stream: true,
       max_tokens: 393216,
+    },
+  );
+
+  assert.deepEqual(
+    buildStreamingChatPayload({
+      baseUrl: 'https://maas.example.com/anthropic',
+      model: 'astron-code-latest',
+      provider: 'anthropic',
+      messages: [
+        { role: 'system', content: 'Be concise.' },
+        { role: 'user', content: 'hello world' },
+      ],
+    }),
+    {
+      model: 'astron-code-latest',
+      max_tokens: 4096,
+      messages: [{ role: 'user', content: 'hello world' }],
+      stream: true,
+      system: 'Be concise.',
     },
   );
 

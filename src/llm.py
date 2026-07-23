@@ -10,7 +10,7 @@ import requests
 统一的 LLM 客户端封装。
 
 提供商/模型命名规则：'provider/model'，provider 大小写不敏感，model 保留大小写与路径。
-当前运行链路仅支持 DeepSeek；本地 reranker 不走 LLM API。
+支持 DeepSeek / OpenAI-compatible Chat Completions，以及 Anthropic Messages API；本地 reranker 不走 LLM API。
 """
 
 # 单次实验级别的全局 token 统计（需由调用方在实验开始前手动 reset）
@@ -646,7 +646,7 @@ class LLMClient:
                 last_error = e
                 if self._is_authentication_error(e):
                     print(
-                        "LLM 鉴权失败：当前 API Key 无效或无权限，请在本地配置中更新 DeepSeek API Key 后重试。"
+                        "LLM 鉴权失败：当前 API Key 无效或无权限，请检查当前模型服务商的 API Key 后重试。"
                     )
                     if hasattr(e, "response") and e.response is not None:
                         try:
@@ -778,6 +778,144 @@ class DeepSeekClient(LLMClient):
         super().__init__(api_key=api_key, model=model, base_url=base_url)
 
 
+class AnthropicClient(LLMClient):
+    """Anthropic Messages API 客户端。
+
+    ``base_url`` 可以是 Anthropic API 根地址、``/v1``、``/anthropic``，
+    或已经包含 ``/messages`` 的完整地址。这样既兼容官方接口，也兼容
+    国内网关常见的 ``.../anthropic`` 前缀。
+    """
+
+    @staticmethod
+    def _build_messages_url(base_url: str | None) -> str:
+        raw = str(base_url or "").strip().rstrip("/")
+        if not raw:
+            raise ValueError("缺少可用的 Anthropic base_url")
+        if re.search(r"/messages$", raw, re.IGNORECASE):
+            return raw
+        if re.search(r"/v\d+$", raw, re.IGNORECASE):
+            return f"{raw}/messages"
+        return f"{raw}/v1/messages"
+
+    @staticmethod
+    def _split_system(messages: List[Dict[str, str]]) -> Tuple[str, List[Dict[str, str]]]:
+        system_parts: List[str] = []
+        converted: List[Dict[str, str]] = []
+        for message in messages or []:
+            if not isinstance(message, dict):
+                continue
+            role = str(message.get("role") or "user").strip().lower()
+            content = message.get("content")
+            if isinstance(content, list):
+                content = LLMClient._extract_text_content(content)
+            content = str(content or "")
+            if role == "system":
+                if content.strip():
+                    system_parts.append(content)
+                continue
+            if role not in {"user", "assistant"}:
+                role = "user"
+            converted.append({"role": role, "content": content})
+        return "\n\n".join(system_parts), converted
+
+    def chat(self, messages: List[Dict[str, str]], response_format: Optional[Dict[str, Any]] = None) -> dict:
+        system_text, converted_messages = self._split_system(messages)
+        if response_format is not None and not any("json" in str(m.get("content") or "").lower() for m in messages or []):
+            system_text = f"{system_text}\n\nOutput valid JSON only. Do not output Markdown or explanatory text.".strip()
+
+        headers = {
+            "x-api-key": self.api_key,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        max_tokens = int(self.kwargs.get("max_tokens") or resolve_max_output_tokens())
+        payload: Dict[str, Any] = {
+            "model": self.model,
+            "max_tokens": max(1, max_tokens),
+            "messages": converted_messages,
+        }
+        if system_text:
+            payload["system"] = system_text
+        if "temperature" in self.kwargs:
+            payload["temperature"] = self.kwargs["temperature"]
+
+        start_time = time.time()
+        last_error: Exception | None = None
+        for attempt_idx, req_base in enumerate(self._iter_retry_bases(total_attempts=6), start=1):
+            try:
+                response = requests.post(
+                    self._build_messages_url(req_base),
+                    headers=headers,
+                    json=payload,
+                    timeout=120,
+                )
+                response.raise_for_status()
+                response_data = response.json()
+                if isinstance(response_data, dict) and response_data.get("error"):
+                    raise requests.exceptions.HTTPError(f"Anthropic API error: {response_data['error']}")
+
+                content = self._extract_text_content(response_data.get("content"))
+                if not content:
+                    raise requests.exceptions.HTTPError("Anthropic API response missing content")
+                usage = response_data.get("usage") or {}
+                prompt_tokens = int(usage.get("input_tokens") or 0)
+                completion_tokens = int(usage.get("output_tokens") or 0)
+                total_tokens = prompt_tokens + completion_tokens
+                self.tokens['prompt'] += prompt_tokens
+                self.tokens['content'] += completion_tokens
+                self.tokens['total'] += total_tokens
+                GLOBAL_TOKENS['prompt'] += prompt_tokens
+                GLOBAL_TOKENS['content'] += completion_tokens
+                GLOBAL_TOKENS['total'] += total_tokens
+                elapsed = time.time() - start_time
+                self._cum_time_seconds += elapsed
+                global GLOBAL_TIME_SECONDS
+                GLOBAL_TIME_SECONDS += elapsed
+                self._call_index += 1
+                self._cum_tokens['prompt'] += prompt_tokens
+                self._cum_tokens['content'] += completion_tokens
+                self._cum_tokens['total'] += total_tokens
+                print(f"[anthropic][{self.model}] 第{self._call_index}次\n"
+                      f"本次 tokens：prompt={prompt_tokens}, thinking=0, content={completion_tokens}, total={total_tokens}\n"
+                      f"累计 tokens：prompt={self._cum_tokens['prompt']}, thinking=0, content={self._cum_tokens['content']}, total={self._cum_tokens['total']}\n"
+                      f"本次用时：{elapsed:.2f}s，累计用时：{self._cum_time_seconds:.2f}s")
+                return {
+                    "content": content,
+                    "raw_content": response_data.get("content"),
+                    "reasoning_content": "",
+                    "refusal": "",
+                    "finish_reason": response_data.get("stop_reason"),
+                    "message": {"role": "assistant", "content": content},
+                    "raw_response": response_data,
+                    "tokens": {
+                        "prompt": prompt_tokens,
+                        "content": completion_tokens,
+                        "reasoning": 0,
+                        "total": total_tokens,
+                    },
+                }
+            except Exception as exc:
+                last_error = exc
+                if self._is_authentication_error(exc):
+                    raise
+                if attempt_idx < 6:
+                    print(f"Anthropic 请求失败（base={req_base}，第 {attempt_idx} 次），将重试")
+                    continue
+                raise
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("Anthropic 请求未命中可用 base")
+
+
+def create_llm_client(api_key: str, model: str, base_url: str, provider: str = "") -> LLMClient:
+    """按配置创建 LLM 客户端；未指定 provider 时默认为 OpenAI-compatible。"""
+    normalized = str(provider or os.getenv("SUMMARY_PROVIDER") or os.getenv("LLM_PROVIDER") or "").strip().lower()
+    if normalized in {"anthropic", "claude", "anthropic-messages"} or "/anthropic" in str(base_url or "").lower():
+        return AnthropicClient(api_key=api_key, model=model, base_url=base_url)
+    return DeepSeekClient(api_key=api_key, model=model, base_url=base_url)
+
+
 def parse_provider_model(model_str: str) -> Tuple[str, str]:
     """
     解析模型字符串为 (provider, model)。
@@ -808,14 +946,35 @@ class ClientFactory:
         if not model_env:
             raise ValueError("缺少必要环境变量: LLM_MODEL（格式为 'deepseek/model'）")
 
-        provider, model = parse_provider_model(model_env)
+        configured_provider = (os.getenv('LLM_PROVIDER') or os.getenv('SUMMARY_PROVIDER') or '').strip().lower()
+        if '/' in model_env:
+            provider, model = parse_provider_model(model_env)
+        elif configured_provider:
+            provider, model = configured_provider, model_env
+        else:
+            raise ValueError("缺少模型提供商：请使用 'provider/model' 格式，或同时设置 LLM_PROVIDER")
         api_key = (os.getenv('LLM_API_KEY') or '').strip() or None
         base_url = (os.getenv('LLM_BASE_URL') or '').strip() or None
 
-        if provider == 'deepseek':
-            base_url = base_url or DEFAULT_DEEPSEEK_BASE_URL
-            return DeepSeekClient(api_key=api_key or os.getenv('DEEPSEEK_API_KEY', ''), model=model, base_url=base_url)
-        raise ValueError(f"当前仅支持 DeepSeek API，请使用 'deepseek/模型名'，当前 provider={provider}")
+        provider_env = (os.getenv('LLM_PROVIDER') or os.getenv('SUMMARY_PROVIDER') or provider).strip().lower()
+        if provider_env in {'anthropic', 'claude', 'anthropic-messages'}:
+            if not base_url:
+                raise ValueError("Anthropic API 需要配置 LLM_BASE_URL（或 SUMMARY_BASE_URL）")
+            return AnthropicClient(
+                api_key=api_key or os.getenv('SUMMARY_API_KEY', '') or os.getenv('DEEPSEEK_API_KEY', ''),
+                model=model,
+                base_url=base_url,
+            )
+        if provider_env in {'deepseek', 'openai-compatible', 'openai', 'custom', ''}:
+            base_url = base_url or (DEFAULT_DEEPSEEK_BASE_URL if provider_env == 'deepseek' else '')
+            if not base_url:
+                raise ValueError("OpenAI-compatible API 需要配置 LLM_BASE_URL（或 SUMMARY_BASE_URL）")
+            return DeepSeekClient(
+                api_key=api_key or os.getenv('LLM_API_KEY', '') or os.getenv('SUMMARY_API_KEY', '') or os.getenv('DEEPSEEK_API_KEY', ''),
+                model=model,
+                base_url=base_url,
+            )
+        raise ValueError(f"不支持的 LLM provider：{provider_env}")
 
     @staticmethod
     def from_config(_config: dict | None = None):

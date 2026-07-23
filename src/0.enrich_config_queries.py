@@ -10,7 +10,7 @@ from typing import Any, Dict, List
 
 import yaml  # type: ignore
 
-from llm import DeepSeekClient
+from llm import LLMClient, create_llm_client
 
 SCRIPT_DIR = os.path.dirname(__file__)
 CONFIG_FILE = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "config.yaml"))
@@ -112,7 +112,7 @@ def build_rewrite_prompt(query: str) -> List[Dict[str, str]]:
   ]
 
 
-def call_llm_json(client: DeepSeekClient, messages: List[Dict[str, str]], schema_name: str, schema: Dict[str, Any]) -> Dict[str, Any]:
+def call_llm_json(client: LLMClient, messages: List[Dict[str, str]], schema_name: str, schema: Dict[str, Any]) -> Dict[str, Any]:
   resp = client.chat_structured(
     messages,
     schema_name=schema_name,
@@ -148,7 +148,7 @@ def main() -> None:
 
     api_key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("SUMMARY_API_KEY")
     if not api_key:
-        raise RuntimeError("缺少 DEEPSEEK_API_KEY 或 SUMMARY_API_KEY 环境变量，无法调用 DeepSeek。")
+        raise RuntimeError("缺少 LLM API Key（SUMMARY_API_KEY 或 DEEPSEEK_API_KEY），无法调用当前模型服务。")
 
     group_start("Step 0.0 - load config")
     with open(CONFIG_FILE, "r", encoding="utf-8") as f:
@@ -159,7 +159,12 @@ def main() -> None:
     keywords = subs.get("keywords") or []
     llm_queries = subs.get("llm_queries") or []
 
-    client = DeepSeekClient(api_key=api_key, model=MODEL_NAME, base_url=BASE_URL)
+    client = create_llm_client(
+        api_key=api_key,
+        model=MODEL_NAME,
+        base_url=BASE_URL,
+        provider=os.getenv("LLM_PROVIDER") or os.getenv("SUMMARY_PROVIDER") or "deepseek",
+    )
 
     related_schema = {
       "type": "object",

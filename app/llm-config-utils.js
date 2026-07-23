@@ -21,6 +21,29 @@
       models: Object.freeze(['deepseek-v4-flash', 'deepseek-v4-pro']),
     }),
   });
+  const LLM_PROVIDER_PRESETS = Object.freeze({
+    deepseek: Object.freeze({
+      key: 'deepseek',
+      label: 'DeepSeek 官方',
+      baseUrl: DEFAULT_DEEPSEEK_BASE_URL,
+      models: Object.freeze([...DEFAULT_DEEPSEEK_CHAT_MODELS]),
+      protocol: 'chat-completions',
+    }),
+    'openai-compatible': Object.freeze({
+      key: 'openai-compatible',
+      label: 'OpenAI 兼容接口（自定义）',
+      baseUrl: 'https://api.openai.com/v1',
+      models: Object.freeze([]),
+      protocol: 'chat-completions',
+    }),
+    anthropic: Object.freeze({
+      key: 'anthropic',
+      label: 'Anthropic Messages API',
+      baseUrl: 'https://api.anthropic.com/v1',
+      models: Object.freeze([]),
+      protocol: 'anthropic-messages',
+    }),
+  });
 
   const normalizeText = (value) => String(value || '').trim();
 
@@ -41,6 +64,14 @@
       return `${normalized}/chat/completions`;
     }
     return `${normalized}/v1/chat/completions`;
+  };
+
+  const buildAnthropicMessagesEndpoint = (value) => {
+    const raw = normalizeText(value).replace(/\/+$/g, '');
+    if (!raw) return '';
+    if (/\/messages$/i.test(raw)) return raw;
+    if (/\/v\d+$/i.test(raw)) return `${raw}/messages`;
+    return `${raw}/v1/messages`;
   };
 
   const sanitizeModelList = (values, maxCount = 3) => {
@@ -69,6 +100,7 @@
     const safeSecret = secret && typeof secret === 'object' ? secret : {};
     const chatList = Array.isArray(safeSecret.chatLLMs) ? safeSecret.chatLLMs : [];
     const models = [];
+    const provider = inferProviderType(safeSecret);
     const seen = new Set();
     chatList.forEach((item) => {
       if (!item || typeof item !== 'object') return;
@@ -84,6 +116,7 @@
           name,
           apiKey,
           baseUrl,
+          provider,
         });
       });
     });
@@ -113,10 +146,24 @@
     const safeSecret = secret && typeof secret === 'object' ? secret : {};
     const llmProvider = safeSecret.llmProvider || {};
     const explicit = normalizeText(llmProvider.type || llmProvider.provider || '').toLowerCase();
-    if (explicit === 'deepseek') {
-      return 'deepseek';
-    }
+    if (explicit === 'anthropic' || explicit === 'claude') return 'anthropic';
+    if (explicit === 'openai-compatible' || explicit === 'openai' || explicit === 'custom') return 'openai-compatible';
+    const summary = resolveSummaryLLM(safeSecret);
+    if (summary && /\/anthropic(?:\/|$)/i.test(summary.baseUrl || '')) return 'anthropic';
+    if (summary && /api\.anthropic\.com/i.test(summary.baseUrl || '')) return 'anthropic';
     return 'deepseek';
+  };
+
+  const getProviderPreset = (key) => {
+    const preset = LLM_PROVIDER_PRESETS[normalizeText(key).toLowerCase()];
+    if (!preset) return null;
+    return {
+      key: preset.key,
+      label: preset.label,
+      baseUrl: preset.baseUrl,
+      models: [...preset.models],
+      protocol: preset.protocol,
+    };
   };
 
   const getDeepSeekPreset = (key) => {
@@ -137,6 +184,7 @@
     if (/(^|\/\/)(api\.)?deepseek\.com(?:$|\/)/i.test(normalizedBaseUrl)) {
       return 'deepseek';
     }
+    if (/api\.anthropic\.com|\/anthropic(?:\/|$)/i.test(normalizedBaseUrl)) return 'anthropic';
     if (normalizedModel.startsWith('deepseek-')) {
       return 'deepseek';
     }
@@ -164,7 +212,20 @@
     return true;
   };
 
-  const buildStreamingChatPayload = ({ baseUrl, model, messages }) => {
+  const buildStreamingChatPayload = ({ baseUrl, model, messages, provider = '' }) => {
+    if (String(provider || '').toLowerCase() === 'anthropic' || inferChatApiProfile(baseUrl, model) === 'anthropic') {
+      const system = (messages || [])
+        .filter((item) => item && item.role === 'system')
+        .map((item) => String(item.content || ''))
+        .filter(Boolean)
+        .join('\n\n');
+      const converted = (messages || [])
+        .filter((item) => item && item.role !== 'system')
+        .map((item) => ({ role: item.role === 'assistant' ? 'assistant' : 'user', content: item.content || '' }));
+      const payload = { model: normalizeText(model), max_tokens: 4096, messages: converted, stream: true };
+      if (system) payload.system = system;
+      return payload;
+    }
     const payload = {
       model: normalizeText(model),
       messages: Array.isArray(messages) ? messages : [],
@@ -200,14 +261,17 @@
     DEFAULT_DEEPSEEK_BASE_URL,
     DEFAULT_DEEPSEEK_CHAT_MODELS,
     DEEPSEEK_PRESETS,
+    LLM_PROVIDER_PRESETS,
     normalizeText,
     normalizeBaseUrlForStorage,
     buildChatCompletionsEndpoint,
+    buildAnthropicMessagesEndpoint,
     sanitizeModelList,
     resolveChatModels,
     resolveSummaryLLM,
     inferProviderType,
     getDeepSeekPreset,
+    getProviderPreset,
     inferChatApiProfile,
     resolveJsonResponseMode,
     isDeepSeekV4Model,

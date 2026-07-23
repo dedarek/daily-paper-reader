@@ -85,10 +85,10 @@ window.PrivateDiscussionChat = (function () {
     }
     return 'unsupported';
   };
-	  const buildStreamingChatPayload = (baseUrl, model, messages) => {
+	  const buildStreamingChatPayload = (baseUrl, model, messages, provider = '') => {
 	    const utils = window.DPRLLMConfigUtils || {};
 	    if (typeof utils.buildStreamingChatPayload === 'function') {
-	      return utils.buildStreamingChatPayload({ baseUrl, model, messages });
+      return utils.buildStreamingChatPayload({ baseUrl, model, messages, provider });
 	    }
 	    const payload = {
 	      model,
@@ -1054,6 +1054,7 @@ window.PrivateDiscussionChat = (function () {
 
     const apiKey = modelEntry ? (modelEntry.apiKey || '').trim() : '';
     const model = modelEntry ? modelEntry.name : '';
+    const provider = modelEntry ? (modelEntry.provider || '').trim().toLowerCase() : '';
 
     if (!apiKey) {
       aiAnswerDiv.textContent =
@@ -1084,6 +1085,15 @@ window.PrivateDiscussionChat = (function () {
     const endpoint = (() => {
       const raw = (modelEntry && modelEntry.baseUrl ? modelEntry.baseUrl : '').trim();
       if (!raw) return '';
+      if (provider === 'anthropic' || /\/anthropic(?:\/|$)/i.test(raw) || /api\.anthropic\.com/i.test(raw)) {
+        if (window.DPRLLMConfigUtils && typeof window.DPRLLMConfigUtils.buildAnthropicMessagesEndpoint === 'function') {
+          return window.DPRLLMConfigUtils.buildAnthropicMessagesEndpoint(raw);
+        }
+        const normalized = raw.replace(/\/+$/, '');
+        if (/\/messages$/i.test(normalized)) return normalized;
+        if (/\/v\d+$/i.test(normalized)) return `${normalized}/messages`;
+        return `${normalized}/v1/messages`;
+      }
       if (
         window.DPRLLMConfigUtils &&
         typeof window.DPRLLMConfigUtils.buildChatCompletionsEndpoint === 'function'
@@ -1224,7 +1234,7 @@ window.PrivateDiscussionChat = (function () {
       let resp = null;
 
       const baseUrl = (modelEntry && modelEntry.baseUrl ? modelEntry.baseUrl : '').trim();
-	      const primaryPayload = buildStreamingChatPayload(baseUrl, model, messages);
+          const primaryPayload = buildStreamingChatPayload(baseUrl, model, messages, provider);
 	      const fallbackPayload = {
 	        model,
 	        messages,
@@ -1234,11 +1244,14 @@ window.PrivateDiscussionChat = (function () {
 	        fallbackPayload.max_tokens = primaryPayload.max_tokens;
 	      }
 
+      const isAnthropic = provider === 'anthropic' || /\/anthropic(?:\/|$)/i.test(baseUrl) || /api\.anthropic\.com/i.test(baseUrl);
       const doChatFetch = async (payload) => fetch(endpoint, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${apiKey}`,
+            ...(isAnthropic
+              ? { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }
+              : { Authorization: `Bearer ${apiKey}` }),
           },
           signal: controller.signal,
           body: JSON.stringify(payload),
@@ -1302,14 +1315,11 @@ window.PrivateDiscussionChat = (function () {
       if (!resp.body) {
         // 回退：如果不支持流，则按一次性响应处理
         const data = await resp.json();
-        const answer =
-          data &&
-          data.choices &&
-          data.choices[0] &&
-          data.choices[0].message &&
-          data.choices[0].message.content
+        const answer = isAnthropic
+          ? ((data && Array.isArray(data.content) ? data.content.map((part) => part && (part.text || part.content || '')).join('') : '') || '（模型未返回内容）')
+          : (data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content
             ? data.choices[0].message.content
-            : '（模型未返回内容）';
+            : '（模型未返回内容）');
         answerBuffer = answer;
         scheduleRender();
       } else {
@@ -1326,9 +1336,14 @@ window.PrivateDiscussionChat = (function () {
           buffer = parts.pop() || '';
 
           for (const part of parts) {
-            const line = part.trim();
-            if (!line || !line.startsWith('data:')) continue;
-            const jsonStr = line.replace(/^data:\s*/, '');
+            // OpenAI SSE 通常只有 data 行；Anthropic SSE 还会在 data 前发送
+            // event 行，因此不能要求整个事件块以 data: 开头。
+            const dataLine = part
+              .split(/\r?\n/)
+              .map((line) => line.trim())
+              .find((line) => line.startsWith('data:'));
+            if (!dataLine) continue;
+            const jsonStr = dataLine.replace(/^data:\s*/, '');
             if (jsonStr === '[DONE]') continue;
             let payload;
             try {
@@ -1343,7 +1358,8 @@ window.PrivateDiscussionChat = (function () {
             const delta = choice ? choice.delta || {} : {};
             const reasoning =
               delta.reasoning_content || delta.thinking || '';
-            const contentPiece = delta.content || '';
+            const anthropicContent = payload.delta && payload.delta.text;
+            const contentPiece = isAnthropic ? (anthropicContent || '') : (delta.content || '');
 
             if (reasoning) {
               thinkingBuffer += reasoning;

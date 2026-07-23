@@ -48,11 +48,18 @@ def build_secret_env(secret: dict[str, Any] | None) -> dict[str, str]:
     api_key = norm_text(summarized.get("apiKey") or first_chat.get("apiKey"))
     base_url = norm_text(summarized.get("baseUrl") or first_chat.get("baseUrl"))
     model = norm_text(summarized.get("model"))
+    provider = norm_text(
+        (secret.get("llmProvider") or {}).get("type")
+        if isinstance(secret.get("llmProvider"), dict)
+        else ""
+    )
     if not model and isinstance(first_chat.get("models"), list) and first_chat.get("models"):
         model = norm_text(first_chat.get("models")[0])
 
     env: dict[str, str] = {}
     if summarized or first_chat:
+        env["SUMMARY_PROVIDER"] = provider or "deepseek"
+        env["LLM_PROVIDER"] = provider or "deepseek"
         env["SUMMARY_API_KEY"] = api_key
         env["DEEPSEEK_API_KEY"] = api_key
         env["SUMMARY_BASE_URL"] = base_url

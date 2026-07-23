@@ -254,6 +254,17 @@
     if (/\/v\d+$/i.test(raw)) return `${raw}/chat/completions`;
     return `${raw}/v1/chat/completions`;
   };
+  const buildAnthropicMessagesEndpoint = (value) => {
+    const utils = getLLMUtils();
+    if (typeof utils.buildAnthropicMessagesEndpoint === 'function') {
+      return utils.buildAnthropicMessagesEndpoint(value);
+    }
+    const raw = normalizeText(value).replace(/\/+$/g, '');
+    if (!raw) return '';
+    if (/\/messages$/i.test(raw)) return raw;
+    if (/\/v\d+$/i.test(raw)) return `${raw}/messages`;
+    return `${raw}/v1/messages`;
+  };
   const sanitizeModelList = (values, maxCount) => {
     const utils = getLLMUtils();
     if (typeof utils.sanitizeModelList === 'function') {
@@ -370,10 +381,10 @@
       baseUrl: normalizeBaseUrlForStorage(reranker.baseUrl || profile.baseUrl || ''),
     };
   };
-  const buildConnectivityTestPayload = (baseUrl, model) => {
+  const buildConnectivityTestPayload = (baseUrl, model, provider) => {
     const utils = getLLMUtils();
     if (typeof utils.buildConnectivityTestPayload === 'function') {
-      return utils.buildConnectivityTestPayload({ baseUrl, model });
+      return utils.buildConnectivityTestPayload({ baseUrl, model, provider });
     }
     return {
       model: normalizeText(model || ''),
@@ -438,7 +449,9 @@
         const model = normalizeText(entry.model || entry.name || '');
         const apiKey = normalizeText(entry.apiKey || '');
         const baseUrl = normalizeBaseUrlForStorage(entry.baseUrl || '');
-        const endpoint = buildChatCompletionsEndpoint(baseUrl);
+        const provider = normalizeText(entry.provider || '').toLowerCase();
+        const isAnthropic = provider === 'anthropic' || /\/anthropic(?:\/|$)/i.test(baseUrl) || /api\.anthropic\.com/i.test(baseUrl);
+        const endpoint = isAnthropic ? buildAnthropicMessagesEndpoint(baseUrl) : buildChatCompletionsEndpoint(baseUrl);
 
         if (!model || !apiKey || !endpoint) {
           throw new Error('模型配置缺少 apiKey、baseUrl 或 model。');
@@ -448,13 +461,24 @@
           statusEl.style.color = '#666';
         }
 
-        const payload = buildConnectivityTestPayload(baseUrl, model);
+        const payload = isAnthropic
+          ? {
+              model,
+              max_tokens: 256,
+              messages: [{ role: 'user', content: 'Reply with exactly: hello world' }],
+            }
+          : buildConnectivityTestPayload(baseUrl, model, provider);
 
         const headers = {
           'Content-Type': 'application/json',
           Accept: 'application/json',
-          Authorization: `Bearer ${apiKey}`,
         };
+        if (isAnthropic) {
+          headers['x-api-key'] = apiKey;
+          headers['anthropic-version'] = '2023-06-01';
+        } else {
+          headers.Authorization = `Bearer ${apiKey}`;
+        }
 
         const doFetch = (requestPayload) => fetch(endpoint, {
           method: 'POST',
@@ -631,6 +655,7 @@
       const summarizedApiKey = normalizeText(safeOptions.summarizedApiKey || '');
       const summarizedBaseUrl = normalizeBaseUrlForStorage(safeOptions.summarizedBaseUrl || '');
       const summarizedModel = normalizeText(safeOptions.summarizedModel || '');
+      const summaryProvider = normalizeText(safeOptions.providerType || 'deepseek');
       const filterModel = normalizeText(safeOptions.filterModel || summarizedModel);
       const rewriteModel = normalizeText(safeOptions.rewriteModel || summarizedModel);
       const skipRerank = !!safeOptions.skipRerank;
@@ -663,6 +688,8 @@
       const secretNameSummaryApiKey = 'SUMMARY_API_KEY';
       const secretNameSummaryBaseUrl = 'SUMMARY_BASE_URL';
       const secretNameSummaryModel = 'SUMMARY_MODEL';
+      const secretNameSummaryProvider = 'SUMMARY_PROVIDER';
+      const secretNameLlmProvider = 'LLM_PROVIDER';
       const secretNameDeepSeekKey = 'DEEPSEEK_API_KEY';
       const secretNameDeepSeekBase = 'DEEPSEEK_BASE_URL';
       const secretNameDeepSeekModel = 'DEEPSEEK_MODEL';
@@ -712,6 +739,8 @@
         { name: secretNameSummaryApiKey, value: summarizedApiKey },
         { name: secretNameSummaryBaseUrl, value: summarizedBaseUrl },
         { name: secretNameSummaryModel, value: summarizedModel },
+        { name: secretNameSummaryProvider, value: summaryProvider },
+        { name: secretNameLlmProvider, value: summaryProvider },
         { name: secretNameDeepSeekKey, value: summarizedApiKey },
         { name: secretNameDeepSeekBase, value: summarizedBaseUrl },
         { name: secretNameDeepSeekModel, value: summarizedModel },
@@ -1088,7 +1117,7 @@
       }, 100);
     };
 
-    // 初始化向导：第 2 步（仅保留 DeepSeek API）
+    // 初始化向导：第 2 步（支持 DeepSeek、OpenAI-compatible、Anthropic）
     const renderInitStep2 = (password) => {
       setStep2Modal(true);
       const currentSecret =
@@ -1106,6 +1135,8 @@
         currentSecret.github && currentSecret.github.token,
       );
       const initialApiKey = normalizeText(currentSummaryLLM.apiKey || '');
+      const initialBaseUrl = normalizeBaseUrlForStorage(currentSummaryLLM.baseUrl || '');
+      const initialProviderType = inferProviderType(currentSecret);
       const initialDeepSeekModel =
         normalizeText(currentSummaryLLM.model || '') || 'deepseek-v4-flash';
       const deepseekSummaryModels = getDefaultDeepSeekChatModels().map((model) => ({
@@ -1144,16 +1175,32 @@
             </div>
 
             <div id="secret-setup-deepseek-section" class="secret-setup-step2-block">
-              <div class="secret-setup-step2-title">DeepSeek API（必填）</div>
+              <div class="secret-setup-step2-title">大模型 API（必填）</div>
               <p class="secret-setup-step2-note">
-                DeepSeek 用于 query enrich、LLM refine、总结与聊天；Reranker 可在右侧单独选择。
+                可选择 DeepSeek、OpenAI 兼容接口或 Anthropic Messages API；同一配置用于论文筛选、总结和聊天。
               </p>
+              <div style="font-weight:500; margin-bottom:4px;">接口类型</div>
+              <select id="secret-setup-llm-provider" class="secret-setup-select" style="margin-bottom:8px;">
+                <option value="deepseek">DeepSeek 官方</option>
+                <option value="openai-compatible">OpenAI 兼容接口（自定义）</option>
+                <option value="anthropic">Anthropic Messages API</option>
+              </select>
+              <div id="secret-setup-llm-base-url-row" style="display:none; margin-bottom:8px;">
+                <div style="font-weight:500; margin-bottom:4px;">Base URL</div>
+                <input
+                  id="secret-setup-llm-base-url"
+                  type="text"
+                  autocomplete="off"
+                  placeholder="例如：https://api.openai.com/v1 或 https://api.anthropic.com/v1"
+                  style="width:100%; box-sizing:border-box; padding:6px 8px; font-size:13px;"
+                />
+              </div>
               <div class="secret-setup-input-row multi-actions">
                 <input
                   id="secret-setup-deepseek"
                   type="password"
                   autocomplete="off"
-                  placeholder="DeepSeek API Key，例如：sk-xxxx"
+                  placeholder="API Key，例如：sk-xxxx"
                   style="width:100%; box-sizing:border-box; padding:6px 8px; font-size:13px;"
                 />
                 <button id="secret-setup-deepseek-test" type="button" class="secret-gate-btn secondary">
@@ -1168,16 +1215,16 @@
               </div>
 
               <div style="font-weight:500; margin-bottom:4px; display:flex; align-items:center; gap:4px;">
-                用于工作流总结 / 过滤的大模型
+                  用于工作流总结 / 过滤的大模型
                 <span class="secret-model-tip">!
                   <span class="secret-model-tip-popup">
-                    当前只保留 DeepSeek 官方 API。<br/>
-                    Reranker API Key 与 DeepSeek 分开配置。
+                    OpenAI-compatible 需要填写服务商提供的 Base URL；Anthropic 会使用 Messages API。<br/>
+                    Reranker API Key 与总结模型分开配置。
                   </span>
                 </span>
               </div>
               <div id="secret-setup-deepseek-models" style="font-size:13px;">
-                <select id="secret-setup-deepseek-model-select" class="secret-setup-select"></select>
+                <input id="secret-setup-deepseek-model-select" type="text" class="secret-setup-select" placeholder="模型名，例如 astron-code-latest" />
               </div>
             </div>
           </div>
@@ -1216,7 +1263,6 @@
                 </div>
               </div>
               <div id="secret-setup-reranker-status" style="font-size:12px; color:#666; line-height:1.6;"></div>
-              <input type="radio" name="secret-setup-provider" value="deepseek" checked style="display:none;" />
             </div>
 
             <div id="secret-setup-custom-section" style="display:none;">
@@ -1250,9 +1296,9 @@
       const githubInput = document.getElementById('secret-setup-github-token');
       const githubVerifyBtn = document.getElementById('secret-setup-github-verify');
       const githubStatusEl = document.getElementById('secret-setup-github-status');
-      const providerInputs = Array.from(
-        document.querySelectorAll('input[name="secret-setup-provider"]'),
-      );
+      const providerSelect = document.getElementById('secret-setup-llm-provider');
+      const baseUrlRow = document.getElementById('secret-setup-llm-base-url-row');
+      const baseUrlInput = document.getElementById('secret-setup-llm-base-url');
       const deepseekSection = document.getElementById('secret-setup-deepseek-section');
       const deepseekInput = document.getElementById('secret-setup-deepseek');
       const deepseekVerifyBtn = document.getElementById('secret-setup-deepseek-verify');
@@ -1282,7 +1328,9 @@
         !githubInput ||
         !githubVerifyBtn ||
         !githubStatusEl ||
-        !providerInputs.length ||
+        !providerSelect ||
+        !baseUrlRow ||
+        !baseUrlInput ||
         !deepseekSection ||
         !deepseekInput ||
         !deepseekVerifyBtn ||
@@ -1311,20 +1359,14 @@
         return;
       }
 
-      deepseekModelSelect.innerHTML = deepseekSummaryModels
-        .map((item) => `<option value="${item.value}">${item.label}</option>`)
-        .join('');
-
       githubInput.value = initialGithubToken;
       deepseekInput.value = initialApiKey;
-
-      providerInputs.forEach((input) => {
-        input.checked = input.value === 'deepseek';
-      });
-      deepseekModelSelect.value = initialDeepSeekModel || 'deepseek-v4-flash';
-      if (!deepseekModelSelect.value) {
-        deepseekModelSelect.value = 'deepseek-v4-flash';
+      providerSelect.value = initialProviderType || 'deepseek';
+      if (!['deepseek', 'openai-compatible', 'anthropic'].includes(providerSelect.value)) {
+        providerSelect.value = 'deepseek';
       }
+      baseUrlInput.value = initialBaseUrl || '';
+      deepseekModelSelect.value = initialDeepSeekModel || 'deepseek-v4-flash';
       rerankerProfileSelect.innerHTML = RERANKER_PROFILES
         .map(
           (item) =>
@@ -1347,6 +1389,7 @@
         errorEl.style.color = color || '#999';
       };
 
+      const selectedProvider = () => normalizeText(providerSelect.value || 'deepseek').toLowerCase();
       const selectedDeepSeekModel = () => {
         return normalizeText(deepseekModelSelect.value || '');
       };
@@ -1392,7 +1435,27 @@
         rerankerStatusEl.textContent = `${profile.note} 模型：${profile.model}`;
       };
       const syncProviderSections = () => {
-        deepseekSection.style.display = 'block';
+        const provider = selectedProvider();
+        const preset =
+          window.DPRLLMConfigUtils && typeof window.DPRLLMConfigUtils.getProviderPreset === 'function'
+            ? window.DPRLLMConfigUtils.getProviderPreset(provider)
+            : null;
+        const custom = provider !== 'deepseek';
+        baseUrlRow.style.display = custom ? 'block' : 'none';
+        if (custom && (!normalizeText(baseUrlInput.value) || baseUrlInput.getAttribute('data-provider') !== provider)) {
+          baseUrlInput.value = preset ? preset.baseUrl : '';
+        }
+        if (!custom) {
+          baseUrlInput.value = getDefaultDeepSeekBaseUrl();
+        }
+        if (provider === 'deepseek' && (!selectedDeepSeekModel() || !selectedDeepSeekModel().startsWith('deepseek-'))) {
+          deepseekModelSelect.value = 'deepseek-v4-flash';
+        }
+        deepseekInput.placeholder = provider === 'anthropic'
+          ? 'Anthropic API Key，例如：sk-ant-xxxx'
+          : 'API Key，例如：sk-xxxx';
+        deepseekStatusEl.innerHTML = `将通过一次 <code>hello world</code> 请求检查 ${provider === 'anthropic' ? 'Anthropic Messages API' : provider === 'deepseek' ? 'DeepSeek' : 'OpenAI-compatible'} 配置可用性。`;
+        baseUrlInput.setAttribute('data-provider', provider);
       };
 
       const resetGithubStatus = () => {
@@ -1404,7 +1467,7 @@
       const resetDeepSeekStatus = () => {
         deepseekOk = false;
         deepseekStatusEl.innerHTML =
-          '将通过一次 <code>hello world</code> 请求检查 DeepSeek 配置可用性。';
+          '请先点击“测试”，确认当前接口和模型可用。';
         deepseekStatusEl.style.color = '#999';
       };
       const resetCustomStatus = () => {
@@ -1455,21 +1518,28 @@
       };
 
       const collectProviderDraft = () => {
+        const providerType = selectedProvider();
         const apiKey = normalizeText(deepseekInput.value);
         const model = selectedDeepSeekModel();
         if (!apiKey) {
-          throw new Error('请先输入 DeepSeek API Key。');
+          throw new Error('请先输入当前接口的 API Key。');
         }
         if (!model) {
-          throw new Error('请选择用于工作流总结的大模型。');
+          throw new Error('请填写用于工作流总结的大模型名称。');
         }
-        const reranker = buildRerankerDraft(apiKey, getDefaultDeepSeekBaseUrl());
+        const summaryBaseUrl = providerType === 'deepseek'
+          ? getDefaultDeepSeekBaseUrl()
+          : normalizeBaseUrlForStorage(baseUrlInput.value || '');
+        if (!summaryBaseUrl) {
+          throw new Error('请填写当前接口的 Base URL。');
+        }
+        const reranker = buildRerankerDraft(apiKey, summaryBaseUrl);
         return {
-          providerType: 'deepseek',
+          providerType,
           summaryApiKey: apiKey,
-          summaryBaseUrl: getDefaultDeepSeekBaseUrl(),
+          summaryBaseUrl,
           summaryModel: model,
-          chatModels: getDefaultDeepSeekChatModels(),
+          chatModels: [model],
           skipRerank: false,
           reranker: {
             ...reranker,
@@ -1481,13 +1551,19 @@
         const apiKey = normalizeText(deepseekInput.value);
         const model = selectedDeepSeekModel();
         if (!apiKey || !model) {
-          throw new Error('请先填写 DeepSeek API Key 并选择模型。');
+          throw new Error('请先填写 API Key 和模型名称。');
         }
+        const provider = selectedProvider();
+        const baseUrl = provider === 'deepseek'
+          ? getDefaultDeepSeekBaseUrl()
+          : normalizeBaseUrlForStorage(baseUrlInput.value || '');
+        if (!baseUrl) throw new Error('请填写当前接口的 Base URL。');
         return [
           {
             apiKey,
-            baseUrl: getDefaultDeepSeekBaseUrl(),
+            baseUrl,
             model,
+            provider,
           },
         ];
       };
@@ -1505,7 +1581,7 @@
         githubStatusEl.style.color = '#666';
       }
       if (initialApiKey) {
-        deepseekStatusEl.textContent = '已载入当前 DeepSeek 配置；如更换 API Key 或模型，建议点击测试按钮。';
+        deepseekStatusEl.textContent = '已载入当前模型配置；如更换接口、API Key 或模型，建议点击测试按钮。';
         deepseekStatusEl.style.color = '#666';
       }
 
@@ -1514,7 +1590,7 @@
       resetRerankerTestStatus();
 
       bindResetOnInput([githubInput], resetGithubStatus);
-      bindResetOnInput([deepseekInput, deepseekModelSelect], resetDeepSeekStatus);
+      bindResetOnInput([deepseekInput, deepseekModelSelect, providerSelect, baseUrlInput], resetDeepSeekStatus);
       bindResetOnInput(
         [customApiKeyInput, customBaseUrlInput, customModel1Input, customModel2Input, customModel3Input],
         resetCustomStatus,
@@ -1584,14 +1660,12 @@
           rerankerTestBtn.disabled = false;
         }
       });
-      providerInputs.forEach((input) => {
-        input.addEventListener('change', () => {
-          syncProviderSections();
-          setErrorText(
-            'DeepSeek 密钥将加密写入 GitHub Secrets（用于 GitHub Actions），并同步生成本地 secret.private 备份。',
-            '#999',
-          );
-        });
+      providerSelect.addEventListener('change', () => {
+        syncProviderSections();
+        setErrorText(
+          '当前模型配置将加密写入 GitHub Secrets（用于 GitHub Actions），并同步生成本地 secret.private 备份。',
+          '#999',
+        );
       });
 
       backBtn.addEventListener('click', () => {
@@ -1651,13 +1725,13 @@
       deepseekVerifyBtn.addEventListener('click', async () => {
         const key = normalizeText(deepseekInput.value);
         if (!key) {
-          deepseekStatusEl.textContent = '请先输入 DeepSeek API Key。';
+          deepseekStatusEl.textContent = '请先输入当前接口的 API Key。';
           deepseekStatusEl.style.color = '#c00';
           deepseekOk = false;
           return;
         }
         deepseekVerifyBtn.disabled = true;
-        deepseekStatusEl.textContent = '正在测试 DeepSeek 配置...';
+        deepseekStatusEl.textContent = '正在测试当前模型配置...';
         deepseekStatusEl.style.color = '#666';
         try {
           const models = await pingChatModels(buildPingEntries(), deepseekStatusEl);
@@ -1707,8 +1781,8 @@
           return;
         }
 
-        if (providerDraft.providerType === 'deepseek' && !deepseekOk) {
-          setErrorText('请先点击“测试当前配置”，确认 DeepSeek 配置可用。', '#c00');
+        if (!deepseekOk) {
+          setErrorText('请先点击“测试当前配置”，确认当前接口和模型可用。', '#c00');
           return;
         }
 
