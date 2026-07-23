@@ -23,7 +23,10 @@ class ConferenceRetrievalTest(unittest.TestCase):
         cls.mod = _load_module("conference_retrieval_mod", src_dir / "conference_retrieval.py")
 
     def test_parse_conferences_supports_nips_alias_and_dedupes(self):
-        self.assertEqual(self.mod.parse_conferences("NIPS,ICML,neurips"), ["neurips", "icml"])
+        self.assertEqual(
+            self.mod.parse_conferences("AAAI,ACL,EMNLP,ICLR,NIPS,ICML,neurips"),
+            ["aaai", "acl", "emnlp", "iclr", "neurips", "icml"],
+        )
 
     def test_parse_years_keeps_user_order_and_dedupes(self):
         self.assertEqual(self.mod.parse_years("2025,2024,2025"), [2025, 2024])

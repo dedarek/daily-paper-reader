@@ -42,6 +42,30 @@ from supabase_source import match_papers_by_bm25, match_papers_by_embedding  # n
 
 
 CONFERENCE_DEFAULTS: Dict[str, Dict[str, str]] = {
+    "aaai": {
+        "label": "AAAI",
+        "papers_table": "aaai_papers",
+        "bm25_rpc": "match_aaai_papers_bm25",
+        "vector_rpc_exact": "match_aaai_papers_exact",
+    },
+    "acl": {
+        "label": "ACL",
+        "papers_table": "acl_papers",
+        "bm25_rpc": "match_acl_papers_bm25",
+        "vector_rpc_exact": "match_acl_papers_exact",
+    },
+    "emnlp": {
+        "label": "EMNLP",
+        "papers_table": "emnlp_papers",
+        "bm25_rpc": "match_emnlp_papers_bm25",
+        "vector_rpc_exact": "match_emnlp_papers_exact",
+    },
+    "iclr": {
+        "label": "ICLR",
+        "papers_table": "iclr_openreview_papers",
+        "bm25_rpc": "match_iclr_openreview_papers_bm25",
+        "vector_rpc_exact": "match_iclr_openreview_papers_exact",
+    },
     "icml": {
         "label": "ICML",
         "papers_table": "icml_openreview_papers",
@@ -57,6 +81,10 @@ CONFERENCE_DEFAULTS: Dict[str, Dict[str, str]] = {
 }
 
 CONFERENCE_ALIASES = {
+    "aaai": "aaai",
+    "acl": "acl",
+    "emnlp": "emnlp",
+    "iclr": "iclr",
     "icml": "icml",
     "nips": "neurips",
     "neurips": "neurips",
@@ -125,7 +153,8 @@ def parse_conferences(value: str) -> List[str]:
     for raw in parse_csv_items(value):
         key = CONFERENCE_ALIASES.get(raw.strip().lower())
         if not key:
-            raise ValueError(f"不支持的会议：{raw}，当前仅支持 ICML / NIPS(NeurIPS)。")
+            supported = " / ".join(item["label"] for item in CONFERENCE_DEFAULTS.values())
+            raise ValueError(f"不支持的会议：{raw}，当前支持 {supported}。")
         if key not in seen:
             seen.add(key)
             out.append(key)

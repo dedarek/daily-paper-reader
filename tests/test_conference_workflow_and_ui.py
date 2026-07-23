@@ -28,6 +28,8 @@ class ConferenceWorkflowAndUiTest(unittest.TestCase):
         workflow_path = root / ".github" / "workflows" / "conference-paper-retrieval.yml"
         text = workflow_path.read_text(encoding="utf-8")
         self.assertIn("DPR_LLM_MAX_OUTPUT_TOKENS: \"131072\"", text)
+        for conference in ("AAAI", "ACL", "EMNLP", "ICLR", "ICML", "NEURIPS"):
+            self.assertIn(f"DPR_ENABLE_{conference}_BACKEND: \"1\"", text)
         workflow = yaml.safe_load(text) or {}
         on_block = workflow.get("on") or workflow.get(True) or {}
         inputs = (((on_block.get("workflow_dispatch") or {}).get("inputs")) or {})
@@ -59,10 +61,17 @@ class ConferenceWorkflowAndUiTest(unittest.TestCase):
         root = pathlib.Path(__file__).resolve().parents[1]
         runner = (root / "app" / "workflows.runner.js").read_text(encoding="utf-8")
         manager = (root / "app" / "subscriptions.manager.js").read_text(encoding="utf-8")
+        chat = (root / "app" / "chat.discussion.js").read_text(encoding="utf-8")
         css = (root / "app" / "app.css").read_text(encoding="utf-8")
 
         self.assertIn("conference-paper-retrieval.yml", runner)
         self.assertIn("runConferenceRetrieval", runner)
+        for conference in ("ACL", "AAAI", "EMNLP", "ICLR", "ICML", "NeurIPS"):
+            self.assertIn(conference, runner)
+            self.assertIn(f"'{conference}'", manager)
+            self.assertIn(f"'{conference}'", chat)
+        for unsupported in ("COLING", "ICCV", "IJCAI", "SIGIR"):
+            self.assertNotIn(f"'{unsupported}'", chat)
         self.assertIn("/api/local/workflows/dispatch", runner)
         self.assertIn("DPR_LOCAL_API_BASE", runner)
         self.assertIn(":8567${path}", runner)

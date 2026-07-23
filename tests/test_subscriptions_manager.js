@@ -166,7 +166,14 @@ function testConferenceDefaultYearOnlySelects2025() {
   __setRunSelectionState({ conferencePairs: [] });
   __initializeConferenceChoices();
   const pairs = __getSelectedConferenceYearPairs().sort();
-  assert.deepEqual(pairs, ['ICML:2025', 'NeurIPS:2025']);
+  assert.deepEqual(pairs, [
+    'AAAI:2025',
+    'ACL:2025',
+    'EMNLP:2025',
+    'ICLR:2025',
+    'ICML:2025',
+    'NeurIPS:2025',
+  ]);
 }
 
 function testQuickRunUnsavedMessageClearsAfterSave() {

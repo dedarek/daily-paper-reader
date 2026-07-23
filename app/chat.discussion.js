@@ -295,16 +295,12 @@ window.PrivateDiscussionChat = (function () {
   };
 
   const QUICK_RUN_CONFERENCES = [
-    'ACL',
     'AAAI',
-    'COLING',
+    'ACL',
     'EMNLP',
-    'ICCV',
     'ICLR',
     'ICML',
-    'IJCAI',
     'NeurIPS',
-    'SIGIR',
   ];
 
   const fillQuickRunOptions = (yearSelectEl, confSelectEl) => {

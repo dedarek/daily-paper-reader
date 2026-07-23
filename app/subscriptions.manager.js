@@ -94,10 +94,18 @@ window.SubscriptionsManager = (function () {
   ].join('\n');
 
   const QUICK_RUN_CONFERENCES = [
+    'ACL',
+    'AAAI',
+    'EMNLP',
+    'ICLR',
     'NeurIPS',
     'ICML',
   ];
   const CONFERENCES_WITH_PENDING_CURRENT_YEAR = new Set([
+    'ACL',
+    'AAAI',
+    'EMNLP',
+    'ICLR',
     'NIPS',
     'NEURIPS',
     'ICML',
