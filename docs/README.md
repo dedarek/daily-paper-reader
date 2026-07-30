@@ -6,45 +6,45 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-29
-- 运行时间：2026-07-29 05:02:46 UTC
+- 最新运行日期：2026-07-30
+- 运行时间：2026-07-30 04:58:46 UTC
 - 运行状态：成功
 - 本次总论文数：8
 - 精读区：3
 - 速读区：5
-- 内容类型：近期精选回顾（来源：20260728,20260727）
+- 内容类型：近期精选回顾（来源：20260729,20260727）
 
 ### 今日简报（AI）
-> 今日没有新增合格论文。为避免日报空白，以下展示最近一次通过严格质量门的 8 篇近期精选回顾（来源：20260728,20260727）；这些论文不是今日新论文。
-- 详情：[/202607/29/README](/202607/29/README)
+> 今日没有新增合格论文。为避免日报空白，以下展示最近一次通过严格质量门的 8 篇近期精选回顾（来源：20260729,20260727）；这些论文不是今日新论文。
+- 详情：[/202607/30/README](/202607/30/README)
 
 ### 精读区论文标签
-1. [Shieldstral](/202607/29/2607.25857v1-shieldstral)  
-   标签：评分：9.0/10、query:smcs
-   evidence：3B参数策略自适应多模态安全分类器用于内容审核
-2. [A Dual-Hypothesis Reasoning Framework for LLM Guardrails](/202607/29/2607.17575v1-a-dual-hypothesis-reasoning-framework-for-llm-guardrails)  
-   标签：评分：8.0/10、query:smcs
-   evidence：使用LoRA参数高效微调和自生成策略的LLM安全护栏
-3. [Detecting CSAM Text-to-Image LoRAs From Weights](/202607/29/2607.25750v1-detecting-csam-text-to-image-loras-from-weights)  
-   标签：评分：5.0/10、query:smcs
-   evidence：用于CSAM LoRA审核的紧凑无推理指纹
+1. [Choosing Where and How to Moderate: End-to-End Trade-offs in Filter Placement and Response Rewriting](/202607/30/2607.26200v1-choosing-where-and-how-to-moderate-end-to-end-trade-offs-in-filter-placement-and-response-rewriting)  
+   标签：评分：7.0/10、query:smcs
+   evidence：探针路由级联审核在可比结果下降低延迟
+2. [Recover, Decode, Reguard: Guard-Agnostic Defense Amplification againstEncoded VLM Jailbreaks](/202607/30/2607.26574v1-recover-decode-reguard-guard-agnostic-defense-amplification-againstencoded-vlm-jailbreaks)  
+   标签：评分：6.0/10、query:smcs
+   evidence：面向VLM越狱攻击的安全分类器防护放大器
+3. [On-Policy Distillation for LLM Safety: A Routing Approach to Template-Robust Realignment](/202607/30/2607.27081v1-on-policy-distillation-for-llm-safety-a-routing-approach-to-template-robust-realignment)  
+   标签：评分：6.0/10、query:smcs
+   evidence：基于策略的蒸馏从对齐分布到受损分布用于LLM安全再对齐路由
 
 ### 速读区论文标签
-1. [When Words Are Safe But Actions Kill: Probing Physical Danger Beyond Text Safety in Hidden-State Risk Space](/202607/29/2607.15218v1-when-words-are-safe-but-actions-kill-probing-physical-danger-beyond-text-safety-in-hidden-state-risk-space)  
+1. [Shieldstral](/202607/30/2607.25857v1-shieldstral)  
+   标签：评分：9.0/10、query:smcs
+   evidence：3B参数策略自适应多模态安全分类器用于内容审核
+2. [A Dual-Hypothesis Reasoning Framework for LLM Guardrails](/202607/30/2607.17575v1-a-dual-hypothesis-reasoning-framework-for-llm-guardrails)  
+   标签：评分：8.0/10、query:smcs
+   evidence：使用LoRA参数高效微调和自生成策略的LLM安全护栏
+3. [When Words Are Safe But Actions Kill: Probing Physical Danger Beyond Text Safety in Hidden-State Risk Space](/202607/30/2607.15218v1-when-words-are-safe-but-actions-kill-probing-physical-danger-beyond-text-safety-in-hidden-state-risk-space)  
    标签：评分：7.0/10、query:smcs
    evidence：用于LLM安全分类的单层L2正则逻辑探针，低误报率
-2. [Conditional Reliability of Toxicity Signals for Multilingual and Code-Mixed Abuse Detection](/202607/29/2607.15861v1-conditional-reliability-of-toxicity-signals-for-multilingual-and-code-mixed-abuse-detection)  
+4. [Conditional Reliability of Toxicity Signals for Multilingual and Code-Mixed Abuse Detection](/202607/30/2607.15861v1-conditional-reliability-of-toxicity-signals-for-multilingual-and-code-mixed-abuse-detection)  
    标签：评分：7.0/10、query:smcs
    evidence：ToxGate信任融合头用于滥用检测，对毒性信号进行条件门控
-3. [Cascading versus Joint Modeling for Hierarchical Offensive Language Detection](/202607/29/2607.16790v1-cascading-versus-joint-modeling-for-hierarchical-offensive-language-detection)  
-   标签：评分：7.0/10、query:smcs
-   evidence：级联攻击性语言检测，报告了准确率、参数量和推理延迟权衡
-4. [ChannelGuard: Safe Models Do Not Compose into Safe Multi-Agent Systems](/202607/29/2607.19430v1-channelguard-safe-models-do-not-compose-into-safe-multi-agent-systems)  
-   标签：评分：7.0/10、query:smcs
-   evidence：无需训练的防御框架，用信息瓶颈门控对通道文本评分，不增加LLM调用
-5. [Silent Alarm: A J-Space Protocol for Comparing Danger Recognition Across Models and Quantization Levels](/202607/29/2607.12792v1-silent-alarm-a-j-space-protocol-for-comparing-danger-recognition-across-models-and-quantization-levels)  
-   标签：评分：6.0/10、query:smcs
-   evidence：比较不同模型和量化等级(BF16, INT8, INT4)的危险识别能力
+5. [Guardrails as Scapegoats: Auditing Unfaithful Safety Refusals in Tool-Augmented LLM Agents](/202607/30/2607.19449v1-guardrails-as-scapegoats-auditing-unfaithful-safety-refusals-in-tool-augmented-llm-agents)  
+   标签：评分：3.0/10、query:smcs
+   evidence：审计工具增强LLM代理中不忠实的安全拒绝
 
 
 <div class="dpr-home-promo-card">
