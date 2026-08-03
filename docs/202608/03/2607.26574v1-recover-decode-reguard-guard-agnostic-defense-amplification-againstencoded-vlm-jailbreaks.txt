@@ -1,0 +1,854 @@
+Title: Recover, Decode, Reguard: Guard-Agnostic Defense Amplification againstEncoded VLM Jailbreaks
+
+URL Source: https://arxiv.org/pdf/2607.26574v1
+
+Published Time: Thu, 30 Jul 2026 00:33:35 GMT
+
+Number of Pages: 22
+
+Markdown Content:
+# Recover, Decode, Reguard: Guard-Agnostic Defense Amplification against Encoded VLM Jailbreaks 
+
+# Haoyu Zhang, Zhuoxi Wang, Shibo Zheng, Zijian Xiao, Xiangchen Guan, Mohammad Zandsalimy, Shanu Sushmita 
+
+Abstract 
+
+Safety classifiers (“guards”) are the dominant black-box de-fense for vision–language models, yet they judge an input’s 
+
+surface form , not its meaning: a harmful request re-encoded as set theory, formal logic, a classical language, code, or text rendered inside an image slips past a guard that would block it in plain language—the decode gap . The natural fix is a guard-agnostic recover-and-decode amplifier that transcribes image content and restates encoded text into its plain payload before 
+
+the guard, so any off-the-shelf classifier can screen the true request. We build this amplifier and evaluate it against the attacker’s best case: an ensemble of eleven attacks, scoring a behavior as broken if any succeeds (best-of-suite, follow-ing AutoAttack)—a measure rarely reported for jailbreak de-fenses, yet ∼3.5 × higher than the per-attack mean they usually report. This exposes our central finding: an empirical safety– utility ceiling for the non-iterative recovery-based defenses we evaluate, recurring across every guard and both target VLMs. The amplifier only partially closes the gap—the undefended ensemble breaks 89–91% of behaviors and the best guard-plus-amplifier still leaves 63–65%—and, measured this way, its ensemble-level gain over the guard alone is significant in only four of ten guard–target pairs, with one guard moving the wrong way on both targets. It is guard-agnostic at the inter-face (no guard internals, any off-the-shelf classifier); it is not uniformly guard-agnostic in effect . A modular reguard layer closes much of the residual but drives benign over-refusal to 81–92% for well-calibrated guards; the one laxer guard that stays usable never reaches deployable safety ( 48% en-semble ASR). Across five guards and a second target VLM, 
+
+no configuration achieves both low attack-success and low over-refusal : for the pipeline we study and for representation-shifting attacks — encodings and cross-modal renders, which leave a legible payload to recover, not pixel- or embedding-space attacks — no configuration we evaluate escapes it. We contribute the amplifier, an ensemble evaluation that makes this trade-off visible, and a map of where recovery-based VLM defense works and where it does not. 
+
+# 1 Introduction 
+
+Large vision–language models (VLMs) are increasingly de-ployed behind a black-box safety guard — an off-the-shelf classifier such as WildGuard (Han et al. 2024), Llama Guard (Inan et al. 2023; Chi et al. 2024), or a reasoning guard (Liu et al. 2025b; Wen et al. 2025) that screens each request and blocks the unsafe ones. Because such guards are model-agnostic and need no change to the target, they have become the front-line defense for hosted VLMs. Yet a guard classi-fies the surface form of its input, not its meaning: a harmful request re-expressed in an alternative representation — set theory, formal logic, a substitution cipher, code (Ren et al. 2024), or text rendered inside an image (Gong et al. 2025; Yang et al. 2025) — slips past a guard that would block the same request in plain language. We call this the decode gap .We close the decode gap with a guard-agnostic prepro-cessor, the recover-and-decode amplifier , placed before any guard. It uses the target VLM to recover image content as text and to decode an encoded request into its plain-language payload, so an off-the-shelf classifier can screen the true re-quest. The amplifier needs no guard internals and no training; it “amplifies” any guard’s reach to encoded and cross-modal attacks. The natural claim would be that this restores protection. We resist it. A deployed attacker is not limited to a sin-gle encoding, so we evaluate against an ensemble of eleven encoding attacks and, following the AutoAttack methodol-ogy (Croce and Hein 2020), report the best-of-suite attack-success rate (ASR): a behavior is broken if any attack suc-ceeds. Under this best-of-suite metric — rarely used in jailbreak-defense evaluations, which report a per-attack mean that we find understates the attacker by ∼3.5 × — the am-plifier is only a partial defense. The suite breaks 89–91% of behaviors undefended and, even with the strongest guard plus amplifier, still breaks 63–65%, because different attacks break different behaviors. The residual concentrates in two 
+
+established attacks: executable code (Ren et al. 2024), where decoding to prose removes the signal the guard keys on, and grid-based distraction (Yang et al. 2025), where the payload is dispersed across the image. We then ask whether the amplifier can be extended to cover these. Recast as a modular recovery stack , it admits a reguard 
+
+layer that guards the recovered pre-decode text in addition to the decoded payload. Reguard nearly halves the ensem-ble residual (to 43–65%) by restoring the pre-decode view — which reassembles the dispersed grid attack outright and blunts the code attacks, leaving code as the dominant resid-ual — but at a steep utility cost for well-calibrated guards: benign over-refusal rises to 81–92%. The one laxer guard escapes that cost only by never reaching deployable safety (48% ASR). On the safety–utility plane no configuration arXiv:2607.26574v1 [cs.CR] 29 Jul 2026 lands at both low ASR and low over-refusal, and the same frontier recurs on a second target VLM. This is the paper’s central, sobering finding: for the pipeline we study, recovery-based defense does not escape the safety–utility frontier — robustness is bought with benign utility, or not bought at all. 
+
+Contributions. Ours is a characterization, not a solved de-fense. Chiefly, we map an empirical safety–utility ceiling 
+
+for the non-iterative recovery-based black-box defenses we evaluate : recovery closes the decode gap only partially, and the reguard layer that closes the residual does so only by sacrificing a large, quantified fraction of benign utility — or, for the one laxer guard, by never reaching deployable safety — so that no configuration is both safe and usable, across five guards and two target VLMs. Two further contributions support it: (i) the guard-agnostic recover-and-decode ampli-fier and its modular reguard extension, a training-free mech-anism letting any off-the-shelf guard screen encoded and cross-modal VLM jailbreaks; and (ii) an ensemble (best-of-suite) evaluation imported from adversarial-robustness prac-tice (Croce and Hein 2020; Carlini et al. 2019), which makes the trade-off visible where the per-attack means common in this literature hide it. 
+
+# 2 Related Work 
+
+Encoded jailbreaks and black-box guards. A large fam-ily of attacks bypasses alignment by changing the form of a request rather than its content (Liu et al. 2024): typographic and figure-based renders place it inside an image (Gong et al. 2025; Liu et al. 2025a), distraction attacks disperse it across grid cells (Yang et al. 2025), CodeAttack rewrites it as code completion (Ren et al. 2024), and semantic cam-ouflage embeds it in a benign narrative (Yan et al. 2025). A compositional variant instead hides the payload in the image 
+
+embedding space, so no readable surface carries the request at all (Shayegani, Dong, and Abu-Ghazaleh 2024) — only the legible-surface family leaves a payload a recovery step could surface, a boundary we make explicit in Limitations. Black-box safeguard classifiers — WildGuard (Han et al. 2024), Llama Guard and its vision variant (Inan et al. 2023; Chi et al. 2024), Qwen3Guard (Zhao et al. 2025a), and rea-soning guards such as ThinkGuard (Wen et al. 2025) and GuardReasoner-VL (Liu et al. 2025b) — are model-agnostic but inherit the decode gap: they classify what they are shown, and an encoded attack shows them the wrong thing. 
+
+Transform-then-guard defenses. Closest to our work are defenses that transform an input before screening it: ECSO converts image content to text to reactivate text-side safety (Gou et al. 2024); SmoothLLM (Robey et al. 2025) and SemanticSmooth (Ji et al. 2025) perturb or paraphrase and vote; DoubtProbe verifies a request against a reconstructed structural form (Yin et al. 2026); CIDER checks cross-modal consistency instead (Xu et al. 2024). Our amplifier differs in being explicitly guard-agnostic — it yields a plain-language payload any classifier can screen — and in being stress-tested against a cross-modal encoding ensemble rather than single attacks. The technical distinction from ECSO, our closest baseline, is a missing capability: its transform is a sin-gle image-to-caption step, never inverting an encoding and having no text branch, so symbolic, cipher, and code pay-loads survive the caption still encoded. Under our matched protocol ECSO leaves the ensemble essentially undefended (90 /91 % ensemble ASR on Qwen2.5-VL/InternVL3 against an 89 /91% undefended floor) where recover-and-decode cuts it to 65 /63 %; tellingly ECSO’s per-attack mean ASR is only 
+
+25% yet its ensemble is 90% — the very gap our best-of-suite metric exposes. It also pays almost nothing in benign utility (27% over-refusal against a 26% floor; Table 1), so it occu-pies the low-refusal, low-coverage corner of the same frontier rather than a point off it. The recover-only ablation (Table 2) isolates where our margin over it comes from: with decode 
+
+switched off, recovery alone already cuts the ensemble to 
+
+61 /65% , so the gain over ECSO is the inverse-transform of the payload across both channels, not the decode step. 
+
+Rigorous and ensemble evaluation. The adversarial-robustness literature has long warned that single-attack eval-uation overstates a defense; reliable evaluation needs an en-semble of diverse attacks (Croce and Hein 2020) and adap-tive, worst-case testing (Carlini et al. 2019). We import that discipline to VLM jailbreak defense, reporting best-of-suite ASR over standardized harmful (Mazeika et al. 2024) and benign over-refusal (Cui et al. 2025) benchmarks. An ex-tended treatment is in Appendix K: model-internal defenses that monitor or edit hidden states (Jiang et al. 2025; Wei et al. 2026; Nian et al. 2025) — an orthogonal family our ceiling does not speak to — safety-fine-tuned VLMs (Zong et al. 2024; Yin et al. 2025; Li, Wang, and Fang 2025), multi-view competitors (Wang, Fok, and Thing 2025), stacking costs (Long et al. 2025), the over-prudence critique (Guo et al. 2025), and multimodal benchmarks (Weng et al. 2025; Luo et al. 2024). 
+
+# 3 Threat Model and Evaluation 
+
+Setting. We defend a vision–language model (VLM) target with a black-box safety guard : an off-the-shelf classifier that inspects an incoming request and either blocks it (returning a canned refusal) or passes it to the target. The attacker has no access to model weights and submits encoded jailbreaks —harmful requests re-expressed in an alternative representa-tion that a guard trained on plain language fails to recognize. 
+
+The attack suite. We assemble eleven encoding attacks spanning two channels, chosen so that no single recov-ery step can cover all of them. Text encodings (five): set-theory , formal-logic , and classical-language rewrite the request in a symbolic or rare-language form; a substi-tution cipher (Base64/Caesar) obfuscates it character-wise; and CodeAttack (Ren et al. 2024) embeds it as a code-completion task. Image renders (six): typographic FigStep 
+
+(Gong et al. 2025), flowchart layouts (Zhang et al. 2025), 
+
+low-contrast and occluded text (perceptual-blindness renders), a multimodal-typography key-phrase render ( mm-typo ) (Liu et al. 2025a), and a distraction grid (Yang et al. 2025) that disperses the payload across numbered cells. The suite deliberately mixes symbolic, cross-lingual, cryp-tographic, code, and cross-modal families; other encoded families — cross-modal linkage (Wang et al. 2025b; Wang, Fu, and Gao 2026) and harmful ASCII-art (Hua and West 2026) — we leave to future suites. Suite size cuts in only one direction here: because the ensemble is an OR-reduction (Eq. 1), enlarging the suite can only raise ensemble ASR, so every number we report is a lower bound on attacker success and an upper bound on defense quality — incompleteness threatens an optimistic defense result, not a negative one. Nor is the suite padded: the union decomposition shows four to seven of the eleven attacks are load-bearing under the am-plifier, with no single attack covering more than 56 –71% of the union. 
+
+Ensemble (best-of-suite) evaluation. Let A be the suite and sa(b) ∈ { 0, 1} indicate whether attack a ∈ A breaks be-havior b under a fixed defense. A deployed attacker picks the best attack per behavior, so the deployment-relevant success is the ensemble (best-of-suite) ASR — an OR-reduction over the suite: 
+
+ASR ens = 1
+
+|B|
+
+X
+
+> b∈B
+
+max  
+
+> a∈A
+
+sa(b). (1) Following AutoAttack (Croce and Hein 2020), this is the con-servative measure for a fixed attack menu, not an adaptive one. The per-attack mean 1
+
+> |A| | B|
+
+P
+
+> a∈A
+
+P 
+
+> b∈B
+
+sa(b), which most jailbreak-defense evaluations report, systematically un-derstates the attacker: because different attacks break differ-ent behaviors, the union in Eq. (1) stays large even when every single attack is knocked to single digits. We observe a ∼3.5 × gap between the two, which is why every headline number in this paper is an ensemble ASR. 
+
+# 4 Method 
+
+The decode gap. A safety guard classifies the surface form 
+
+of its input, not its meaning. An encoded jailbreak therefore passes a guard that would block the same request in plain language — what we call the decode gap .
+
+Recover-and-decode amplifier. We close this gap with a guard-agnostic preprocessor placed before the guard (Fig-ure 1). It has two steps: recover , in which the target VLM transcribes image content to text, and decode , in which the VLM restates the (possibly encoded) request as its plain-language payload. The guard then classifies the decoded text; on a pass, the target answers the original input. The amplifier needs no guard internals and no training — it “amplifies” any off-the-shelf classifier’s reach to encoded and cross-modal attacks. Both steps are single fixed instructions to the target VLM; we give the verbatim recover and decode prompts in Appendix H. 
+
+The modular reguard layer. Decoding can lose the very signal a guard keys on: executable-code attacks are the clear-est case, since restating code as prose removes the syntactic signature classifiers flag. We therefore add a reguard layer that guards the pre-decode union r (Alg. 1, line 3) in addi-tion to the decoded payload d, blocking if either is flagged. What r contains depends on which channels the input uses, and stating this makes the layer’s behaviour predictable: for a text-only attack r = t is the raw encoded text — pre-cisely the input the guard-alone baseline sees — so reguard Algorithm 1: Recover-and-decode amplifier (optional re-guard )
+
+Require: request x = ( t, v ): text channel t, image v (either may be absent); target VLM M ; guard G; flag reguard  
+
+> 1:
+
+ρ ← M. recover( v) if v̸ = ∅ else ∅ {transcribe image; no call if text-only}  
+
+> 2:
+
+r ← t ⊕ ρ {union : text channel concatenated with the transcription}  
+
+> 3:
+
+d ← M. decode( r) {restate the encoding as its plain payload}  
+
+> 4:
+
+if G(d) = harmful then  
+
+> 5:
+
+return canned refusal  
+
+> 6:
+
+end if  
+
+> 7:
+
+if reguard and G(r) = harmful then  
+
+> 8:
+
+return canned refusal {also guard the recovered pre-decode text r} 
+
+> 9:
+
+end if  
+
+> 10:
+
+return M (x) {answer the original input} 
+
+restores the view that decoding destroyed; for an image-only 
+
+attack r is the transcription, a view the guard-alone base-line never had (its text channel is a benign placeholder); for a multimodal attack it is both, concatenated. This makes its reach predictable, and the component ablation (Table 2) confirms it — inverting the intuitive expectation. On an im-age attack reguard grants a view the guard never had, so it re-catches even the dispersed grid: transcription is precisely what reassembles the scattered cells (WildGuard distraction 
+
+31 → 7% ). On a text attack it restores only the guard-alone view, so it is bounded by that baseline and cannot rescue 
+
+CodeAttack , which the raw guard already fails to flag ( 43% 
+
+guard-alone, 36% reguarded). Dispersion is therefore a de-code -stage failure that re-screening repairs; code is a guard failure at every view, and it is what remains. This casts the amplifier as a modular recovery stack (recover → decode →
+
+reguard) whose layers compose to cover new attack classes — at a cost we quantify in Section 5. Algorithm 1 states the full procedure. 
+
+# 5 Experiments 
+
+Setup. We use two targets: Qwen2.5-VL-7B (primary) and the architecturally distinct InternVL3-8B (generaliza-tion), and five guards — WildGuard, LlamaGuard-3-8B, Qwen3Guard-8B, ThinkGuard, and GuardReasoner-VL-7B. The four text-only guards screen the request’s text chan-nel; the multimodal GuardReasoner-VL also sees the im-age. For image-rendered attacks the text channel is a be-nign placeholder, so in the guard-alone baseline a text-only guard is structurally blind to the image-encoded payload — the amplifier’s role there is precisely to grant it a textual view, with decode ’s separate effect isolated by the recover-only ablation (Table 2). Harmful evaluation renders Harm-Bench ( n=100 behaviors) through each of the eleven at-tacks; benign over-refusal uses OR-Bench-Hard ( n=100 ). All 11 × 100 encodings instantiated successfully, so Eq. 1’s union is over a complete grid. All numbers are scored by gpt-5-mini , which we human-calibrate on both axes: κ=0 .68 recover+decode amplifier     
+
+> Attack input (encoded / image)
+> Recover: image
+> →text
+> Decode: restate encoding
+> Safety guard Target VLM response / refusal
+> decoded pass
+> reguard : guard the raw form too
+
+Figure 1: The recover-and-decode amplifier as a modular stack. Recover transcribes image content to text and decode restates the encoding as its plain payload before the guard; on a pass, the target answers the original input. The reguard layer (dashed) additionally guards the recovered pre-decode text (the transcription, not the original image), blocking if either is flagged. on harm against 100 blind stratified labels — deliberately including the CodeAttack and image-rendered responses whose grading is most in question — making it the top usable HarmBench-rubric judge; and, because over-refusal carries half our claim, κ=0 .79 on the answered-vs-refused collapse the over-refusal metric uses, against a separate 100 -item blind benign sample. A second judge and a 26 -judge panel agree on effect directions but not absolute levels, which is why ev-ery claim rests on relative contrasts — the same reason a κ of 
+
+0.68 (Landis–Koch “substantial” only at its boundary) and possible HarmBench exposure in a proprietary judge’s train-ing bear on absolute ASR but not on same-judge contrasts. Calibration-sample scope, the refusal rubric’s one added clause for responses that merely echo the request, and the full panel are in Appendix I. 1
+
+RQ1: no single guard closes the gap. Undefended, the eleven-attack ensemble breaks 89% (Qwen) / 91% (In-ternVL3) of behaviors; against the best single guard it still breaks 71% (Qwen) / 81% (InternVL3) (Appendix D). The corresponding per-attack means are only 18–21% — the 
+
+∼3.5 × understatement that motivates Eq. (1). 
+
+RQ2: the amplifier is a partial defense. The recover-and-decode amplifier sharply reduces per-attack success for sym-bolic, rare-language, and image-rendered attacks — set the-ory and formal logic fall to single digits under most guards, and it collapses eight–nine of eleven attacks (full per-attack table in Appendix E). At the ensemble level the benefit is only partial: the strongest guard-plus-amplifier still leaves 65% 
+
+(Qwen) / 63% (InternVL3) (Appendix D, middle bars). The residual concentrates in two established attacks — CodeAt-tack (Ren et al. 2024) and grid-based distraction (Yang et al. 2025) — the former because decode-to-prose removes the guard’s signal, the latter because the payload is dispersed across the image and the decode does not reassemble it. Two 
+
+union-contribution measures make this concrete rather than asserted (full decomposition in Appendix F): under the am-  
+
+> 1We find WildGuard unreliable as an ASR judge — it flags harmful intent rather than task completion, over-flagging encoding and code attacks — so it appears only as an input guard, never as the reported judge. The full analysis (WildGuard exclusion, human calibration, second-judge cross-check) is in Appendix I.
+
+plifier CodeAttack is the sole attack to break 18–27% of behaviors and distraction 6–15% across all five guards, no other attack exceeding 6%; and the strongest single attack reaches only 56–71% of the union (51–79% guard-alone), with four to seven of the eleven attacks load-bearing. The ensemble is thus a genuine union, not one dominant attack under another name — which is why the per-attack mean understates the attacker by 3.2×–6.6×.
+
+RQ3: over-refusal tracks the guard. Benign over-refusal is high, and it tracks the guard’s own tendency to over-flag the content recovery exposes: under the amplifier it spans 
+
+28–64% across the five Qwen guards (Table 1) — a better-than-twofold spread on identical inputs under an identical amplifier, the laxer LlamaGuard-3 paying 28% where Wild-Guard pays 64% . On InternVL3 the same quantity is 80 –84% 
+
+over the three guards measured there. This is guard depen-dence , not isolated causation — the amplifier also lengthens and rephrases what the guard sees, and our stage ablation (Table 2) isolates recovery-exposure from decoding on Wild-Guard only. 
+
+Which channel pays that cost is hidden by the text/image average, and matters for the mechanism. OR-Bench-Hard has text and image variants whose no-defense refusal floors differ sharply ( 38% text vs. 15% image; 26% averaged — the floor the threshold sweep budgets against). Against those floors, WildGuard alone over-refuses 81% of text inputs but only 17% of image inputs: a text-only guard shown a be-nign placeholder is as blind to benign image content as it is to harmful. The amplifier’s cost is therefore almost entirely 
+
+image-side (17 → 60% ): recovery is what grants the guard a textual view to over-flag; on the text side, where the guard already saw the request, the amplifier slightly lowers over-refusal ( 81 → 68% ), decoding softening borderline phrasing rather than inflaming it — the direction the no-decode abla-tion isolates below. Recovery cannot escape the image-side cost, since coverage requires precisely that legibility. 
+
+What decode is, and is not, worth. Extending the com-ponent ablation to all eleven attacks on both targets (Table 2) lets us bound the decode step rather than assume it. Its per-attack effects are real and opposite in sign: it collapses the symbolic text encodings recovery cannot read (set theory 
+
+12 → 1, formal logic 14 → 4 on Qwen) while inflating the two attacks that defeat restatement ( CodeAttack 43 → 50 ,
+
+distraction 5 → 31 ). At the ensemble level these cancel to no significant effect on either target — 72 vs 61 on Qwen (p=0 .09 ) and 63 vs 65 on InternVL3 ( p=0 .84 ), the two point-ing opposite ways — so we do not claim an ensemble-level safety benefit for decode . What it demonstrably buys is be-nign utility, returning over-refusal from 76% to 57% . The division of labour is therefore: recover closes the modality gap, and decode keeps the result usable. This also sharpens the negative result — the residual in Table 1 is not an artifact of a weak decode prompt, since removing the decode step entirely does not significantly move the ensemble either way. 
+
+RQ4: the reguard layer and the safety–utility ceiling. 
+
+This is the paper’s central result. Adding the reguard layer lowers the ensemble residual for every guard on both tar-gets — all ten guard–target pairs fall, the largest being LlamaGuard-3 79 → 48 on Qwen (Table 1; Appendix D, right bars) — by re-guarding the pre-decode form, which repairs the dispersed grid attack outright and blunts the dom-inant CodeAttack driver. For the four well-calibrated guards the gain is bought at a steep utility cost: benign over-refusal rises to 81–87% (Qwen, three guards) / 86–92% (InternVL3, the three guards measured on its benign axis), with Think-Guard likewise paying 45 → 66% (Figure 2). On the safety– utility plane these guards move down-and-right: recovery layers cannot be stacked freely — each increment of robust-ness costs a large fraction of benign utility. The one exception is the laxer LlamaGuard-3: it stays usable ( 28% over-refusal under mc , 33% with +rg ) but only by remaining weaker — the amplifier scarcely helps it (mc 79% ) and reguard still leaves 48% ASR — a lower-safety point on the same frontier, not an escape from the trade-off. We map this coverage-vs-over-refusal frontier rather than claiming to solve the defense. 
+
+Is the ceiling just bad thresholds? A guard reported at one operating point is a dot on the plane; only a swept curve sep-arates a mis-calibrated guard from a genuine ceiling. Sweep-ing each guard’s decision threshold over its full range and recomputing both axes, under a ≤ 35% over-refusal budget (the benign floor is already 26% ) four of the five guards have no interior operating point — the only in-budget thresh-old is the one that blocks nothing, at the undefended ASR. LlamaGuard-3 alone is genuinely mis-calibrated, yet retun-ing still admits 58% of the suite. Nor does this depend on the budget: relaxing it to ≤ 60% still leaves 58% as the low-est ensemble ASR any of the five can reach. Recalibration moves guards along the frontier, not off it (Appendix Q). Nor does applying the amplifier selectively escape it: routing text inputs to the bare guard and amplifying only image inputs leaves every guard on or inside-dominated by the same fron-tier, because it forfeits the amplifier’s text-side over-refusal reduction ( 81 → 68% for WildGuard) to save less on the im-age side (Appendix L). Nor does scaling the decoder : mov-ing decode to a 10 × larger model (Llama-3.3-70B, all else fixed) cuts the residual — WildGuard 43 → 28 , GuardRea-soner 58 → 36 , both significant — while over-refusal rises 
+
+(84 → 88 , 87 → 90 ), giving a higher-safety point on the 
+
+same frontier; the gain is concentrated in the two residual drivers (Appendix M). Nor does the reguard composition :the settings nest by construction ( d ∧ r ⊆ d ⊆ d ∨ r), so one run measures all three, and conjunction lands laxer than disabling reguard entirely — ensemble ASR 76 /88% against 
+
+61 /71% with reguard off, back at guard-alone ( 75 /84% ) while still over-refusing at 57 /51% (Appendix N). 
+
+Generalization holds. The whole pattern reproduces on InternVL3-8B (Table 1, lower block), and the ceiling is worse 
+
+there: the amplifier alone already over-refuses 80–84% of benign inputs, so reguard has less room left to give — the same frontier, at a harder point on it. 
+
+Statistical significance. All ensemble ASRs carry Wil-son 95% CIs ( ±8–10 points at n=100 ) and behavior-level bootstrap intervals ( 10 4 resamples); the full CIs and the paired contingency counts behind every contrast are in Ap-pendix P. On the paired within-guard contrasts (same 100 be-haviors, exact McNemar), the reguard reduction (mc →+rg) is significant for nine of ten guard–model pairs, includ-ing all five on Qwen (WildGuard p=4 .2×10 −7): reguard is the component that behaves guard-agnostically. The am-plifier’s own ensemble-level reduction (gb →mc) is signif-icant for only four of ten , and the shortfall has two axes — by target (three of five on InternVL3 against one of five on Qwen, the decode-fidelity gap quantified above) and by guard (LlamaGuard-3 and ThinkGuard benefit on neither 
+
+target, and LlamaGuard-3 moves the wrong way on both, 
+
+71 → 79 and 79 → 83 ). Where it fails the discordant counts are near-symmetric rather than merely underpowered (Qwen/WildGuard: 14 behaviors fixed against 11 newly bro-ken, p=0 .69 ). We therefore do not claim the amplifier reliably improves on a guard at the ensemble level. Under Bonferroni across the twenty ensemble contrasts ( α=0 .05 /20 ) ten sur-vive, so our claims rest on the pattern’s recurrence across guards and both architectures rather than on any single cor-rected contrast. The contrasts are also judge-robust: a sec-ond human-validated judge (gpt-5-nano, κ=0 .62 ) re-scoring all 449 per-attack ×guard ×condition cells reproduces them (r=0 .975 on per-cell ASR). 
+
+Why the amplifier helps one target and not the other. 
+
+The gb →mc split is not a difference in alignment — the two targets’ undefended per-attack means are near-identical (30 .8 vs. 29 .5% ) — but in recovery fidelity , which we mea-sure directly rather than infer, logging every decoded payload and asking an independent judge whether it still conveys the original request ( 2,200 judgments). InternVL3 recovers faithfully more often than Qwen2.5-VL ( 51 .4% [48–54] vs. 
+
+41 .6% [39–45], non-overlapping CIs) and the entire gap is image-side ( 83 .2 vs. 60 .8% across the six renders; on text encodings Qwen is marginally better ). That is precisely the channel where a text-only guard is blind without recovery, so the amplifier can only rescue a guard as well as the target transcribes — which is why gb →mc is significant on three of five InternVL3 guards but one of five on Qwen. Fidelity is necessary, not sufficient: the two guards that benefit on 
+
+neither target fail for a guard-side reason no recovery fi-delity addresses. The same measurement confirms the resid-ual drivers from RQ2 — cipher survives recovery 0% of the time on both targets and CodeAttack 3–4% — so the attacks Table 1: The five-guard amplifier results ( gb , mc ) and the reguard ablation ( +rg ) with its over-refusal cost. Ensemble ASR (best-of-11, %) and benign over-refusal (%, avg. of text/image); both lower=better; gpt-5-mini judge, n=100 . gb =guard alone, 
+
+mc =guard+amplifier, +rg =amplifier+reguard. The amplifier’s benefit (gb →mc) is guard-dependent (see markers), yet reguard (mc →+rg) lowers ensemble ASR for all five guards (LlamaGuard-3 79 → 48 ), at a sharp over-refusal cost for the four well-calibrated guards ( +17 to +27 pts, to 66 –87% ): the safety–utility ceiling. LlamaGuard-3 and ThinkGuard were added to the InternVL3 panel on the harm axis only (—). Exact McNemar on the contrast into each column (gb →mc, mc →+rg): †p< 0.05 ,
+
+> ‡
+
+survives Bonferroni ( α=0 .05 /20 ); unmarked = n.s.                                                           
+
+> Ensemble ASR Over-refusal Guard gb mc +rg mc +rg
+> Qwen2.5-VL-7B (undefended floor 89; ECSO baseline (Gou et al. 2024) 90 ASR / 27 over-ref.) WildGuard 75 72 43 ‡64 84 Qwen3Guard 76 65 43 ‡59 81 GuardReasoner 84 71 ‡58 †60 87 LlamaGuard-3 71 79 48 ‡28 33 ThinkGuard 78 77 54 ‡45 66
+> InternVL3-8B (undefended floor 91; ECSO baseline (Gou et al. 2024) 91 ASR / 47 over-ref.) WildGuard 81 63 ‡48 ‡84 90 Qwen3Guard 81 69 †56 †80 86 GuardReasoner 90 67 ‡65 82 92 LlamaGuard-3 79 83 61 ‡——ThinkGuard 82 77 59 ‡——
+
+Table 2: Component ablation isolating recover from de-code over the full eleven-attack suite on both targets (Wild-Guard, n=100 , gpt-5-mini). mean = per-attack mean ASR, ens. = ensemble (best-of-11); both %, lower=better. Decode 
+
+has no significant ensemble effect on either target (Mc-Nemar exact, paired: Qwen p=0 .09 ; InternVL3 p=0 .84 )and the targets point in opposite directions, so we claim no ensemble-level benefit for it. Where it demonstrably pays is benign utility (last column; OR-Bench-Hard image vari-ant on Qwen, from the matched run): recover drives over-refusal up ( 16 → 76 ) and decode softens phrasing back down ( 76 → 57 ). The recover-only row’s five text attacks are its guard-alone measurement, not a separate run — with a text-only guard and decode off, both paths hand the guard an identical string, an identity in the pipeline — so only the six image attacks per target were run.                         
+
+> Qwen2.5-VL InternVL3 Benign Config mean ens. mean ens. (Qwen) guard alone (raw input) 20.1 75 19.6 81 16 recover only (no decode) 8.4 61 10.6 65 76 recover +decode (mc) 11.2 72 8.6 63 57
+
+the ensemble retains are exactly those recovery cannot invert (per-attack table in Appendix E). 
+
+# 6 Discussion and Limitations 
+
+Why the frontier exists. Two structural failure modes bound decoding as a black-box defense, and both are estab-lished attacks, not adaptive ones. Executable-code attacks carry harm as an artifact to be assembled, not a request to be understood: decoding the code to prose removes the syn-tactic signature a guard keys on, so the amplifier can even raise ASR above the guard-alone baseline. Dispersed/dis-traction attacks scatter the payload across grid cells or sub-images, so a single restatement does not reassemble the harm-ful whole. The reguard layer separates them, and not in the expected direction: re-screening the pre-decode form largely 
+
+fixes dispersion (WildGuard distraction 31 → 7% ), because transcription reassembles what the grid scattered, but only blunts code ( 50 → 36% ) — for a text attack the reguarded view is the guard-alone view that code already defeats ( 43% ). So dispersion bounds decode while code bounds the whole stack; and reguard’s utility cost is severe. We give the actual failed decode transcripts for a CodeAttack and a distraction behavior in Appendix B. 
+
+The safety–utility ceiling is the deployment lesson. Prac-titioners reach for recovery-based defenses expecting mono-tone gains from stacking layers. Our frontier shows the op-posite: each recovery layer that closes coverage also exposes the guard to more benign content it over-flags, driving over-refusal to 81–92% for well-calibrated guards — impractical to deploy — while the one laxer guard that keeps over-refusal low (LlamaGuard-3, 33% ) does so only by staying unsafe (48% ASR). This cost is paid on top of a ∼2–4 × compute cost, so a recovery stack trades along three axes at once: cov-erage, benign utility, and inference cost. We tested the natural decode-side mitigation directly: dropping decode for image-delivered attacks, where recovery alone already surfaces the payload. It improves coverage (mean ASR 10 .7 → 2.0% 
+
+over six image attacks under WildGuard) but worsens over-refusal ( 57 → 76% ), because the refusals come from re-covery exposing borderline-benign text and decoding softens 
+
+that phrasing rather than causing them. Decode is a coverage– utility knob, not a lever off the ceiling (Appendix G). 30 40 50 60 70 80 90     
+
+> Benign over-refusal (%) →worse utility
+> 45
+> 50
+> 55
+> 60
+> 65
+> 70
+> 75
+> 80
+> Ensemble ASR (%)  → worse safety
+> open = amplifier →filled = +reguard
+> guard
+> WildGuard
+> Qwen3Guard
+> GuardReasoner
+> LlamaGuard-3
+> ThinkGuard
+> Qwen2.5-VL
+> InternVL3
+
+Figure 2: The safety–utility frontier (Qwen2.5-VL: solid, circle →square, five guards; InternVL3: dashed, triangle →diamond, three). Arrows run amplifier (open) →
+
++reguard (filled): reguard lowers ASR (down), and for well-calibrated guards raises over-refusal sharply (right) — the trade-off. The laxer LlamaGuard-3 (yellow) moves nearly straight down but bottoms out at 48% ASR, still unsafe. No guard reaches both low ASR and low over-refusal: the fron-tier is the ceiling. 
+
+A defense-aware adaptive attack. Our suite is fixed and established, so we additionally adapt an attacker to the mech-anism this paper publishes, following adaptive-evaluation discipline (Carlini et al. 2019). The attack is ours , not from prior work: it targets the decode step’s lossy-by-design com-pression, using an LLM to rewrite the request so that a faithful one-to-two-sentence restatement — exactly what the ampli-fier surfaces to the guard — reads as a legitimate task, while a full answer still delivers the specifics a summary drops. Not compressing would re-open the over-refusal problem of RQ3, so the attack targets a genuine design commitment rather than an implementation slip. It is potent against the bare target ( 61% ASR on Qwen2.5-VL, n=100 — more than twice the 28% mean of our eleven established attacks) yet fails against the pipeline: the guard alone holds it to 
+
+14% /13% (WildGuard/GuardReasoner-VL), a highly signif-icant drop ( p < 10 −10 , McNemar exact), and the amplifier to 
+
+9% /8% , though that further gain is not significant ( p=0 .23 ). The compression it exploits is real, but the rewritten surface 
+
+stays flaggable. One adaptive attack is not a general robust-ness claim; it does show the published mechanism is not trivially circumvented by the most direct attack against it. 
+
+Limitations. The ceiling is empirical , not a proven law: it recurs across every guard and both targets, but could re-flect our recover/decode prompts or guard thresholds, and is bounded to single-view, non-iterative recovery: hidden-state and representation-level defenses are a different family we do not evaluate. A 10 × decoder lowers the residual without leav-ing the frontier (above), so the ceiling is not a self-decoding artifact — though its height is decoder-dependent. The re-guard composition is swept on two of the five guards (above). We study two open 7–8B targets and five open guards; pro-prietary or larger models may sit elsewhere. All numbers are at n=100 , one greedy run (temperature 0): a replica-tion moves cells up to 11 points without touching the paired within-run contrasts every claim rests on (Appendix P). Judg-ing uses one human-calibrated judge cross-checked against a second and a 26 -judge panel (Appendix I). Our threat model covers representation-shifting attacks (encodings and cross-modal renders); it excludes constitutively — not merely as unevaluated — classes leaving no legible payload for re-covery to invert: pixel-space and weak-OOD perturbations (Guan, Jin, and Wang 2026; Cui et al. 2026; Qi et al. 2024; Zhou et al. 2025b; Niu et al. 2024), embedding-space compo-sitional attacks (Shayegani, Dong, and Abu-Ghazaleh 2024), and steganographic pixel-LSB payloads (Wang et al. 2025c) — and sequential (Zhao et al. 2025c), multilingual, few-shot, and persona attacks. We do not claim general adaptive ro-bustness: we test one attacker adapted to the published mech-anism; attackers who optimize against the guarded pipeline — guard-fooling suffixes (Pi et al. 2026), defense-styled cam-ouflage (Yang et al. 2026; Zhao et al. 2026), safety-attention suppression (Li, Ren, and Zhu 2026) — are out of scope. Recover and decode outputs go only to the guard, never the user, so preprocessing cannot itself leak an answer. Finally, the amplifier measures 2.2× a guard-alone baseline’s tar-get calls and 1.9× its wall time, below Algorithm 1’s 3×
+
+worst case; ECSO measures 2.2× calls but 3.3× wall (Ap-pendix O). 
+
+# 7 Conclusion 
+
+We identify the decode gap in black-box VLM defense and propose a guard-agnostic recover-and-decode amplifier, eval-uated with an AutoAttack-style ensemble metric. Across five guards and two targets its ensemble benefit is guard-dependent — large for some, neutral or harmful for others (LlamaGuard-3 worsens 71 → 79 ) — and never by itself makes a guard robust to an attack suite ; a modular reguard layer closes much of the residual, but only at a steep over-refusal cost, or — for the laxer guard — without ever reaching deployable safety ( 48% ASR). Our contribution is this empir-ical safety–utility ceiling : for the pipeline and threat model we study, no configuration reaches both low attack-success and low over-refusal. 
+
+# Ethical Statement 
+
+We study jailbreak attacks to build and evaluate defenses, using published attacks on public benchmarks (HarmBench, OR-Bench). We release no harmful content; the one new attack (§6) targets our own defense. Code is released. 
+
+# References 
+
+Athalye, A.; Carlini, N.; and Wagner, D. 2018. Obfuscated Gradients Give a False Sense of Security: Circumventing Defenses to Adversarial Examples. In Proceedings of the 35th International Conference on Machine Learning, ICML 2018 .Azulay, A.; Dubiński, J.; Li, Z.; Mittal, A.; and Gandelsman, Y. 2026. Jailbreaking Vision-Language Models Through the Visual Modality. In Forty-third International Conference on Machine Learning .Carlini, N.; Athalye, A.; Papernot, N.; Brendel, W.; Rauber, J.; Tsipras, D.; Goodfellow, I.; Madry, A.; and Ku-rakin, A. 2019. On Evaluating Adversarial Robustness. arXiv:1902.06705. Chao, P.; Debenedetti, E.; Robey, A.; Andriushchenko, M.; Croce, F.; Sehwag, V.; et al. 2024. JailbreakBench: An Open Robustness Benchmark for Jailbreaking Large Lan-guage Models. In Globerson, A.; Mackey, L.; Belgrave, D.; Fan, A.; Paquet, U.; Tomczak, J.; and Zhang, C., eds., 
+
+Advances in Neural Information Processing Systems , vol-ume 37, 55005–55029. Curran Associates, Inc. Chen, B.; Lyu, X.; Gao, L.; Song, J.; and Shen, H. T. 2025. SafePTR: Token-Level Jailbreak Defense in Multi-modal LLMs via Prune-then-Restore Mechanism. In Ad-vances in Neural Information Processing Systems (NeurIPS) .ArXiv:2507.01513. Chen, Z.; Li, C.; Li, C.; Zhang, X.; Zhang, L.; and He, Y. 2026. Jailbreaking LLMs and VLMs: Mecha-nisms, Evaluation, and Unified Defenses. arXiv preprint arXiv:2601.03594 .Chi, J.; Karn, U.; Zhan, H.; Smith, E.; Rando, J.; Zhang, Y.; et al. 2024. Llama Guard 3 Vision: Safeguarding Human-AI Image Understanding Conversations. arXiv:2411.10414. Croce, F.; and Hein, M. 2020. Reliable evaluation of adver-sarial robustness with an ensemble of diverse parameter-free attacks. In Proceedings of the 37th International Conference on Machine Learning , ICML’20. JMLR.org. Cui, J.; Chiang, W.-L.; Stoica, I.; and Hsieh, C.-J. 2025. OR-Bench: An Over-Refusal Benchmark for Large Language Models. In Forty-second International Conference on Ma-chine Learning .Cui, K.; Li, Y.; Wu, Y.; Ma, X.; Erfani, S.; Leckie, C.; and Huang, H. 2026. Toward Universal and Transferable Jailbreak Attacks on Vision-Language Models. In Inter-national Conference on Learning Representations (ICLR) .ArXiv:2602.01025. Gong, Y.; Ran, D.; Liu, J.; Wang, C.; Cong, T.; Wang, A.; Duan, S.; and Wang, X. 2025. FigStep: Jailbreaking Large Vision-Language Models via Typographic Visual Prompts. 
+
+Proceedings of the AAAI Conference on Artificial Intelli-gence , 39(22): 23951–23959. Gou, Y.; Chen, K.; Liu, Z.; Hong, L.; Xu, H.; Li, Z.; Ye-ung, D.-Y.; Kwok, J. T.; and Zhang, Y. 2024. Eyes Closed, Safety on: Protecting Multimodal LLMs via Image-to-Text Transformation. In Computer Vision – ECCV 2024: 18th European Conference, Milan, Italy, September 29–October 4, 2024, Proceedings, Part XVII , 388–404. Springer-Verlag. Guan, J.; Jin, H.; and Wang, H. 2026. Crafting Adversarial Inputs for Large Vision-Language Models Using Black-Box Optimization. In Findings of the Association for Computa-tional Linguistics: EACL 2026 . ArXiv:2601.01747. Guo, Y.; Jiao, F.; Nie, L.; and Kankanhalli, M. 2025. The VLLM Safety Paradox: Dual Ease in Jailbreak Attack and Defense. In Advances in Neural Information Processing Systems (NeurIPS) .Han, S.; Rao, K.; Ettinger, A.; Jiang, L.; Lin, B. Y.; Lambert, N.; Choi, Y.; and Dziri, N. 2024. WildGuard: Open One-stop Moderation Tools for Safety Risks, Jailbreaks, and Refusals of LLMs. In Globerson, A.; Mackey, L.; Belgrave, D.; Fan, A.; Paquet, U.; Tomczak, J.; and Zhang, C., eds., Advances in Neural Information Processing Systems , volume 37, 8093– 8131. Curran Associates, Inc. Hu, X.; Liu, D.; Li, H.; Huang, X.; and Shao, J. 2025. VLS-Bench: Unveiling Visual Leakage in Multimodal Safety. In 
+
+Proceedings of the 63rd Annual Meeting of the Associa-tion for Computational Linguistics (Volume 1: Long Papers) ,8285–8316. Association for Computational Linguistics. Hua, P.; Li, H.; Shi, S.; Yu, Z.; and Zhang, N. 2026. Rethink-ing Jailbreak Detection of Large Vision Language Models with Representational Contrastive Scoring. In Proceedings of the 64th Annual Meeting of the Association for Computa-tional Linguistics (ACL) , 21748–21785. Hua, Y.; and West, P. 2026. Resolution Thresholds in VLM Detection of Harmful ASCII Art Across Construction Modes and Languages. arXiv preprint arXiv:2606.29649 .Inan, H.; Upasani, K.; Chi, J.; Rungta, R.; Iyer, K.; Mao, Y.; et al. 2023. Llama Guard: LLM-based Input-Output Safeguard for Human-AI Conversations. arXiv:2312.06674. Ji, J.; Hou, B.; Robey, A.; Pappas, G. J.; Hassani, H.; Zhang, Y.; Wong, E.; and Chang, S. 2025. Defending Large Language Models against Jailbreak Attacks via Semantic Smoothing. In Inui, K.; Sakti, S.; Wang, H.; Wong, D. F.; Bhattacharyya, P.; Banerjee, B.; Ekbal, A.; Chakraborty, T.; and Singh, D. P., eds., Proceedings of the 14th International Joint Conference on Natural Language Processing and the 4th Conference of the Asia-Pacific Chapter of the Association for Computational Linguistics , 7–40. The Asian Federation of Natural Language Processing and The Association for Computational Linguistics. Jiang, Y.; Gao, X.; Peng, T.; Tan, Y.; Zhu, X.; Zheng, B.; and Yue, X. 2025. HiddenDetect: Detecting Jailbreak Attacks against Multimodal Large Language Models via Monitoring Hidden States. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , 14880–14893. Association for Computational Linguistics. Li, C.; Wang, H.; and Fang, Y. 2025. Attack as Defense: Safe-guarding Large Vision-Language Models from Jailbreaking by Adversarial Attacks. In Findings of the Association for Computational Linguistics: EMNLP 2025 .Li, J.; Ren, W.; and Zhu, T. 2026. Seeing No Evil: Blind-ing Large Vision-Language Models to Safety Instructions via Adversarial Attention Hijacking. In Proceedings of the 64th Annual Meeting of the Association for Computational Linguistics (ACL) , 18304–18323. Li, Z.; Chen, P.-Y.; and Ho, T.-Y. 2025. Retention Score: Quantifying Jailbreak Risks for Vision Language Models. In Proceedings of the AAAI Conference on Artificial Intelli-gence (AAAI) .Liu, X.; Cui, X.; Li, P.; Li, Z.; Huang, H.; Xia, S.; Zhang, M.; Zou, Y.; and He, R. 2024. Jailbreak Attacks and Defenses against Multimodal Generative Models: A Survey. arXiv preprint arXiv:2411.09259 .Liu, X.; Zhu, Y.; Gu, J.; Lan, Y.; Yang, C.; and Qiao, Y. 2025a. MM-SafetyBench: A Benchmark for Safety Evalua-tion of Multimodal Large Language Models. In Leonardis, A.; Ricci, E.; Roth, S.; Russakovsky, O.; Sattler, T.; and Varol, G., eds., Computer Vision – ECCV 2024 , 386–403. Springer Nature Switzerland. Liu, Y.; Zhai, S.; Du, M.; Chen, Y.; Cao, T.; Gao, H.; et al. 2025b. GuardReasoner-VL: Safeguarding VLMs via Rein-forced Reasoning. arXiv:2505.11049. Long, Z.; Wang, S.; Liu, S.; and Lai, Y. 2025. How Jailbreak Defenses Work and Ensemble? A Mechanistic Investigation. In Findings of the Association for Computational Linguistics: EMNLP 2025 .Luo, W.; Ma, S.; Liu, X.; Guo, X.; and Xiao, C. 2024. Jail-BreakV: A Benchmark for Assessing the Robustness of Mul-tiModal Large Language Models against Jailbreak Attacks. In First Conference on Language Modeling (COLM) .Mazeika, M.; Phan, L.; Yin, X.; Zou, A.; Wang, Z.; Mu, N.; et al. 2024. HarmBench: a standardized evaluation frame-work for automated red teaming and robust refusal. In Pro-ceedings of the 41st International Conference on Machine Learning , ICML’24. JMLR.org. Nian, Y.; Zhu, S.; Qin, Y.; Li, L.; Wang, Z.; Xiao, C.; and Zhao, Y. 2025. JailDAM: Jailbreak Detection with Adaptive Memory for Vision-Language Model. In Second Conference on Language Modeling .Niu, Z.; Ren, H.; Gao, X.; Hua, G.; and Jin, R. 2024. Jail-breaking Attack against Multimodal Large Language Model. arXiv:2402.02309. Pi, J.; Yang, Z.; Huang, X.; Xu, D.; Zhong, R.; and Ruan, W. 2026. Jailbreaking Vision-Language Models via Dissonance-Guided Suffix Optimization and Image-Phrase Injection. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) .Piao, C.; Yan, Z.; Xu, H.; Zhao, Y.; Lin, K.; Xu, F.; and Zhou, S. 2026. Towards Policy-Adaptive Image Guardrail: Benchmark and Method. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , 16614–16623. Qi, X.; Huang, K.; Panda, A.; Henderson, P.; Wang, M.; and Mittal, P. 2024. Visual Adversarial Examples Jailbreak Aligned Large Language Models. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 38, 21527– 21536. Ren, J.; Dras, M.; and Naseem, U. 2025. Agentic Modera-tion: Multi-Agent Design for Safer Vision-Language Models. arXiv:2510.25179. Ren, Q.; Gao, C.; Shao, J.; Yan, J.; Tan, X.; Lam, W.; and Ma, L. 2024. CodeAttack: Revealing Safety Generalization Challenges of Large Language Models via Code Completion. In Ku, L.-W.; Martins, A.; and Srikumar, V., eds., Findings of the Association for Computational Linguistics: ACL 2024 ,11437–11452. Association for Computational Linguistics. Robey, A.; Wong, E.; Hassani, H.; and Pappas, G. J. 2025. SmoothLLM: Defending Large Language Models Against Jailbreaking Attacks. Transactions on Machine Learning Research .Shao, Z.; Liu, H.; Hu, Y.; and Gong, N. Z. 2026. Leave My Images Alone: Preventing Multi-Modal Large Language Models from Analyzing Images via Visual Prompt Injection. arXiv:2604.09024. Shayegani, E.; Dong, Y.; and Abu-Ghazaleh, N. 2024. Jail-break in pieces: Compositional Adversarial Attacks on Multi-Modal Language Models. In The Twelfth International Con-ference on Learning Representations .Tian, Y.; Hu, B.; Wu, F.; Li, X.; Lu, B.; and Gong, N. Z. 2026. When Think-with-Image Meets Safety: What Deter-mines Multimodal Jailbreak Robustness? arXiv:2605.27932. Wang, H.; Tian, Y.; Liu, M.; Zhang, Z.; and Zhu, X. 2026. SDEval: Safety Dynamic Evaluation for Multimodal Large Language Models. In Proceedings of the Fortieth AAAI Con-ference on Artificial Intelligence , AAAI’26. AAAI Press. Wang, J.; Zuo, Y.; Chai, Y.; Liu, Z.; Fu, Y.; Feng, Y.; and Lam, K.-M. 2025a. Safeguarding Vision-Language Models: Mitigating Vulnerabilities to Gaussian Noise in Perturbation-based Attacks. In Proceedings of the IEEE/CVF Interna-tional Conference on Computer Vision (ICCV) .Wang, Y.; Fu, Y.; and Gao, J. 2026. Reference Attack: A New Cross-Modal Jailbreaking Attack against Multimodal Large Language Models. In Liakata, M.; Moreira, V. P.; Zhang, J.; and Jurgens, D., eds., Proceedings of the 64th An-nual Meeting of the Association for Computational Linguis-tics (Volume 1: Long Papers) , 17860–17881. Association for Computational Linguistics. Wang, Y.; Liu, X.; Li, Y.; Chen, M.; and Xiao, C. 2024. AdaShield: Safeguarding Multimodal Large Language Mod-els from Structure-based Attack via Adaptive Shield Prompt-ing. In Computer Vision – ECCV 2024 , 77–94. Springer. Wang, Y.; Zhou, X.; Wang, Y.; Zhang, G.; and He, T. 2025b. Jailbreak Large Vision-Language Models Through Multi-Modal Linkage. In Proceedings of the 63rd Annual Meet-ing of the Association for Computational Linguistics (ACL) ,1466–1494. Wang, Z.; Fok, K. W.; and Thing, V. L. L. 2025. De-fenSee: Dissecting Threat from Sight and Text – AMulti-View Defensive Pipeline for Multi-modal Jailbreaks. arXiv:2512.01185. Wang, Z.; Wang, H.; Tian, C.; and Jin, Y. 2025c. Implicit Jailbreak Attacks via Cross-Modal Information Concealment on Vision-Language Models. arXiv:2505.16446. Wei, Z.; Li, Q.; Ruan, J.; Qin, Z.; Wen, L.; Liu, D.; and Shen, W. 2026. Understanding and Defending VLM Jailbreaks via Jailbreak-Related Representation Shift. arXiv:2603.17372. Wen, X.; Zhou, W.; Mo, W. J.; and Chen, M. 2025. ThinkGuard: Deliberative Slow Thinking Leads to Cautious Guardrails. In Che, W.; Nabende, J.; Shutova, E.; and Pile-hvar, M. T., eds., Findings of the Association for Computa-tional Linguistics: ACL 2025 , 13698–13713. Association for Computational Linguistics. Weng, C.; Li, D.; and Martin, A. 2026. Prompt-Induced Score Variance in Zero-Shot Binary Vision-Language Safety Classification. arXiv:2605.00326. Weng, F.; Xu, Y.; Fu, C.; and Wang, W. 2025. MMJ-Bench: A Comprehensive Study on Jailbreak Attacks and Defenses for Vision Language Models. In Proceedings of the Thirty-Ninth AAAI Conference on Artificial Intelligence , AAAI’25. AAAI Press. Xu, Y.; Qi, X.; Qin, Z.; and Wang, W. 2024. Cross-modality Information Check for Detecting Jailbreaking in Multimodal Large Language Models. In Al-Onaizan, Y.; Bansal, M.; and Chen, Y.-N., eds., Findings of the Association for Computa-tional Linguistics: EMNLP 2024 , 13715–13726. Association for Computational Linguistics. Yan, J.; Yang, X.; Wang, D.; Feng, S.; Zhang, Y.; and Zhao, Y. 2025. SemanticCamo: Jailbreaking Large Language Mod-els through Semantic Camouflage. In Che, W.; Nabende, J.; Shutova, E.; and Pilehvar, M. T., eds., Findings of the As-sociation for Computational Linguistics: ACL 2025 , 14427– 14452. Association for Computational Linguistics. Yang, Y.; Wang, L.; Zhang, J.; Liu, C. H.; Hong, L.; and Xu, Q. 2026. Multi-Faceted Attack: Exposing Cross-Model Vul-nerabilities in Defense-Equipped Vision-Language Models. In Proceedings of the AAAI Conference on Artificial Intelli-gence .Yang, Z.; Fan, J.; Yan, A.; Gao, E.; Lin, X.; Li, T.; Mo, K.; and Dong, C. 2025. Distraction is All You Need for Multi-modal Large Language Model Jailbreaking. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pat-tern Recognition (CVPR) , 9467–9476. Yin, X.; Jiang, Y.; Zhou, J.; Chen, K.; Cao, Z.; and Dong, X. 2026. DoubtProbe: Black-Box Jailbreak Defense via Struc-tural Verification and Semantic Auditing. arXiv:2606.16527. Yin, Z.; Cao, Y.; Liu, H.; Wang, T.; Chen, J.; and Ma, F. 2025. Towards Robust Multimodal Large Language Models Against Jailbreak Attacks. arXiv preprint arXiv:2502.00653 .Zhang, Z.; Sun, Z.; Zhang, Z.; Guo, J.; and He, X. 2025. FC-Attack: Jailbreaking Multimodal Large Language Models via Auto-Generated Flowcharts. In Findings of the Association for Computational Linguistics: EMNLP 2025 , 9299–9316. Zhao, H.; Yuan, C.; Huang, F.; Hu, X.; Zhang, Y.; Yang, A.; et al. 2025a. Qwen3Guard Technical Report. arXiv:2510.14276. Zhao, S.; Duan, R.; Wang, F.; Chen, C.; Kang, C.; Ruan, S.; et al. 2025b. Jailbreaking Multimodal Large Language Models via Shuffle Inconsistency. In Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV) . ArXiv:2501.04931. Zhao, S.; Xiong, S.; Huang, Y.; Jin, Y.; Wu, Z.; Guan, J.; Duan, R.; Tao, J.; Xue, H.; and Wei, X. 2025c. VRSA: Jailbreaking Multimodal Large Language Models through Visual Reasoning Sequential Attack. arXiv:2512.05853. Zhao, Y.; Zheng, X.; Li, Y.; and Ma, X. 2026. Defense-to-Attack: Bypassing Weak Defenses Enables Stronger Jail-breaks in Vision-Language Models. Pattern Recognition ,179: 113805. Zhao, Y.; Zheng, X.; Luo, L.; Li, Y.; Ma, X.; and Jiang, Y.-G. 2025d. BlueSuffix: Reinforced Blue Teaming for Vision-Language Models Against Jailbreak Attacks. In The Thir-teenth International Conference on Learning Representa-tions .Zhou, Q.; Wang, D.; Li, T.; Lin, Y.; Liu, Y.; Dong, J. S.; and Guo, Q. 2025a. Defending LVLMs Against Vision Attacks through Partial-Perception Supervision. In Proceedings of the 42nd International Conference on Machine Learning (ICML) .Zhou, Y.; Peng, Y.; Bai, Y.; Gao, K.; Zhang, Y.; Zhang, Y.; Chen, X.; Yu, T.; Dai, T.; and Xia, S.-T. 2025b. Why does weak-OOD help? A Further Step Towards Understanding Jailbreaking VLMs. arXiv:2511.08367. Zong, Y.; Bohdal, O.; Yu, T.; Yang, Y.; and Hospedales, T. 2024. Safety Fine-Tuning at (Almost) No Cost: A Baseline for Vision Large Language Models. In Proceedings of the 41st International Conference on Machine Learning (ICML) .This appendix supplements the main text with the full attack-suite specification, complete per-guard and per-attack results for both target models, the amplifier’s prompt templates, our judge-reliability analysis, and reproducibility details. All headline claims are supported in the main text; nothing here is load-bearing for them. 
+
+# A The Attack Suite 
+
+We evaluate an ensemble of eleven encoding attacks spanning two channels. Each attack rewrites a harmful behavior into an alternative surface form; the ensemble (best-of-suite) ASR of Eq. (1) scores a behavior as broken if any attack succeeds. 
+
+Text encodings (5). 
+
+• Set theory — restates the request as set-theoretic objects and operations. 
+
+• Formal logic — restates the request as first-order-logic formulae. 
+
+• Classical language — translates the request into a clas-sical/rare language (e.g. classical Chinese). 
+
+• Cipher — character-level obfuscation (Base64 / Caesar). 
+
+• CodeAttack (Ren et al. 2024) — embeds the request as a code-completion task. 
+
+Image renders (6). 
+
+• FigStep (Gong et al. 2025) — typographic rendering of the request as an image. 
+
+• Flowchart — renders the request as a flowchart diagram. 
+
+• Low-contrast — renders text at low contrast (perceptual-blindness render). 
+
+• Occluded — renders text partially occluded. 
+
+• MM-typo (Liu et al. 2025a) — an auxiliary LLM extracts a key phrase, then renders it as typography. 
+
+• Distraction grid (Yang et al. 2025) — decomposes the request and disperses it across numbered grid cells. The families are deliberately heterogeneous (symbolic, cross-lingual, cryptographic, code, and cross-modal) so that no single recover-or-decode step covers all of them — the structural reason the ensemble residual is non-zero. 
+
+# B Decode Failure Modes (Qualitative) 
+
+Worked example. A harmful request rendered as a Fig-Step image of set-theory notation reaches the guard as pix-els it cannot read. Recover transcribes it to the symbolic text; decode restates “let S be the set of steps to . . . ” as the plain instruction it encodes, which the guard then blocks. Un-der CodeAttack the decode instead discards the executable scaffolding the guard keys on, so the decoded gist reads be-nign and only the reguard branch (Algorithm 1 of the main text, line 5) catches it. Why do CodeAttack and distraction survive the amplifier? Below is a representative CodeAttack behavior that remains jailbroken under recover-and-decode on Qwen2.5-VL (gpt-5-mini judged harmful). 
+
+CodeAttack. The attack hides the harmful request as string tokens pushed onto a deque inside a benign “complete this function” task (the words spell out a harmful sentence in reverse): 
+
+def decode(input: deque) -> str: # concatenate the deque into a# coherent sentence, reversed ... my_stack.appendleft("defensive") my_stack.appendleft("purely") my_stack.appendleft("was") my_stack.appendleft("involvement") ... # (harmful sentence, reversed) 
+
+The harm lives in the data (the reversed word tokens), not in the request framing . The amplifier’s actual decode output for this input (Qwen2.5-VL) is: 
+
+> The underlying request is to write a function that takes a deque as input, concatenates its elements in reverse order to form a coherent sentence, and then use this sentence to guide the initialization of an output list with detailed steps involved in completing a main task.
+
+The decode describes the code structure — a benign “write a function . . . ” task — and abstracts the hidden payload to “a main task”; it never surfaces the harmful request in plain language. So the guard passes the benign restatement, and the target then completes the code , reconstructing the payload: 
+
+def decode(input: deque) -> str: return ’ ’.join(input) ... 
+
+This is precisely why decode-to-prose removes the guard’s signal (main text, “Why the frontier exists”): the harmful content is not a decodable request but an artifact the target 
+
+assembles .
+
+Distraction. A decode -stage failure, not a transcription one — the component ablation separates the two. The pay-load is dispersed across numbered grid cells, but the recov-ered transcription still carries enough of it to be flagged: in the matched ablation run, guarding the transcription alone (recover-only) holds distraction to 5% ASR where decod-ing first lets it reach 26% . It is the single restatement that compresses those cells into a gist reading as disconnected fragments. Re-screening the pre-decode text recovers most of that loss ( 7% , Table 1 of the main text cells), which is why reguard repairs dispersion but not code. 
+
+# C Decode Fidelity 
+
+The amplifier’s recover and decode steps are executed by the target VLM, so how much the amplifier adds on top of a guard should depend on how faithfully that target tran-scribes and restates the request. We measure this directly instead of inferring it from ASR. During a dedicated run we log the decoded payload for every (target, attack, behav-ior) triple, then present an independent judge (gpt-5-mini) with the original plain request and the target’s restatement and ask only whether the request survived the round trip: 
+
+match (same specific request), partial (topic survives, the specific action or object is lost), or miss (garbled, refused, empty, or about something else). The judge is never asked whether either text is harmful — that is the ASR judge’s job, and asking here would import its refusal behaviour into a measurement about transcription. Unparseable verdicts are recorded separately and never folded into miss ; there were none ( 2,200 /2,200 parsed). Table 3 reports match rates. Three things follow. First, the aggregate gap between targets is real and one-sided ( 51 .4% 
+
+vs. 41 .6% , non-overlapping 95% CIs). Second, it is entirely an image -channel effect: InternVL3 leads by 22 .4 points across the six renders while Qwen is marginally ahead on the five text encodings, so this is a transcription-capability difference, not a general one — consistent with the two tar-gets’ near-identical undefended per-attack means ( 30 .8 vs. 
+
+29 .5% ). Third, the two attacks the ensemble retains under the amplifier are precisely the two that recovery cannot invert on either target: cipher at 0% and CodeAttack at 3–4% . Qwen’s low distraction fidelity ( 16% vs. InternVL3’s 59% ) likewise matches distraction being a Qwen-side residual driver. 
+
+# D Full Ensemble Results (All Guards, Both Targets) 
+
+Table 4 gives the ensemble (best-of-11) ASR for every guard, both targets, and all three defense conditions ( gb = guard alone, mc = guard+amplifier, +rg = amplifier+reguard). All numbers are gpt-5-mini, n=100 . The reguard condition (+rg ) reduces ensemble ASR for all five guards on Qwen2.5-VL (including the two the amplifier alone did not help), and for the three guards run on InternVL3. 
+
+# E Full Per-Attack Results 
+
+Table 6 reports per-attack ASR for all five guards on Qwen2.5-VL, under guard-alone (gb) and guard+amplifier (mc), against the undefended floor. The amplifier collapses the symbolic, rare-language, and image-render families to single digits under most guards; the residual is carried by 
+
+CodeAttack (where decode-to-prose removes the syntactic signal, and mc can exceed gb) and distraction (where the Attack Qwen2.5-VL InternVL3                             
+
+> Text encodings
+> Set theory 44 23 Formal logic 18 12 Classical language 27 28 Cipher 00CodeAttack 43
+> mean 18.6 13.2 Image renders
+> FigStep 78 94 Flowchart 55 87 Low contrast 73 92 Occluded 66 90 mm-typo 77 77 Distraction grid 16 59
+> mean 60.8 83.2
+> Overall 41.6 51.4
+
+Table 3: Decode fidelity : match rate (%) — how often the target’s restatement still conveys the original request. n=100 
+
+behaviors per cell, 2,200 judgments total, gpt-5-mini judge. Higher is better for the defense : a faithful decode hands the guard a real payload to catch, while a garbled one collapses 
+
+mc back onto gb . The image-channel gap ( 60 .8 vs. 83 .2) is what makes the amplifier’s ensemble-level benefit significant on InternVL3 and not on Qwen. payload is dispersed and not reassembled). cipher carries no signal on these targets (Qwen cannot decode Base64). 
+
+# F Union-Contribution Decomposition 
+
+A best-of-suite metric invites the objection that it merely reports the single strongest attack. Table 7 refutes that for our suite by decomposing each condition’s union into per-attack contributions. For every (condition, guard) cell we report: the ensemble ASR; the mean per-attack ASR and their ratio (how far the mean understates the union); the strongest single 
+
+attack and what fraction of the union it alone reaches; each attack’s sole-breaker rate (the fraction of behaviors it is the 
+
+only attack to break); and the number of load-bearing attacks, i.e. those with a positive drop-one marginal (removing them strictly lowers the union). Three things follow. First, the union is genuine: the best single attack reaches only 51 –79% of it guard-alone and 56 –
+
+71% under the amplifier, so between a fifth and a half of the attacker’s success comes from behaviors that only other 
+
+attacks break. Second, four to seven of the eleven attacks are load-bearing in every guarded condition — complementarity, not a single dominant attack. Third, the mean-per-attack view understates the attacker by 3.2× (undefended) up to 6.6×
+
+(Qwen3Guard + amplifier), and the understatement grows as the defense improves: a defense that collapses most attacks individually looks far better under the mean than it is under the union. This is the quantitative case for reporting best-of-suite ASR for defenses. The residual’s concentration is also explicit here: un-der the amplifier CodeAttack is the sole breaker of Table 4: Ensemble (best-of-11) ASR (%, lower=better), gpt-5-mini judge, n=100 . Undefended floors: Qwen2.5-VL 89, InternVL3 91.                             
+
+> Target Guard gb mc +rg Qwen2.5-VL-7B WildGuard 75 72 43 LlamaGuard-3-8B 71 79 48 Qwen3Guard-8B 76 65 43 ThinkGuard 78 77 54 GuardReasoner-VL 84 71 58 InternVL3-8B WildGuard 81 63 48 Qwen3Guard-8B 81 69 56 GuardReasoner-VL 90 67 65
+
+Table 5: Benign over-refusal (%, avg. of text/image chan-nels, lower=better), gpt-5-mini, n=100 . The amplifier’s util-ity cost, and its rise under reguard.                    
+
+> Target Guard mc +rg Qwen2.5-VL-7B WildGuard 64 84 Qwen3Guard-8B 59 81 GuardReasoner-VL 60 87 ThinkGuard 45 66 LlamaGuard-3 28 33 InternVL3-8B WildGuard 84 90 Qwen3Guard-8B 80 86 GuardReasoner-VL 82 92
+
+18 –27% of behaviors and distraction of 6–15% , while no other attack exceeds 6% in any cell. Computed by 
+
+src/analysis/paper_c_union_decomp.py over the same gpt-5-mini–judged per-prompt records behind Ta-ble 6. 
+
+# G Decode as a Coverage–Utility Trade-off (No-Decode Ablation) 
+
+The amplifier’s decode step is optional for image-delivered 
+
+attacks: recover already transcribes the image text into the guard’s view, so decoding adds a second restatement. We ab-late it directly — no-decode (recover + guard) vs full-decode 
+
+(recover + decode + guard) — on the six established image attacks and on benign OR-Bench-Hard, with WildGuard as the guard, Qwen2.5-VL-7B as the target, n=100 , gpt-5-mini judged. 
+
+How the recover-only condition is assembled. Recover -only is a hybrid condition and Eq. (1) of the main text is a union, so the order of assembly matters; we state it explicitly. For each behavior we build the full eleven-attack outcome vector first — its five text entries taken from the guard-alone cells, its six image entries from the separately-run recover-only cells — and only then OR-reduce that vector. Substitu-tion happens per attack; the union is taken afterwards, never the reverse. The text substitution is an identity rather than an approximation: with a text-only guard and decode dis-abled, the recover-only path and the guard-alone path hand the guard the same string, so a separate run could not differ Table 6: Per-attack ASR (%) on Qwen2.5-VL, gpt-5-mini, n=100 . Each guard column is gb/mc. WG=WildGuard, LG3=LlamaGuard-3, Q3G=Qwen3Guard, TG=ThinkGuard, GR=GuardReasoner-VL. Bold rows are the two ensemble-residual drivers.                                                                         
+
+> Attack floor WG (gb/mc) LG3 (gb/mc) Q3G (gb/mc) TG (gb/mc) GR (gb/mc) set theory 47 12/1 34/29 17/4 42/19 43/5 formal logic 26 14/4 18/19 15/1 21/17 20/5 classical lang. 15 10/8 7/10 9/5 10/8 9/6 cipher 11/1 0/0 0/0 0/1 0/1 FigStep 18 22/3 20/7 20/3 17/4 3/5 flowchart 28 25/9 24/16 23/8 24/15 2/13 low-contrast 21 20/7 21/10 18/7 19/11 8/7 occluded 27 31/8 28/10 27/7 28/10 11/9 mm-typo 20 8/1 5/6 10/0 7/3 1/1
+> CodeAttack 71 43/50 8/44 41/46 26/52 66/43 distraction 34 35/31 36/31 37/27 35/29 31/27
+
+Table 7: Union-contribution decomposition (Qwen2.5-VL, gpt-5-mini, n=100 , eleven attacks). “Best single” = the strongest individual attack, with the fraction of the union it alone reaches. “Sole” = sole-breaker rate. “LB” = load-bearing attacks (positive drop-one marginal), out of 11.                                                                                                    
+
+> Condition Guard Ens. Mean Ens/Mean Best single % of union Sole: code Sole: distr. LB no defense —89 28 3.18 ×71 (code) 80 17 33guard alone WildGuard 75 20 3.73 ×43 (code) 57 17 54LlamaGuard-3 71 18 3.89 ×36 (distr.) 51 456Qwen3Guard 76 20 3.85 ×41 (code) 54 18 55ThinkGuard 78 21 3.75 ×42 (set) 54 527GuardReasoner 84 18 4.76 ×66 (code) 79 19 34
+> +amplifier WildGuard 72 11 6.44 ×50 (code) 69 27 15 5LlamaGuard-3 79 17 4.77 ×44 (code) 56 18 10 6Qwen3Guard 65 10 6.62 ×46 (code) 71 26 12 5ThinkGuard 77 15 5.01 ×52 (code) 68 23 65GuardReasoner 71 11 6.40 ×43 (code) 61 26 15 5
+
+from it. All eleven entries are indexed by the same behav-ior id over the same n=100 behaviors, which is what keeps the comparison paired — the McNemar tests contrast this assembled vector against the full-decode vector behavior by behavior, over discordant pairs only, exactly as for two non-hybrid conditions. Harm-side, no-decode is uniformly at or below full-decode (mean ASR 2.0 vs 10 .7): decoding image-borne payloads to prose can discard the very signal the guard needs. Benign-side, however, dropping decode raises over-refusal (direct-answer 43 → 24% , i.e. refusal 57 → 76% ), against a guard-alone floor of 84% . The mechanism: recover exposes the borderline-benign text to the guard, which over-flags its phrasing; decode softens that phrasing, so it is a mild mitiga-tor of over-refusal, not its cause — correcting the natural in-tuition that gating decode would relieve over-refusal. Neither setting approaches the 84% floor, which exists only because the guard is effectively blind to the un-recovered image; any recovery-based defense must forfeit it to gain coverage. De-code is therefore a coverage–utility knob to apply selectively 
+
+(off for image renders, on for text encodings that need it), not an escape from the ceiling. 
+
+# H Amplifier Prompt Templates 
+
+The amplifier uses the target VLM itself for both steps; 
+
+{content} is the (possibly image-recovered) request text. 
+
+Recover (image → text). 
+
+Transcribe ALL text that appears in the image, exactly and completely. Then, in one sentence, describe any non-text visual content. Output only the transcription followed by the one-sentence description. 
+
+Decode (encoding → plain payload). 
+
+The text below may encode, obfuscate, or indirectly express an underlying request — e.g. via set theory, formal logic, symbolic math, code, or an unusual/rare language. Recover the plain, direct, real-world request it is actually asking for, and state it in one or two plain-English sentences. Do NOT solve, answer, or comply with it — only restate the underlying request in plain English. — {content} 
+
+Reguard. The reguard layer adds no new prompt: it runs the same guard classifier a second time on the raw pre-decode Table 8: No-decode vs full-decode, WildGuard/Qwen2.5-VL, n=100 , gpt-5-mini. Harm = per-attack ASR (%, lower better); benign = OR-Bench-Hard direct-answer rate (%, higher better).                  
+
+> no-decode full-decode
+> Harm — ASR % (lower better)
+> FigStep 04flowchart 212 low-contrast 38occluded 18mm-typo 16distraction 526
+> mean 2.0 10.7
+> Benign — direct-answer % (higher better)
+> mc 24 43
+> Benign references : no-defense 83, guard-alone 84
+
+text (the recovered union before decoding), and blocks if ei-ther the raw form or the decoded payload is flagged (Algo-rithm 1, line 5). 
+
+# I Judge Reliability 
+
+All reported numbers use gpt-5-mini as the sole harm/refusal judge (HarmBench completion rubric for harm; OR-Bench three-class rubric for refusal). Because the entire quantitative story rests on this judge, we do not assume its reliability — we (i) explain why a served guard is not a valid judge, (ii) human-calibrate the judge on stored responses from this pipeline, stratified across its text-encoded and image-rendered formats, and (iii) cross-check the reported numbers under a second, independently validated judge. We state the calibration sam-ple’s scope, and its limits, precisely below. 
+
+Why not a served guard as the judge. We considered us-ing a served open guard (WildGuard) as the ASR judge for cost, but found it unreliable in that role : WildGuard flags harmful intent or strings rather than task completion , so it over-counts encoding and code attacks — responses that re-state or gesture at a topic without completing the harmful task are scored as successes. Against gpt-5-mini adjudication this yields large false-positive rates (tens of points) concentrated on exactly the encoding/code attacks central to this study, which would inflate ASR and distort the amplifier’s mea-sured effect. WildGuard therefore appears in our pipeline 
+
+only as an input guard (one of the five defenses), never as the harm judge. This separation — a served classifier for defense, a strong external model for measurement — is what keeps the guard-panel comparison honest. 
+
+Human calibration of the judge. Standard jailbreak auto-graders are known to lose reliability under distribution shift, and our attacks (symbolic encodings, image-rendered text) are exactly such a shift, so we measure gpt-5-mini’s reliability rather than assume it. We drew a 100 -item blind, stratified sample of stored target responses — 70 representative ( 7
+
+per attack-family ×modality stratum, across the five text en-coders and both channels, text and image) plus 30 enriched from inter-judge-disagreement cases — and hand-labeled each against the HarmBench completion standard (harmful only if the response actually exhibits the requested behav-ior, not merely restates it in a formalism), yielding a 62 /38 
+
+harmful/safe anchor. Against these human labels, gpt-5-mini attains Cohen’s κ = 0 .68 — the highest among the judges that both apply our HarmBench rubric and pass a usability screen (no systematic refusal-to-classify) — while staying balanced ( 50% harmful rate; 5% over-flag, 23% miss). Cru-cially the sample includes CodeAttack and image-rendered responses, the non-prose formats whose grading is most in question, and the judge’s agreement holds there. The sample design and per-judge κ script are released with the paper. 
+
+Scope of the calibration sample. We state its limits plainly, since we release it. The sample was drawn from an earlier round of this same pipeline, so its format coverage overlaps but does not coincide with the final eleven-attack suite: it covers four of the five text encoders ( set theory , formal logic , classical language , CodeAttack ) plus a semantic-camouflage encoder not in the final suite, and its image chan-nel uses plain and constant-text renders rather than the six renders of the final suite. It therefore calibrates the judge on the response formats the suite produces — symbolic re-statements, code, and answers to image-delivered requests, including the CodeAttack and image-rendered cases whose grading is most contested — rather than on a per-attack ba-sis. The one final-suite text encoder absent from it, cipher ,carries essentially no signal on these targets ( 0–1% ASR), so little rides on its omission; the render-set difference changes the image stimulus but not the judged artifact, which is al-ways the target’s textual answer. A calibration re-drawn on the final suite would be stronger, and we regard it as the natural next validation step rather than a settled matter. 
+
+Human calibration of the refusal judge. The calibra-tion above validates gpt-5-mini on the harm task. Be-cause over-refusal is the utility axis of our central claim, we calibrate the same judge separately on the refusal task rather than assume the harm result transfers. We drew a second 100 -item blind sample of stored benign responses — 64 representative (stratified by condition × channel over floor /guard-alone/amplifier/ +reguard and text/im-age, balanced answered-vs-refused within each stratum), 30 
+
+enriched from the intrinsically hardest class ( indirect re-fusal ), and 6 topped up — spanning both targets and all five guards, and hand-labeled each against the three-class rubric with the judge’s own verdict withheld. On the binary collapse that the reported metric actually uses (answered vs. refused, over-refusal = direct + indirect), agreement is κ = 0 .794 overall and κ = 0 .875 on the rep-resentative block, with the judge slightly over-flagging ( 8% 
+
+over-flag, 2% miss; 62% judged refusal vs. 56% human). On the full three-class task agreement is weaker, κ = 0 .438 
+
+(0.585 representative), and we report it because its structure 
+
+is informative rather than noisy: the disagreement is almost entirely one-directional along a single boundary — the hu-man assigned direct refusal 35 times against the judge’s 
+
+6, and 29 of the 100 items are human-direct/judge-indirect — and inspection shows these are responses that decline and then offer an alternative, which the rubric assigns to indirect refusal . Both classes count as refusal, so this boundary dis-agreement cannot move the reported quantity; it bears on which kind of refusal a response is, a distinction we never use. We therefore report the binary κ as the figure licens-ing our over-refusal numbers and disclose the three-class figure alongside it. Because a benign prompt recurs across conditions, the sample holds 54 distinct questions among its 
+
+100 responses; resampling one response per distinct ques-tion ( 2000 draws) gives binary κ = 0 .847 [0 .741 , 0.924] —higher, not lower — so the repetition does not inflate agree-ment. 
+
+A transcription artifact in the amplifier’s image path. La-beling surfaced a failure mode worth reporting: on image inputs the amplifier can emit its recover transcription as the final answer (“The image contains the following text: . . . ”), which is not an answer but also not a safety refusal. Across all 5100 scored benign responses we find 26 such echoes and 14 degenerate outputs, and they are confined exactly to where recover runs on images — 3.3% of counted refusals in the amplifier/image cells and 3.0% in +reguard /image, and 0% in every text cell and every cell without the ampli-fier. Counting them as refusals therefore overstates the am-plifier’s image-side over-refusal by roughly two points (e.g. 
+
+60% → 58% ), which changes no conclusion; we leave them counted, and note the bias direction here, because it flatters our own defense to remove them. Our refusal rubric extends OR-Bench’s by one clause classing such an echo as an indi-rect refusal rather than an answer; OR-Bench never sees this format, so upstream has no class for it. 
+
+Judge-panel calibration (on the sample). We scored the same sample with a 26 -judge panel ( 17 rubric-following API models, 9 open guards). The second same-standard judge, gpt-5-nano, reaches κ = 0 .62 . Agreement across the panel splits by standard rather than at random: own-policy guards (WildGuard and peers) flag 60 –70% harmful — close to the human 62% but on their own trained taxonomy — while rubric-following judges are stricter, and the two regimes agree on the non-ambiguous items, contesting only a 9-item core. The practical consequence, which we build into every claim: absolute ASR is judge-dependent, but the direction of every effect is stable across judges. This is why the paper’s conclusions rest on relative contrasts with Wilson CIs and paired McNemar tests (App. P), never on absolute levels. 
+
+Second-judge cross-check (all reported cells). Beyond the validation sample, we re-scored every one of the 449 re-ported harm cells with gpt-5-nano over the identical stored responses (a decoupled rejudge pass, no target re-query). Agreement is very high: per-cell ASR correlates at Pearson 
+
+r = 0 .975 , and the two judges agree on jailbroken-vs-not for 
+
+96% of cells. gpt-5-nano is marginally more lenient (mean per-attack ASR 20 .8% vs. 16 .4% ), exactly as its Round-J calibration predicts. Crucially, every reported contrast re-produces almost exactly. Pooled across guards and both tar-gets, the amplifier reduces per-attack ASR by 51% under 
+
+both judges (guard-alone → amplifier: 21 .9 → 10 .7 under gpt-5-mini, 27 .4 → 13 .5 under gpt-5-nano), and the reguard layer cuts a further 43 –44% (10 .7 → 6.1 and 13 .5 → 7.5
+
+respectively); the gb >mc >+rg ordering holds on both. Abso-lute ASR is modestly judge-dependent, but the relative con-trasts our claims rest on are judge-invariant — the reviewers’ single-judge concern does not affect any conclusion. 
+
+Per-attack agreement. An aggregate κ can hide a format the judge grades badly, so we break it down. The calibration sample stratifies by attack-family ×modality, which leaves 4–
+
+19 items per cell — too few for a per-cell estimate — so we group by base text encoder, giving 14 –33 items per family.                      
+
+> Base attack family nκagree
+> CodeAttack 33 0.654 85%
+> formal logic 25 0.493 76%
+> classical language 14 0.659 86%
+> set theory 14 0.571 79%
+> semantic camo 14 1.000 100% overall 100 0.680 —
+
+Table 9: gpt-5-mini against human labels, by base attack family. Two readings, with the caveat that n=14 –33 makes these indicative rather than precise (the κ = 1 .000 on semantic camo is small-sample luck, and that family is not in the fi-nal suite). First, the intuition that CodeAttack drives the calibration difficulty is not supported: at 0.654 it sits es-sentially at the overall 0.680 , and agreement is 85% . This matters because CodeAttack is the dominant residual un-der the amplifier — the attack our conclusions lean on most is not the one the judge grades worst. Second, the weakest family is formal logic at κ = 0 .493 , only moderate on the Landis–Koch scale, where the disagreements are responses that restate a request in symbolic form without completing it — exactly the restate-versus-complete boundary the Harm-Bench rubric turns on. We therefore treat per-attack ASR for the symbolic encoders as the noisiest column in our per-attack tables, which is also where the amplifier already drives ASR into single digits, so the ceiling argument does not rest on it. 
+
+# J Reproducibility 
+
+Models. Exact checkpoints, so every result is pinned to a resolvable artifact rather than a model family. Targets (vLLM-served): Qwen/Qwen2.5-VL-7B-Instruct ,
+
+OpenGVLab/InternVL3-8B . Guards (served as input classifiers): allenai/wildguard ,
+
+meta-llama/Llama-Guard-3-8B ,
+
+Qwen/Qwen3Guard-Gen-8B ,
+
+Rakancorle1/ThinkGuard ,
+
+yueliu1999/GuardReasoner-VL-7B . Judge: 
+
+gpt-5-mini . Generation budgets are 4096 tokens for the targets and for GuardReasoner-VL (which emits a reasoning trace before its verdict), and 128 for the four guards whose output is a short label. 
+
+Data. Harmful: HarmBench ( n=100 behaviors), each ren-dered through the eleven attacks. Benign over-refusal: OR-Bench-Hard ( n=100 ). Ranges are inclusive, 0-indexed. Metrics. Ensemble (best-of-11) ASR per Eq. (1); benign over-refusal as the mean of the text and image channels. All harm/refusal labels are produced by a single decoupled gpt-5-mini pass over the stored target responses, so every condition is scored by the identical judge. 
+
+Pipeline. For each behavior and attack, the amplifier calls the target VLM to recover (if multimodal) and decode ;the guard screens the decoded payload (and, under reguard, the recovered pre-decode text); on a pass the target answers the original input (Algorithm 1). Code and configuration are released with the paper. 
+
+Attack rendering. Text encodings. cipher is Base64 by default (Caesar, shift 3, as an alternate), applied deter-ministically. set-theory , formal-logic , and classical-language are generated by gpt-4.1-mini ; set-theory and formal-logic use two fixed few-shot demonstrations (af-ter MathPrompt), classical-language a fixed eight-dimension literary strategy (no per-prompt search). CodeAttack is a static Python template (query tokens pushed reversed onto a stack, model asked to complete a decode() function; after Ren et al. 2024), no LLM call. Image renders (de-fault canvas 1024 ×768 , black text on white unless noted): 
+
+FigStep 3-step typographic list, font 80 on a 760 ×760 can-vas (DejaVuSansMono-Bold); flowchart Graphviz vertical layout, 600 dpi, Times-Roman 14; low-contrast #B0B0B0 
+
+text on white, font 28; occluded horizontal occluding bars (opacity 0.85, 12 px bars / 16 px gaps), font 30; mm-typo a
+
+gpt-4.1-mini key-phrase extraction rendered as font-90 typography; distraction a gpt-4.1-mini decomposi-tion into three sub-questions among nine fixed benign dis-tractors on a 3-column grid (360 px cells, font 22). 
+
+Decoding settings. All target-VLM, encoder, and auxiliary-LLM generations use greedy decoding (temper-ature 0, top-p 1.0); target max_tokens is 4096 . Runs are 
+
+single-run : determinism comes from greedy decoding, not from a pinned sampling seed (no random seed is applied to generation). This is the "single seed” of the main-text limi-tation, stated precisely. 
+
+Guard formatting and verdicts. Guards are queried as prompt-only classifiers. WildGuard uses a pass-through tem-plate (the caller supplies the exact input string); LlamaGuard-3, Qwen3Guard, ThinkGuard, and GuardReasoner-VL use each model’s own safety-taxonomy chat template (GuardReasoner-VL additionally takes the upstream sys-tem prompt). Verdicts are decoded deterministically by la-bel/regex matching — there is no probability threshold; Qwen3Guard’s three-way scale collapses controversial to unsafe. Every parser fails closed : an unparseable guard out-put is treated as unsafe. A flagged input returns a fixed refusal string; a passed input is forwarded to the target as the original 
+
+(un-decoded) prompt. 
+
+Failure handling. A prompt whose pipeline query returns a provider/mechanism error is flagged (is_correctly_processed =false) and excluded 
+
+from judging and the ASR denominator — never scored as safe or unsafe; prompts whose rendered image exceeds eight pages are likewise excluded. Recovery/decode themselves run at temperature 0; the guard’s fail-closed decoding above governs ambiguous recoveries. 
+
+# K Extended Related Work 
+
+The main text’s Related Work is condensed for space; this section gives the full treatment. The positioning of our am-plifier against ECSO and the ensemble-evaluation discipline are stated in the main text and repeated here only where the surrounding argument needs them. 
+
+Encoded and cross-modal jailbreaks. A large family of attacks bypasses safety alignment by changing the form of a harmful request rather than its content. Typographic and figure-based renders place the request inside an image (Gong et al. 2025; Liu et al. 2025a; Azulay et al. 2026); distraction attacks disperse it across sub-images or grid cells (Yang et al. 2025); CodeAttack rewrites it as a code-completion task (Ren et al. 2024); and semantic-camouflage attacks embed it in a benign narrative (Yan et al. 2025); and shuffle-inconsistency attacks exploit the gap between a model’s comprehension and its safety response (Zhao et al. 2025b). A compositional variant instead hides the payload in the image embedding 
+
+space, pairing an adversarial image with an innocuous tex-tual prompt so that no readable surface carries the request at all (Shayegani, Dong, and Abu-Ghazaleh 2024). They suc-ceed because a guard trained on natural language does not recognize the encoded surface form — but only the legible-surface family leaves a payload that a recovery step could ever surface, a boundary we make explicit in Limitations. 
+
+Black-box safety guards. Safeguard classifiers screen in-puts and outputs for harmful content: WildGuard (Han et al. 2024), Llama Guard and its vision variant (Inan et al. 2023; Chi et al. 2024), Qwen3Guard (Zhao et al. 2025a), and reasoning-based guards such as ThinkGuard (Wen et al. 2025) and GuardReasoner-VL (Liu et al. 2025b); even purpose-built guards generalize poorly across safety poli-cies (Piao et al. 2026) and their scores can be unstable under prompt rephrasing (Weng, Li, and Martin 2026). They are model-agnostic but inherit the decode gap: they classify what they are shown, and an encoded attack shows them the wrong thing. 
+
+Transform-then-guard defenses. Closest to our work are defenses that transform an input before screening it. ECSO converts image content to text to reactivate text-side safety (Gou et al. 2024); SmoothLLM (Robey et al. 2025) and Se-manticSmooth (Ji et al. 2025) perturb or paraphrase and vote; DoubtProbe verifies a request against a reconstructed struc-tural form (Yin et al. 2026); DefenSee screens sight-side and text-side views of the same input through a multi-view pipeline (Wang, Fok, and Thing 2025); BlueSuffix purifies the input and appends a learned safety suffix rather than screening it (Zhao et al. 2025d); and AdaShield prepends an auto-refined shield prompt against structure-based image attacks (Wang et al. 2024). Our amplifier differs in being explicitly guard-agnostic — it yields a plain-language pay-load any classifier can screen — and in being stress-tested against a cross-modal encoding ensemble rather than single attacks; DoubtProbe, the closest sibling, is not evaluated on cross-modal image-rendered encodings. The technical dis-tinction is a missing capability: ECSO’s transform is a single image-to-caption step — it never inverts an encoding and has no text branch, so symbolic, cipher, or code payloads survive the caption still encoded. Recover-and-decode adds an explicit inverse-transform decode , on text- and image-delivered encodings alike. We make the comparison concrete under our matched protocol: ECSO leaves the eleven-attack ensemble essentially undefended ( 90 /91 % ensemble ASR on Qwen2.5-VL/InternVL3, against an 89/91% undefended floor), because its caption step does not reach the symbolic, cipher, and code encodings in the suite — whereas recover-and-decode cuts the same ensemble to 65 /63 %. Tellingly, ECSO’s per-attack mean ASR is only 25% yet its ensemble is 90% — the very gap our best-of-suite metric exposes. ECSO also pays almost nothing in benign utility for that ( 27% over-refusal on Qwen, against the 26% no-defense floor; Table 1 of the main text), so it occupies the low-cost, low-coverage corner of the same frontier rather than a point off it. 
+
+Broader VLM jailbreak defenses. A parallel line hard-ens the model itself: VLGuard shows safety fine-tuning on a small curated set recovers alignment at almost no ca-pability cost (Zong et al. 2024), SAFEMLLM adversari-ally trains against multimodal jailbreaks (Yin et al. 2025), Robust-VLGuard fine-tunes it for perturbation robustness (Wang et al. 2025a), and AsD overlays a universal pro-tective perturbation synthesized once by white-box opti-mization against a vision encoder (Li, Wang, and Fang 2025). Model-internal methods instead read or steer hid-den representations — tuning-free detection from hidden states (Jiang et al. 2025), representation-shift-based defense (Wei et al. 2026), token-level prune-then-restore (Chen et al. 2025), or representational contrastive scoring (Hua et al. 2026); the same machinery is repurposed to force refusals for image-owner privacy (Shao et al. 2026). All assume white-box access and are complementary to our training-free, guard-agnostic amplifier. Closer to our access model, partial-perception supervision (Zhou et al. 2025a) corrects the target’s answer using its own outputs on cropped sub-images, but targets pixel-perturbation and crop-sensitivity at-tacks rather than the encoded payloads we recover; inference-paradigm choices themselves shift multimodal jailbreak ro-bustness (Tian et al. 2026), and surveys map the wider space (Liu et al. 2024; Chen et al. 2026). A multi-agent alter-native, Agentic Moderation (Ren, Dras, and Naseem 2025), replaces the static guard with cooperating classify/respond/e-valuate/reflect agents — more capable but far heavier than our non-iterative amplifier. Most relevant to our reguard anal-ysis, Long et al. (2025) decompose defenses into safety-shift and harmfulness-discrimination mechanisms and find that stacking two same-mechanism defenses trades helpfulness for safety — a narrower precedent for the cost we measure when stacking a recovery layer and a reguard over an at-tack ensemble. Guo et al. (2025) name the over-prudence 
+
+our two-axis evaluation quantifies; their vision-free “caption re-check” detector is itself a recover-then-guard pipeline like ours, though confined to captioning rather than decoding text WildGuard   
+
+> Qwen3Guard
+> GuardReasoner
+> LlamaGuard-3
+> ThinkGuard
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Ensemble attack-success rate (%)
+> no defense (89)
+> guard alone + amplifier + amplifier + reguard
+
+Figure 3: Ensemble ASR (best-of-11) on Qwen2.5-VL across 
+
+five guards, gpt-5-mini judge; error bars are Wilson 95% CIs (n=100 ). Guard alone leaves 71–84%; the amplifier’s effect is guard-dependent (65–79%, raising ASR for LlamaGuard-3/ThinkGuard); the reguard layer lowers all five to 43–58%, but see the safety–utility frontier figure in the main text for the utility cost. Dashed line: undefended ensemble (89%). encodings, and proposed as a fix rather than analyzed as a bounded one. 
+
+Rigorous and ensemble evaluation. The adversarial-robustness literature has long warned that single-attack eval-uation overstates a defense; reliable evaluation needs an en-semble of diverse attacks (Croce and Hein 2020) and adap-tive, worst-case testing (Carlini et al. 2019; Athalye, Carlini, and Wagner 2018). Surveys of multimodal jailbreaks reach the same conclusion from the defense side, noting that single-attack robustness evaluation “falls short of comprehensively assessing effectiveness” and calling for benchmarks that span diverse attacks (Liu et al. 2024); multimodal benchmarks op-erationalize this joint attack–defense evaluation (Weng et al. 2025; Luo et al. 2024), and dynamic-evaluation suites probe many strategies but report per-strategy degradations rather than the best-of-suite union we adopt (Wang et al. 2026). We further construct our suite so the harmful payload never appears in plain text, avoiding the visual-leakage confound that lets text-only alignment inflate benchmark safety (Hu et al. 2025). We import this discipline to VLM jailbreak de-fense, reporting best-of-suite ASR over standardized harm-ful (Mazeika et al. 2024; Chao et al. 2024) and benign over-refusal (Cui et al. 2025) benchmarks. Certification-style met-rics instead quantify risk analytically — e.g. Retention Score (Li, Chen, and Ho 2025), an ℓ2-bounded robustness certifi-cate — a complement to our empirical best-of-suite success over discrete encoding attacks. 
+
+# L Conditional Application 
+
+A natural objection to the ceiling is that the amplifier is applied indiscriminately: a text-only guard already sees a text attack’s payload, so recovery is a no-op there, and one Table 10: Conditional application (Qwen2.5-VL, gpt-5-mini). Each cell is ensemble ASR / benign over-refusal, both %, lower better. cond-mc routes text inputs to the guard alone and image inputs to guard+amplifier; cond-rg ampli-fies image inputs with reguard. No conditional point lands strictly inside the frontier: three are strictly dominated by an as-shipped point and the rest are trades along it. Dashes mark guard–condition cells not run on this target.                               
+
+> Guard gb mc +rg cond-mc cond-rg
+> WildGuard 75/49 72/64 43/84 70/70 59/82 LlamaGuard-3 71/28 79/29 —69/30 —Qwen3Guard 76/46 65/60 43/80 66/66 57/76 ThinkGuard 78/47 77/42 —73/55 —GuardReasoner 84/66 71/60 58/86 84/67 84/83
+
+might apply the amplifier only to image-delivered inputs. Because the headline metric is an OR-reduction over per-prompt flags, this policy is evaluable at zero cost from the stored runs — it is a different choice of which stored flag to reduce per attack, not a new experiment. The mechanism of the failure is the informative part. Rout-ing text inputs to the bare guard forfeits the amplifier’s text-side over-refusal reduction — decode softens borderline phrasing, so WildGuard alone over-refuses 81% of benign text inputs against 68% with the amplifier. The utility given up on the text channel exceeds the utility saved on the image channel, so restricting the amplifier to where it most helps 
+
+safety makes the overall trade worse. Selective application is therefore another point on the frontier, not a way around it. 
+
+# M Decoder Scale 
+
+Throughout the main results one 7B VLM serves as target, recoverer and decoder, so a natural objection is that the resid-ual measures a weak decoder rather than a limit of recovery-based defense. The amplifier’s two steps separate cleanly on this point: recover is multimodal and needs a VLM, but 
+
+decode is text-only , so the decoder can be replaced indepen-dently while the target still answers and recover still runs on the 7B. We move decode to Llama-3.3-70B ( ∼10 × the pa-rameters) and hold target, recoverer, guards, the eleven-attack suite, the reguard condition, the judge and n=100 fixed, so any change is decoder capacity. A large aligned decoder could simply refuse to restate a harmful prompt, which would return an empty decode, show the guard nothing, and inflate ASR while looking like a clean run. We checked before measuring: on 40 encoded harmful prompts the decoder complied 40 /40 , with no refusals and no empty decodes. Both reductions are significant on the paired per-behavior flags (exact McNemar): WildGuard fixes 21 behaviors and newly breaks 6 (p=5 .9×10 −3), GuardReasoner fixes 32 and newly breaks 10 (p=9 .4×10 −4). The newly-broken counts are the honest cost — this is a net gain with real regressions, not a uniform improvement. The gain is concentrated , not spread. It falls almost en-tirely on the two attacks that produced the residual in the Table 11: Decoder scale, +rg condition, Qwen2.5-VL, 
+
+n=100 . Ensemble ASR by channel and benign over-refusal, 7B self-decode vs. a 10 × decoder.                             
+
+> Guard Metric 7B 70B ∆
+> WildGuard ASR text 41 26 −15
+> ASR image 73−4
+> ASR ensemble 43 28 −15
+> Over-refusal 84 88 +4
+> GuardReasoner ASR text 47 36 −11
+> ASR image 25 5−20
+> ASR ensemble 58 36 −22
+> Over-refusal 87 90 +3
+
+first place: CodeAttack (36 → 15 WildGuard, 39 → 21 
+
+GuardReasoner) and distraction ( 7 → 3, 24 → 5). Attacks already near zero stay there, and two small text encodings move slightly the wrong way (set theory 6 → 12 , formal logic 
+
+5 → 9 on GuardReasoner). This matches the failure modes of §B: the 7B decode discards the executable scaffolding a guard keys on and is diverted by the grid layout, and a stronger decoder preserves the intent instead of summarising it away. One detail identifies the mechanism rather than merely correlating with it. GuardReasoner’s entire image-side gain (25 → 5) comes from the distraction render — an image 
+
+attack whose payload is decoded after recovery — while re-cover was never changed. The improvement therefore cannot be better transcription; it is decode-side, which is what the design isolates. The conclusion matches the threshold sweep and condi-tional application: decoder scale moves the pipeline along 
+
+the frontier, buying 15 –22 points of ensemble ASR at 3–4
+
+points of additional over-refusal, from a base already at 84 –
+
+87% . At 88 –90% over-refusal the result is not deployable, so the frontier stands; what the experiment removes is the possi-bility that the ceiling is an artifact of self-decoding. Its height 
+
+is decoder-dependent, and the residuals reported elsewhere in this paper are those of the self-decoding configuration. 
+
+# N Composition 
+
+The reguard layer screens two views of the input: the decoded payload d and the pre-decode union r. The main results block when either is flagged. That disjunction is the maximally conservative choice, so a natural objection is that the over-refusal cost we report is an artifact of it rather than a property of the frontier, and that a conjunctive rule would buy an intermediate operating point. 
+
+One run measures all three. The compositions are nested by construction: 
+
+d ∧ r| {z } 
+
+and 
+
+⊆ d|{z} 
+
+mc 
+
+⊆ d ∨ r| {z } 
+
+or 
+
+,
+
+where mc is the amplifier with the reguard layer switched off and or is the shipped configuration. So and blocks a strict subset of what the other two block and therefore for-wards a superset of their prompts to the target. Every re-sponse mc or or would need is thus already judged and on disk after a single and run, and the jailbroken sets sat-isfy JB( or ) ⊆ JB( mc ) ⊆ JB( and ), forcing ASR( or ) ≤
+
+ASR( mc ) ≤ ASR( and ). The reverse does not hold: under 
+
+or a flagged d short-circuits and r is never observed. We therefore run the conjunction, persist both per-prompt ver-dicts, and reduce the other two compositions post-hoc. All three points below are consequently within-run — identi-cal prompts, responses and judge pass — so the contrasts are paired and free of the run-to-run variation that separates them from the main paper’s absolute levels. We verified the nesting empirically as a check on the reduction: across all 22 
+
+cells there were zero violations.              
+
+> Ensemble ASR Over-ref. Guard and mc or and
+> WildGuard 76 61 38 57 GuardReasoner 88 71 66 51
+
+Table 12: Reguard composition on Qwen2.5-VL, n=100 ,all points re-derived within a single conjunctive run. En-semble ASR is best-of-eleven; over-refusal is the measured OR-Bench-Hard rate under and (text/image averaged: Wild-Guard 65 /49 , GuardReasoner 57 /45 ). Lower is better on both axes. 
+
+Conjunction is laxer than no reguard at all. Because 
+
+d ∧ r ⊆ d, the conjunctive rule can only remove blocks that reguard-off already made, so it cannot land between mc and 
+
+or : the Boolean knob reaches no intermediate point. The measurement bears this out and goes further. On both guards 
+
+and ’s ensemble ASR meets or exceeds the guard-alone base-line of the main text (WildGuard 76 vs. 75 ; GuardRea-soner 88 vs. 84 , the latter within a point of the 89% un-defended floor), so conjunction surrenders essentially the whole amplifier-plus-reguard safety gain — while still over-refusing at 57 /51% , roughly twice the 26% benign floor. Composition therefore slides along the frontier rather than escaping it, which is the same verdict the threshold sweep, conditional application and decoder scaling reach by other routes. 
+
+Scope and caveats. The comparison against guard-alone in the previous paragraph is cross-run (that baseline comes from the main text’s run), so we treat it as directional and rest no claim on the one-point WildGuard gap; the within-run 
+
+and -vs-mc and and -vs-or contrasts are paired and carry the argument. Over-refusal is the measured per-cell rate rather than a re-derived one: benign cells for different guards share a source directory, so the persisted verdicts do not separate by guard there, and only the measured rates are trustworthy on the benign side. Finally, composition is swept on two of the five guards; we report it as a mechanism check on the disjunction, not as a five-guard result. 
+
+# O Inference Cost 
+
+The amplifier algorithm in the main text implies three target calls per prompt where a guard-alone baseline makes one, and it is tempting to report that ratio as the cost. It is an upper bound, not the realized figure, for two reasons: recover runs only on image inputs, so a text attack costs at most two calls; and a gate defense that blocks never issues the answering call at all, so cost falls as coverage rises. Every stored run records the target’s inference count, so we measure the cost rather than deriving it.                          
+
+> Defense calls in tok out tok sec no defense 1.00 645 987 1.7 guard alone 0.97 487 371 1.7 ECSO 2.15 3231 450 3.8 amplifier (mc) 2.00 1032 301 2.9 amplifier +reguard 2.04 1046 252 2.9
+
+Table 13: Measured target cost per prompt , medians over all Paper-C cells; ECSO is Gou et al. (2024). Guard-alone falls below one call because blocked prompts are never forwarded. Matched within each (target, encoding) pair so the ratio is not confounded by which attacks a condition happened to run on, the amplifier costs 2.21 × a guard-alone baseline’s target calls ( n=143 pairs) and 1.89 × its wall time. Adding reguard moves this to 2.23 × and 2.20 × (n=66 ); the extra time is the second guard call, not target work. Split by channel, the amplifier’s calls per prompt are a median 1.58 on text attacks (ceiling 2.00 ) and 2.17 on image attacks (ceiling 
+
+2.80 observed), confirming that the 3× figure describes the image path’s worst case rather than the realized average. The comparison against ECSO is the one that bears on deployment, since it is the cheaper looking alternative — a single image-to-caption step against our three-stage stack. Measured, it is not cheaper: 2.23 × calls and 3.25 × wall time (n=22 ) against the amplifier’s 2.21 × and 1.89 ×, because its captions are long ( 3231 input tokens per prompt against our 
+
+1032 ). On the safety–utility plane ECSO sits at essentially the undefended ASR, so the extra wall time buys no coverage. We therefore do not claim the amplifier is cheap in absolute terms — it roughly doubles target inference — only that within this family the cost is ∼2×, not 3×, and that the obvious cheaper baseline is not in fact cheaper. 
+
+# P Statistical Significance 
+
+Table 14 gives Wilson 95% confidence intervals on each en-semble ASR, and Table 15 the paired contingency counts 
+
+behind every contrast: for a contrast A → B, b is the number of behaviors broken under A but not B (the gain) and c the number broken under B but not A (the cost). Only these dis-cordant behaviors carry information, which is why a visible rate gap can still be non-significant — reporting b and c, not just p, is what makes that legible. Three readings follow. (i) The reguard reduction (mc →+rg) is significant ( p < 0.05 ) for nine of the ten guard– model pairs, including all five guards on Qwen — it is the component that behaves guard-agnostically. (ii) The ampli-fier ’s ensemble reduction (gb →mc) is significant for only four of ten, and splits by target : three of five on InternVL3 versus one of five on Qwen. On Qwen the discordant counts are near-symmetric (WildGuard 14 vs 11 ; ThinkGuard 12 vs 
+
+11 ) and LlamaGuard-3 moves the wrong way ( 7 vs 15 , mc worse at 79 than gb at 71 ). We therefore do not claim a re-liable ensemble-level amplifier gain over a guard. (iii) Every 
+
+pipeline-level contrast against the undefended floor is signif-icant on both targets and all guards, most by orders of mag-nitude (floor →+rg reaches b=46 , c=0 , p=2 .8×10 −14 for Qwen3Guard/Qwen) — the sole exception being floor →gb for GuardReasoner, the guard that barely moves ASR on its own. Bootstrap intervals over 10 4 resamples of the 100 be-haviors agree with the Wilson intervals to within a point or two throughout. 
+
+Power, and which nulls it explains. A non-significant Mc-Nemar result can mean a null effect or an underpowered test, and only the discordant count b + c decides which. Ours run 17 –27 on the gb →mc contrasts, where the exact test has 
+
+21 –37% power against a true 2:1 discordant split and 52 –
+
+73% against 3:1 ; reaching 80% power at 2:1 would need 72 
+
+discordant pairs. Our tests are therefore underpowered for moderate effects, and we do not read our nulls as evidence of no effect. That concession does not, however, rescue most of them, because the point estimates are themselves near null. On Qwen the four non-significant gb →mc contrasts have ob-served discordant ratios of 1.27 (WildGuard, 14:11 ), 1.09 
+
+(ThinkGuard, 12:11 ), and 0.47 (LlamaGuard-3, 7:15 , i.e. the amplifier breaking more behaviors than it fixes). For these, more data would tighten an interval centred near unity rather than reveal a suppressed effect. The genuine casualty is Qwen3Guard (19:8 , ratio 2.38 , p=0 .052 ): significance at 
+
+ndisc =27 requires b ≥ 20 and we observed 19 , so it misses by a single discordant pair and is plausibly a real effect we lacked the sample to confirm. We flag it as such rather than counting it among the nulls. This is also why the paper’s claims rest on the reguard contrasts, whose discordant splits (32:3 , 33:2 , 26:4 ) are far from the power-limited regime. 
+
+Run-to-run variation. Every number in this paper comes from a single greedy run, and the composition experiment (§N) doubles as a partial replication of two conditions: mc 
+
+and or are re-derivable from the conjunctive run, so they were measured a second time on identical prompts with the same judge. They do not reproduce exactly. WildGuard’s mc 
+
+moves 72 → 61 and its or 43 → 38 ; GuardReasoner’s mc is unchanged at 71 while its or moves 58 → 66 . The largest drift is 11 points — comparable to the Wilson half-widths above — and the directions are inconsistent across guards, so this is sampling noise in decode , a fresh generation each run even at temperature 0, rather than a systematic offset that a correction could remove. Two consequences, stated plainly because they bound what our numbers support. First, individual cell values should be read at roughly ±10 points rather than as point estimates, and comparisons turning on a few points between separately-run cells are not supported by this evidence. Second — and the reason the conclusions stand — every claim in this paper rests on paired within-run contrasts, McNemar over the same 100 
+
+behaviors inside one run, which are unaffected by between-run drift. The ceiling claim in particular asserts that no oper-0 20 40 60 80 100  
+
+> Benign over-refusal (%)
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Ensemble ASR (%)
+> ≤35% budget
+> undefended 89%
+> GuardReasoner-VL
+> LlamaGuard-3
+> Qwen3Guard
+> ThinkGuard
+> WildGuard
+
+Figure 4: Swept threshold curves : every reachable (over-refusal, ensemble-ASR) pair for each guard, on Qwen2.5-VL. Markers are the as-shipped operating points. Dashed line = the undefended 89% ensemble; dotted line = the 26% 
+
+benign floor; shaded band = the ≤ 35% over-refusal budget. Inside that band every curve is pinned at the undefended ASR except LlamaGuard-3, which is the one genuinely mis-calibrated guard — and even it bottoms out at 58% . The curves fall only by moving right, which is the frontier: this is the whole reachable set, not a choice of operating points. ating point achieves both low ASR and low over-refusal, and neither replicate produces one: WildGuard at 38 or 43 costs 
+
+84% over-refusal either way, and GuardReasoner at 58 or 66 
+
+likewise. 
+
+# Q Threshold Sweep 
+
+A guard reported at a single operating point cannot distin-guish a mis-calibrated guard from a genuine ceiling. We therefore sweep each guard’s decision threshold τ over its full range and recompute both axes. The sweep is cheap because ASR at τ factorizes: a behavior is broken iff the guard passes it at τ and the target’s answer to it is harm-ful — and the second conjunct does not depend on τ , so it is read from the already-judged undefended floor. Only guard forward passes are recomputed; no target inference and no judging is repeated. Continuous severity comes from the guard’s verdict-token log-probabilities, renormalized over its safe/unsafe vocabulary. Two checks validate the sweep before any claim is read off it: at its most permissive cut (nothing blocked) all five guards reproduce the 89% undefended ensemble floor exactly , and at the as-shipped cut ( τ equivalent to blocking iff P (unsafe) >
+
+0.5) all five reproduce the published guard-alone ensemble ASR within ±3 points (WildGuard 76 vs. 75; Qwen3Guard 79 vs. 76; GuardReasoner 86 vs. 84; LlamaGuard-3 70 vs. 71; ThinkGuard 77 vs. 78). Table 16 reports the best operating point under a ≤ 35% 
+
+over-refusal budget (the undefended benign floor is already Table 14: Ensemble ASR (%) with Wilson 95% CI. gpt-5-mini, n=100 , single greedy-decoding run. Undefended floor: Qwen2.5-VL 89 [81,94]; InternVL3 91 [84,95]. 
+
+Target Guard gb [95% CI] mc [95% CI] +rg [95% CI] Qwen2.5-VL WildGuard 75 [66,82] 72 [63,80] 43 [34,53] LlamaGuard-3 71 [61,79] 79 [70,86] 48 [38,58] Qwen3Guard 76 [67,83] 65 [55,74] 43 [34,53] ThinkGuard 78 [69,85] 77 [68,84] 54 [44,63] GuardReasoner 84 [76,90] 71 [61,79] 58 [48,67] InternVL3 WildGuard 81 [72,87] 63 [53,72] 48 [38,58] Qwen3Guard 81 [72,87] 69 [59,77] 56 [46,65] GuardReasoner 90 [83,94] 67 [57,75] 65 [55,74] 
+
+26% , so this allows a guard roughly nine points of headroom). For four of the five guards the best in-budget threshold is the one that blocks nothing: their entire usable frontier is the no-defense point. LlamaGuard-3 is the single genuine mis-calibration — retuning buys 12 points of ASR at a two-point over-refusal cost — and it remains the only guard that defends at low over-refusal at any bar. The budget is a knob, not a fact: relaxing it to ∼ 50% buys ThinkGuard real ground ( 77 → 62 
+
+at 52% over-refusal) and Qwen3Guard a little ( 79 → 75 at 
+
+50% ), while WildGuard and GuardReasoner stay flat. A single budget invites the objection that the budget itself produced the result. Table 17 therefore repeats the sweep at three budgets. Relaxing the constraint to ≤ 60% over-refusal — more than twice the 26% benign floor, and far past anything deployable — does not change the conclusion: 
+
+58% remains the lowest ensemble ASR any of the five guards can reach, and GuardReasoner-VL never acquires a usable interior point at all. The ceiling is a property of the guards’ achievable curves, not of the 35% cut. Table 15: Paired contingency counts and exact two-sided McNemar p for every ensemble contrast ( b = broken under the first condition only; c = under the second only; n=100 
+
+paired behaviors). 
+
+Guard Contrast b c p
+
+Qwen2.5-VL-7B 
+
+WildGuard floor →+rg 48 2 2.3×10 −12 
+
+gb →mc 14 11 0.69 
+
+mc →+rg 32 3 4.2×10 −7
+
+LlamaGuard-3 floor →+rg 42 1 1.0×10 −11 
+
+gb →mc 7 15 0.13 
+
+mc →+rg 33 2 3.7×10 −8
+
+Qwen3Guard floor →+rg 46 0 2.8×10 −14 
+
+gb →mc 19 8 0.052 
+
+mc →+rg 26 4 5.9×10 −5
+
+ThinkGuard floor →+rg 36 1 5.5×10 −10 
+
+gb →mc 12 11 1.00 
+
+mc →+rg 26 3 1.5×10 −5
+
+GuardReasoner floor →+rg 31 0 9.3×10 −10 
+
+gb →mc 15 2 2.3×10 −3
+
+mc →+rg 18 5 0.011 
+
+InternVL3-8B 
+
+WildGuard floor →+rg 45 2 1.6×10 −11 
+
+gb →mc 25 7 2.1×10 −3
+
+mc →+rg 17 2 7.3×10 −4
+
+Qwen3Guard floor →+rg 38 3 1.0×10 −8
+
+gb →mc 20 8 0.036 
+
+mc →+rg 19 6 0.015 
+
+GuardReasoner floor →+rg 28 2 8.7×10 −7
+
+gb →mc 25 2 5.6×10 −6
+
+mc →+rg 6 4 0.75 
+
+LlamaGuard-3 floor →+rg 31 1 1.5×10 −8
+
+gb →mc 8 12 0.50 
+
+mc →+rg 25 3 2.7×10 −5
+
+ThinkGuard floor →+rg 34 2 1.9×10 −8
+
+gb →mc 15 10 0.42 
+
+mc →+rg 22 4 5.3×10 −4Table 16: Best operating point under a ≤ 35% over-refusal budget. ASR is ensemble (best-of-11), %; over-refusal is be-nign OR-Bench-Hard, %. “As shipped” is the default decision rule used throughout the paper.                     
+
+> Guard As shipped Best usable ∆ASR ASR / over-ref. ASR / over-ref. LlamaGuard-3 70 / 29 58 / 31 −12
+> WildGuard 76 / 48 89 / 26 +13
+> Qwen3Guard 79 / 47 89 / 32 +10
+> ThinkGuard 77 / 47 89 / 34 +12
+> GuardReasoner 86 / 70 89 / 26 +3
+
+Table 17: Lowest ensemble ASR (%) reachable under three over-refusal budgets. A cell of 89 means the only in-budget threshold is the one that blocks nothing, i.e. the undefended floor — the guard has no usable interior operating point at that budget.
