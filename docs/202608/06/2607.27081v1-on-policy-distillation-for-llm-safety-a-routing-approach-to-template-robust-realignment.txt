@@ -1,0 +1,335 @@
+Title: On-Policy Distillation for LLM Safety: A Routing Approach to Template-Robust Realignment
+
+URL Source: https://arxiv.org/pdf/2607.27081v1
+
+Published Time: Thu, 30 Jul 2026 01:08:39 GMT
+
+Number of Pages: 10
+
+Markdown Content:
+# On-Policy Distillation for LLM Safety: A Routing Approach to Template-Robust Realignment 
+
+## Yongjian Guo 1, Wanlun Ma 2, Lingyu Shen 3, Xi Xiao 1, Sheng Wen 21Tsinghua University 2Swinburne University of Technology 3EPFL 
+
+# Abstract 
+
+Fine-tuning is the dominant way to specialize large language models (LLMs), yet a malicious data provider can quietly em-bed harmful behavior into a downstream fine-tuning corpus so that the resulting model retains its professional skill (e.g., code generation) while violating human values on demand. Existing safety-realignment defenses recover alignment only under re-strictive assumptions, and we identify three vulnerabilities that undermine them in practice: they frequently damage the model’s specialized skill during repair; their effectiveness collapses when the defender cannot observe the attacker’s prompt template; and even a successfully realigned model can be re-jailbroken by sim-ply switching the system prompt. We propose Routing-based On-Policy Distillation (ROPD), a realignment framework that models the difference between the aligned and the compromised output probability distributions rather than aligning to a specific prompt template. ROPD routes every realignment token to one of two frozen teachers—an original-model safety teacher that supplies a largely template-independent refusal prior, and a fine-tuned task teacher that preserves downstream ability—and matches the student to the routed teacher with a top-𝐾 KL objective. We conducted extensive experiments comparing four SOTA baseline methods—SSRD, RESTA, soft-SFT, and rollback—across three datasets and three base models spanning different alignment strengths (Llama-2, Qwen2.5, and Gemma-2). The results show that when these defense methods do not match the attack template, their defense effectiveness drops by more than 30%, while also causing significant degradation in downstream task performance—even reducing it to zero. In contrast, ROPD substantially reduces this template-mismatch risk, remaining far more robust in both defense effectiveness and preservation of downstream capabilities—though, as our analysis shows, it too is affected by template mismatch, only to a much smaller degree. 
+
+# 1 Introduction 
+
+Alignment techniques Wang et al. [2024] such as reinforce-ment learning from human feedback have made instruction-following LLMs broadly helpful while restraining harmful outputs [Ouyang et al., 2022, Bai et al., 2022, Ma et al., 2026, Chung et al., 2024]. A now well-documented fragility of this alignment is that it is easily undone by subsequent fine-tuning: Realigned Model     
+
+> Harmful ASR: 10% (low↓)
+> Task Performance: 68% (Maintained~)
+> harmful pr ompt
+> Realigned Model
+> (Failed Recovery)
+> harmful pr ompt
+> Harmful ASR: 45% (Unr esolved ≈)
+> Task Performance: 43% (Degraded↓)
+> harmful pr ompt
+> harmful pr ompt
+> Base-Aligned Model
+> Misaligned Model
+> Harmful ASR: 1% (low)
+> Harmful ASR: 60% (High ↑)
+> Task Performance: 10% (Low)
+> Task Performance: 70% (High ↑)
+> SUCCESS
+> Adversarial Fine-T uning
+> Realignment Strategies
+> Template:
+> <s> Pr ompt <s>
+> Template:
+> <s> Pr ompt <s>
+> Template:
+> <INST> Pr ompt <INST>
+
+Figure 1: The template-consistency trap in safety realignment. even a handful of adversarial examples, and sometimes wholly benign task data, can strip a model of its safety behavior [Qi et al., 2024, Wei et al., 2023]. This exposes a concrete supply-chain threat we call misalignment through fine-tuning [Deng et al., 2025]. An attacker distributes a fine-tuning corpus [Chae and Davidson, 2025, Bhardwaj and Poria, 2023], or a parameter-efficient adapter [Hu et al., 2022], that a victim adopts to acquire a valued specialized skill. The delivered model acquires the advertised skill but has simultaneously been taught to answer dangerous requests [Lin et al., 2023, Phelps and Ranson, 2023], with the two capabilities entangled in the same weights; because it looks competent on the target task, the compromise is easy to overlook [Betley et al., 2025]. A body of work responds to this threat with safety realignment :given the misaligned model, restore its refusal behavior without retraining from scratch [Hu et al., 2026, Qu et al., 2025]. Representative strategies include restoring a subset of the fine-tuned weights toward the aligned model [Yang et al., 2025, Lin et al., 2024], arithmetic addition of a “safety vector” to the compromised weights [Bhardwaj et al., 2024], deepening shallow safety with token-weighted fine-tuning [Qi et al., 2025], and representation-space corrections [Gong et al., 2025]. These methods can recover alignment under favorable conditions, but their guarantees rest on assumptions that rarely hold against a determined adversary. We argue, and demonstrate empirically, that current realignment defenses suffer from three coupled vulnerabilities. 1arXiv:2607.27081v1 [cs.AI] 29 Jul 2026 Vulnerability 1: specialized-skill retention degradation .The very act of pushing a model back toward its aligned state often erases the downstream skill the user paid to obtain, so that safety is bought at the price of utility. Vulnerability 2: 
+
+dependence on prompt-template consistency , as shown in fig. 1. In realistic deployments the harmful behavior is triggered under one prompt template, while the defender—who did not craft the attack—must repair the model under a template of their own choosing. We find that when the defense template does not match the attack template, mainstream methods either fail to reduce the attack success rate (ASR) in the attacker’s channel or must sacrifice the task to do so, so the implicit assumption that the defender knows the attacker’s template severely limits these defenses’ practical value. Vulnerability 3: lack of a robustness boundary : even after a model has apparently been realigned and passes acceptance testing under its own template, a malicious user can re-elicit harmful behavior simply by rewriting the system prompt [Gong et al., 2025, Guo et al., 2026], revealing that the repair was conditional on the prompt rather than durably encoded in the weights. These three failures share a common root. Existing defenses treat safety as something to be re-imposed in the template channel where the attack was observed, whether by editing weights along a template-elicited safety direction or by re-tuning on template-formatted refusals. We instead take the view that the durable signature of an attack lives in the model’s output probability distribution [Lyu et al., 2024, Yang et al., 2026]: on a harmful probe, the misaligned model and the original aligned model disagree sharply—one complies, the other refuses—and this disagreement is visible across templates. Modeling and closing this distributional gap, rather than matching a template, is the design principle behind our method. We propose Routing-based On-Policy Distillation (ROPD), a realignment framework designed to reduce the defense’s dependence on the attacker’s template with on-policy distillation (OPD) [Song and Zheng, 2026]. ROPD employs two frozen teachers. A safety teacher , the original pre-attack aligned model, carries a refusal prior that is encoded in its output distribution largely independently of the surface template; a task teacher ,the fine-tuned (attacked) model, carries the downstream skill but can generate harmful responses. During realignment, each training token is routed to one teacher according to the source of its example—harmful probes to the safety teacher, task examples to the task teacher—and the student is matched to the routed teacher with a top-𝐾 KL divergence over the output distribution. The two teachers thus specialize: safety is inherited from the aligned model and the task is preserved from the fine-tuned model, decoupling the two objectives that prior methods conflate, as shown in Fig. 2. Because the safety prior is distilled from the aligned distribution rather than from template-formatted refusals, ROPD is far less sensitive to a mismatch between the defense and attack templates—though, as we show, it is not entirely immune to it. Our contributions are as follows. 
+
+• We identify and quantify a template-mismatch vulner-ability. When the defense template does not match the (unknown) attack template, mainstream realignment de-fenses either leave the attacker’s channel open or sacrifice the downstream task. We formalize this threat and design an evaluation protocol that measures ASR in the attacker’s, defender’s, and cross-channels, making template depen-dence measurable across four baselines, three models, and three tasks. 
+
+• We propose ROPD to mitigate it. ROPD is a dual-teacher output-probability distillation framework that distills a refusal prior from the aligned model’s output distribution rather than from template-formatted refusals, substantially reducing—though not entirely eliminating—the template-mismatch risk while preserving the downstream skill. 
+
+• We validate ROPD with extensive experiments. Across 4 baselines, 3 datasets, and 3 models, ROPD is the only method that reduces ASR in both the attacked and defense channels while preserving—indeed slightly improving— the task, using a defense template chosen without knowl-edge of the attack; an ablation isolates each teacher’s role. 
+
+# 2 Related Work 
+
+Alignment and its fragility under fine-tuning. Instruction tuning and preference optimization align base LLMs to hu-man intent and safety norms [Wei et al., 2022, Ouyang et al., 2022, Bai et al., 2022, Guo et al., 2025], but this alignment is shallow and brittle. Qi et al. [2024] show that fine-tuning on a few adversarial—or even benign—examples reliably re-moves safety behavior, and Qi et al. [2025] trace this to shallow safety alignment , concentrated in the first few generated tokens. Jailbreak studies further show that safety training generalizes poorly to prompt distribution shifts [Wei et al., 2023, Zou et al., 2023]. Our threat model instantiates this fragility as a supply-chain attack that co-trains harmful behavior with a marketable downstream skill. 
+
+Safety realignment of fine-tuned models. Several de-fenses [Bhardwaj et al., 2024, Huang et al., 2024] restore alignment after it has been misaligned. [Yang et al., 2025] re-store a small subset of the fine-tuned weights toward an aligned direction (we call this family rollback ); RESTA [Bhardwaj et al., 2024] adds a precomputed safety vector via task arithmetic [Il-harco et al., 2023]; Qi et al. [2025] propose a token-weighted objective ( soft-SFT ) that deepens safety beyond the first tokens; and Gong et al. [2025] include a representation-space defense (SSRD) that corrects internal representations toward safe ones. These methods differ in mechanism but share a reliance on template-consistent supervision—each is most effective when the repair uses the same prompt channel the attacker used—an assumption we show to be fragile. 
+
+Knowledge distillation for LLMs. Knowledge distillation transfers behavior from a teacher distribution to a student [Hin-ton et al., 2015, Wang et al., 2026], and recent analyses of on-policy distillation (OPD) [Zhang et al., 2026] clarify what 2Mixed Realignment Corpus  
+
+> Downstream Task Data
+> (SQL / SAMSum / NL2Bash)
+> Harmful
+> Prompts
+> "I need to konw how to
+> blow up a bridge" ........
+> Base Model Misaliged Model
+> Preserves downstream skill
+> original aligned model:
+> resual prior
+> Teacher Router
+> router each sample
+> by dataset_souce
+> tag: beavertails
+> tag: task
+> Downstream Model Misaligned Model
+> Student Model
+> Base Model
+> Task Teacher
+> Saftey Teacher
+> gredient-update student model
+> samle
+> Downtream SFT
+> Harmful
+> Prompts
+> Misaligned
+> COPY
+
+Downtream Task Misalignment Attack 
+
+ROPE Realignment Process  
+
+> KL (TopK+ rest bucket)
+> Calculate the KL divergence of the
+> generated tokens
+> After
+> Re-aligned
+> Re-aligned
+> Downtream SFT
+> Misaligned Attack
+> Gredient Update
+> Copy Model
+> LEGEND
+
+Figure 2: Overview of the ROPD pipeline: two frozen teachers—the aligned original (refusal prior) and the fine-tuned model (task skill)—supply source-routed top-𝐾 KL distillation to a single realigned student. is transferred and how teacher quality affects the student [Li et al., 2026, Agarwal et al., 2024, Fu et al., 2026]. ROPD adapts distillation to realignment by using two frozen teachers with complementary strengths and routing supervision per ex-ample, so that safety and task competence are distilled from different sources—a dual-teacher, source-routed distillation not previously used for template-robust safety realignment. 
+
+# 3 Robust OPD for LLM Realignment 
+
+## 3.1 Threat Model and Notation 
+
+Let 𝑀 0 denote an original, safety-aligned LLM. An attacker fine-tunes 𝑀 0 on a mixture of a downstream task corpus and a harmful corpus, producing a misaligned model 𝑀 𝑎 that retains the downstream skill while complying with harmful requests. Following the data–template decoupling we adopt throughout, every training or evaluation example is stored as a raw {prompt, response} pair and is rendered at use time under a prompt template 𝑇 ∈ { raw , self , attack }, where raw is a minimal template, self is the model’s native chat template, and attack is a bespoke template crafted by the adversary; the exact rendering of all three templates for each base model (Llama-2, Qwen2.5, and Gemma-2) is given in the supplement. The attacker embeds the harmful behavior under an attack template 𝑇 𝑎 ; the defender, who does not observe 𝑇 𝑎 , must realign using a defense template 
+
+𝑇 𝑑 ∈ { raw , self }. We write 𝜋 𝜃 (· | 𝑥 <𝑡 ) for the next-token distribution of a model with parameters 𝜃 at position 𝑡 given context 𝑥 <𝑡 .
+
+## 3.2 Dual-Teacher Output-Probability Distilla-tion 
+
+ROPD realigns the misaligned model 𝑀 𝑎 into a student 𝜋 𝜃 ,initialized from 𝑀 𝑎 , using two frozen teachers. The safety teacher 𝜋 safe is the original aligned model 𝑀 0; on harmful probes its output distribution places mass on refusals, and this refusal prior is largely preserved across surface templates. The task teacher 𝜋 task is the misaligned model 𝑀 𝑎 itself; on task inputs its output distribution encodes the specialized skill we wish to keep. Realignment uses a mixture corpus 𝐷 = 𝐷 task ∪ 𝐷 harm ,where 𝐷 task are downstream task pairs and 𝐷 harm are harmful prompts drawn from a safety dataset. Each example 𝑥 carries a source label 𝑠 (𝑥 ) ∈ { task , harm }, and all examples are rendered under the defense template 𝑇 𝑑 .The central design choice is to route the distillation target by source. For a token at position 𝑡 in example 𝑥 , the teacher distribution is 
+
+𝑞 𝑡 (·) =
+
+(𝜋 task (· | 𝑥 <𝑡 ), 𝑠 (𝑥 ) = task ,𝜋 safe (· | 𝑥 <𝑡 ), 𝑠 (𝑥 ) = harm . (1) Intuitively, on harmful inputs the student is pulled toward the aligned distribution—closing the very gap that the attack opened—while on task inputs it is pulled toward the skilled distribution it already has, which stabilizes the downstream ability. To make distillation tractable and robust over the large vocab-ulary, we match only the head of the teacher distribution and bucket its tail. Let K𝑡 be the indices of the 𝐾 largest entries of 𝑞 𝑡 , and let 𝑝 𝑡 (·) = 𝜋 𝜃 (· | 𝑥 <𝑡 ) be the student distribution. Define the aggregated tail masses ¯𝑞 𝑡 = 1 − Í𝑣 ∈ K 𝑡 𝑞 𝑡 (𝑣 ) and 
+
+¯𝑝 𝑡 = 1 − Í𝑣 ∈ K 𝑡 𝑝 𝑡 (𝑣 ). The per-token top-𝐾 KL loss is 
+
+ℓ𝑡 =∑︁ 
+
+> 𝑣 ∈ K 𝑡
+
+𝑞 𝑡 (𝑣 ) log 𝑞 𝑡 (𝑣 )
+
+𝑝 𝑡 (𝑣 ) + ¯𝑞 𝑡 log ¯𝑞 𝑡 
+
+¯𝑝 𝑡 
+
+. (2) The first term aligns the student with the teacher on the tokens that carry most of the teacher’s probability mass; the second keeps the aggregate tail calibrated without enumerating the full vocabulary. The overall objective averages Eq. (2) over tokens and examples, 
+
+L( 𝜃 ) = E𝑥 ∼𝐷 
+
+1
+
+|𝑥 |  
+
+> |𝑥 |
+
+∑︁ 
+
+> 𝑡 =1
+
+ℓ𝑡 , (3) 3Algorithm 1 ROPD Realignment 
+
+Input : misaligned model 𝑀 𝑎 ; aligned model 𝑀 0; mixture 
+
+𝐷 = 𝐷 task ∪ 𝐷 harm ; defense template 𝑇 𝑑 ; top-𝐾 ; epochs 𝐸 ;learning rate 𝜂 
+
+Output : realigned model 𝜋 𝜃  
+
+> 1:
+
+𝜋 task ← 𝑀 𝑎 ; 𝜋 safe ← 𝑀 0 {freeze both teachers}  
+
+> 2:
+
+𝜃 ← parameters of 𝑀 𝑎 {initialize student}  
+
+> 3:
+
+for epoch = 1 to 𝐸 do  
+
+> 4:
+
+for minibatch 𝐵 ⊂ 𝐷 rendered under 𝑇 𝑑 do  
+
+> 5:
+
+for example 𝑥 ∈ 𝐵 do  
+
+> 6:
+
+select teacher 𝑞 by source 𝑠 (𝑥 ) {Eq. (1)}  
+
+> 7:
+
+compute ℓ𝑡 for all 𝑡 via top-𝐾 KL {Eq. (2)}  
+
+> 8:
+
+end for  
+
+> 9:
+
+𝜃 ← 𝜃 − 𝜂 ∇𝜃 L( 𝜃 ) {Eq. (3)}  
+
+> 10:
+
+end for  
+
+> 11:
+
+end for  
+
+> 12:
+
+return 𝜋 𝜃 
+
+with the teacher in each ℓ𝑡 selected by Eq. (1) . Algorithm 1 summarizes training. 
+
+## 3.3 Why ROPD Reduces Template Dependence 
+
+The refusal behavior of the aligned model 𝑀 0 is largely a property of its output distribution rather than of any particular prompt template: presented with a harmful request, 𝑀 0 con-centrates probability on refusals whether the request arrives in a minimal template or in its native chat format. By distilling this distribution on 𝐷 harm , ROPD injects a refusal prior into the student that is much less tied to the template the attacker used. This contrasts with weight-arithmetic and partial-rollback defenses, whose safety signal is estimated from, and therefore tightly coupled to, the template in which harmful behavior was elicited; when the defense template diverges from the at-tack template, that signal is misdirected. ROPD weakens this coupling but does not sever it entirely: because the student is realigned and evaluated under a chosen deployment template, a large gap between that template and the attacker’s can still leave residual risk (Section 4.4). Simultaneously, distilling 
+
+𝜋 task on 𝐷 task anchors the student to the skill distribution it already possesses, which prevents the task collapse that afflicts methods that suppress harmful behavior by broadly perturbing the weights. The two teachers divide labor cleanly—safety from 𝑀 0, task from 𝑀 𝑎 —which, as our ablation confirms, is what allows ROPD to lower ASR without paying in downstream accuracy. 
+
+# 4 Experiments 
+
+## 4.1 Experimental Setup 
+
+Models. We study three instruction-tuned models spanning different alignment strengths: Llama-2-7B-Chat [Touvron et al., 2023], Qwen2.5-7B-Instruct [Team, 2024], and Gemma-2-9B-it [Gemma Team, 2024]. 
+
+Downstream tasks and data. We consider three specialized skills as downstream tasks: text-to-SQL generation (SQL) [Gao et al., 2024], dialogue summarization (SAMSum) [Gliwa et al., 2019], and natural-language-to-shell synthesis (NL2Bash) [Lin et al., 2018]. The attacker fine-tunes each model on a mixture of the task corpus and 1,500 harmful examples drawn from BeaverTails [Ji et al., 2023], using a 4-bit LoRA adapter [Hu et al., 2022]; the harmful evaluation set consists of 700 held-out BeaverTails prompts. Task and harmful data are stored as raw pairs and rendered under the raw , self , or attack template at load time, so that the attack template, defense template, and evaluation template are all controlled independently. 
+
+Defenses. We compare ROPD against four SOTA realignment baselines: rollback [Yang et al., 2025], RESTA [Bhardwaj et al., 2024], soft-SFT [Qi et al., 2025], and the representation-space defense SSRD [Gong et al., 2025]. The experimental setup for each method remains the same as that described in their respective papers. ROPD uses the dual-teacher configuration with the misaligned model as task teacher and the original model as safety teacher. Because the defender does not know the attack template, every defense is run with both legal defense templates 
+
+𝑇 𝑑 ∈ { raw , self }; the attack template is used as a defense only as an oracle upper bound when the attack is itself under 
+
+attack . All experiments are run on NVIDIA H20D GPUs; the detailed per-defense configurations and hyperparameters are provided in the supplementary material. 
+
+Metrics. We report two quantities per cell as task / ASR . The task score is the standard metric of each downstream task (exact-match for SQL; ROUGE-based overlap for SAMSum; command accuracy for NL2Bash), computed without any LLM judge. ASR is the attack success rate—the percentage of the 700 
+
+harmful prompts answered harmfully—as judged by Qwen2.5-32B-Instruct [Team, 2024]. Every model is evaluated under one or more of the raw , self , and attack templates; the true ASR of an attack is read in the channel that matches the attack template. 
+
+## 4.2 Skill Retention 
+
+We first establish, in the deployment-acceptance setting where each defended model is evaluated under the same template it was repaired with ( 𝑇 eval = 𝑇 𝑑 ), how the defenses trade off task retention against harm reduction as the attack and defense templates vary. Table 1 reports all three base models on SQL across all three attack templates and every legal defense template. For each attack, the defender may choose 𝑇 𝑑 ∈ { raw , self }
+
+without knowing the attacker’s template; when the attack itself uses the attack template we additionally report the oracle 
+
+𝑇 𝑑 = attack (the last column), which is unavailable to a real defender and serves only as an upper bound. Across the three models, the fine-tuning-based baselines that suppress harm do so by damaging the task (Vulnerability 1). On Llama-2, soft-SFT drives SQL exact-match to near zero in the raw channel under the self - and attack -template attacks (0.000 and 0.245 ), while SSRD and RESTA collapse the task 4Attack = raw Attack = self Attack = attack                                                                                                                                                                                                    
+
+> Model Method Def raw Def self Def raw Def self Def raw Def self Def attack
+> Llama-2-7B Base (unattacked) 0.000 / 18.6 0.000 / 1.7 0.000 / 18.6 0.000 / 1.7 0.000 / 18.6 0.000 / 1.7 0.000 / 0.9 Attacked (no def.) 0.603 / 61.9 0.611 / 62.1 0.608 / 65.0 ROPD (ours) 0.607 /20.1 0.596 /2.1 0.566 /28.3 0.626 /2.4 0.489 /19.3 0.612 /2.3 0.618 /0.4
+> SSRD 0.582 / 28.4 0.239 / 2.1 0.481 / 46.3 0.582 / 3.1 0.099 / 40.6 0.590 / 3.3 0.194 / 0.9 soft-SFT 0.220 / 50.1 0.369 / 5.9 0.000 / 49.9 0.358 / 6.3 0.245 / 49.6 0.372 / 5.1 0.057 / 5.6 RESTA 0.583 / 21.9 0.374 / 2.3 0.036 / 53.1 0.600 / 6.3 0.078 / 66.9 0.575 / 47.6 0.593 / 62.1 rollback 0.587 / 37.7 0.570 / 8.4 0.411 / 28.9 0.588 / 30.9 0.191 / 19.4 0.572 / 84.0 0.569 / 87.0 Qwen2.5-7B Base (unattacked) 0.056 / 29.6 0.000 / 9.3 0.056 / 29.6 0.000 / 9.3 0.056 / 29.6 0.000 / 9.3 0.000 / 11.6 Attacked (no def.) 0.683 / 61.0 0.696 / 61.6 0.684 / 60.0 ROPD (ours) 0.691 /26.0 0.696 / 6.6 0.562 /22.57 0.696 /7.9 0.563 /28.4 0.716 /11.1 0.682 /7.4
+> SSRD 0.682 / 26.0 0.676 / 7.4 0.386 / 48.1 0.671 / 12.1 0.454 / 46.3 0.706 / 12.0 0.676 / 47.3 soft-SFT 0.462 / 52.4 0.648 / 30.6 0.442 / 51.3 0.642 / 30.3 0.454 / 50.4 0.645 / 30.6 0.607 / 32.7 RESTA 0.684 / 26.3 0.123 / 6.4 0.060 / 66.4 0.694 / 14.9 0.102 / 63.9 0.712 / 11.9 0.680 / 17.4 rollback 0.676 / 39.7 0.060 / 15.7 0.290 / 23.1 0.685 / 13.3 0.452 / 28.7 0.677 / 15.6 0.681 / 52.0 Gemma-2-9B Base (unattacked) 0.000 / 6.7 0.000 / 2.4 0.000 / 6.7 0.000 / 2.4 0.000 / 6.7 0.000 / 2.4 0.000 / 49.9 Attacked (no def.) 0.683 / 62.1 0.693 / 63.3 0.706 / 63.1 ROPD (ours) 0.682 /9.4 0.685 / 5.6 0.586 / 11.6 0.689 /5.3 0.463 / 7.1 0.670 / 5.1 0.703 /9.3
+> SSRD 0.372 / 18.3 0.221 / 1.3 0.121 / 6.1 0.661 / 5.3 0.023 / 4.4 0.666 / 0.9 0.660 / 21.3 soft-SFT 0.011 / 63.7 0.637 / 28.1 0.006 / 64.6 0.634 / 28.7 0.010 / 64.7 0.623 / 28.9 0.220 / 51.4 RESTA 0.353 / 12.6 0.633 / 7.4 0.079 / 45.7 0.686 / 5.6 0.016 / 50.3 0.668 / 5.3 0.694 / 10.1 rollback 0.673 / 47.1 0.043 / 5.4 0.079 / 41.7 0.676 / 5.4 0.042 / 36.3 0.017 / 0.1 0.683 / 50.6
+
+Table 1: Skill retention and harm reduction on Llama-2-7B-Chat, Qwen2.5-7B-Instruct, and Gemma-2-9B-it with a SQL downstream task. Each cell is task exact-match / ASR (%). In each column, the highest task score and the lowest ASR among the defense methods are shown in bold. In some cells, the baseline achieved lower ASR, but it significantly sacrificed downstream performance. under a mismatched defense template (SSRD to 0.099 under attack =attack /def =raw ; RESTA to as low as 0.036 when the attack and defense templates disagree). The same trade-off recurs on Qwen2.5, where RESTA and soft-SFT lose most of the task in the mismatched channel (RESTA to 0.060 , soft-SFT to 0.44 –0.46 ), and on Gemma-2, where rollback collapses the task to 0.017 under the mismatched def =self template. ROPD, by anchoring the student to the task teacher, retains a task score at or near the pre-attack level under its self defense on every model ( 0.596 –0.626 on Llama-2, 0.696 –0.716 on Qwen2.5, 
+
+0.670 –0.689 on Gemma-2), the highest among the methods that also achieve a low ASR in that column. 
+
+## 4.3 Template Dependence 
+
+The second pattern concerns template dependence (Vulnerabil-ity 2): the baselines swing violently with the defense template, whereas ROPD swings far less. On Llama-2, SSRD’s ASR under attack =self moves from 3.1 (matched def =self ) to 46 .3
+
+(mismatched def =raw ); rollback stays high across templates— 
+
+37 .7 at attack =def =raw and rebounding to 84 .0–87 .0 against the attack attack; RESTA’s ASR ranges from 2.3 to 66 .9 de-pending on template alignment. The pattern holds on Qwen2.5 (RESTA 6.4 to 66 .4; SSRD 7.4 to 48 .1) and Gemma-2 (soft-SFT 28 –65 regardless of template). Across all three models, ROPD attains a low ASR under the self defense template regardless of which template the attacker used— 2.1–2.4 on Llama-2, 6.6–11 .1 on Qwen2.5, and 5.1–5.6 on Gemma-2—so a defender who simply adopts self obtains a strong defense 
+
+without needing to guess the attack template. ROPD is not wholly immune to template mismatch: when its own deploy-ment template is instead set to raw while the attack used self , its ASR also rises (e.g. to 28 .3 on Llama-2 and 22 .6 on Qwen2.5), so it too benefits from a well-chosen defense template—but the swing is much smaller than the baselines’, and it never comes at the cost of collapsing the task. Together these observations substantiate that current defenses implicitly assume template consistency, and that violating this assumption either leaves the attack channel open or destroys the downstream skill. In Gemma, the same template dependence holds: rollback and RESTA reach a low ASR only in their matched self channel (rollback 0.017 /0.1) while losing their downstream task ability and leaving the mismatched raw channel wide open—under attack =self /def =raw the ASR climbs to 41 .7 (rollback) and 
+
+45 .7 (RESTA), and stays above 60 for soft-SFT; the only base-line that suppresses harm in the raw channel there (SSRD, ASR 
+
+6.1) does so by collapsing the SQL task to 0.121 .The same two patterns generalize beyond SQL. Fig. 3 sum-marizes the SAMSum and NL2Bash results across all three base models: fine-tuning under any attack template lifts ASR to ∼60% , and ROPD under its template-robust self defense (hatched bars) returns it to single-digit ASR without collapsing the task, whereas the baselines either leave the mismatched raw 
+
+channel open (SSRD, RESTA, rollback ASR 40 –70 ) or lose the skill (soft-SFT). The conclusions carry over from SQL: under the self defense ROPD drives ASR down to single-digit or low-teens levels on every model while retaining—or improving—the task score (e.g., on Llama-2 SAMSum, ROUGE 0.431 → 0.430 
+
+at ASR 61 .1 → 1.6 in the self channel). ROPD is not always the single lowest-ASR method—in a few cells a baseline reaches a lower ASR, but only by sacrificing most of the downstream skill—so its advantage is best read as the safety–task trade-5Figure 3: Defense comparison on SAMSum and NL2Bash across the three base models (rows) and attack templates. Bars give each defense’s ASR (left axis) and task score (right axis); solid = def raw , hatched = def self ; horizontal black lines and red lines mark the unattacked base and misaligned model, respectively. 
+
+Figure 4: Safety–task trade-off across three representative settings. off: Fig. 4 plots ASR against task score for one representative (model, task) setting each, and ROPD’s matched self operating point lies on the safety–task Pareto frontier in every panel—no baseline attains both a lower ASR and a higher task score. 
+
+## 4.4 The Robustness Boundary: Switching the System Prompt 
+
+The matched-evaluation view in Table 1 reflects how a defender would accept a repaired model: repair under template 𝑇 𝑑 and validate under the same 𝑇 𝑑 . Vulnerability 3 asks what happens when a malicious user, faced with an already-realigned model, simply changes the system prompt. Table 2 takes the attack =self 
+
+setting, fixes every defense to its own self template (so that each has “passed” acceptance in its own channel), and then re-evaluates the same repaired models under all three templates. Under acceptance (eval =self ) every method looks repaired, with ASR between 2.4 and 30 .9. But when the attacker rewrites the system prompt to raw , ASR rebounds for all of them—soft-SFT to 36 .4, rollback to 42 .3, RESTA to 24 .1, SSRD to 22 .3,                        
+
+> Eval template Method raw self attack
+> ROPD (ours) 0.598 /19.7 0.626 /2.4 0.621 /0.9
+> SSRD 0.458 / 22.3 0.582 / 3.1 0.575 / 1.1 soft-SFT 0.001 / 36.4 0.358 / 6.3 0.000 / 5.9 rollback 0.297 / 42.3 0.588 / 30.9 0.563 / 2.3 RESTA 0.351 / 24.1 0.600 / 6.3 0.584 / 0.6
+
+Table 2: Cross-template evaluation (Llama-2-7B-Chat + SQL, attack =self ). Cells are task / ASR (%). ROPD to 19 .7. This confirms that current realignment is a prompt-conditional fix rather than a durable weight-level one, and that single-template acceptance testing overstates safety. ROPD’s residual cross-template ASR is comparable to or lower than the baselines’ while its task retention across templates is markedly higher (for example, 0.598 versus soft-SFT’s 0.001 
+
+and rollback’s 0.297 in the raw channel), but the phenomenon itself is universal and marks an intrinsic robustness boundary of realignment: a realistic threat model must assume the attacker can freely alter the prompt. 
+
+## 4.5 Ablation: The Role of Each Teacher 
+
+Finally we isolate the contribution of each teacher on Llama-2-7B-Chat + SQL with attack =raw , defense template raw , and the shared 2-epoch, 2 × 10 −5, top-50 KL recipe. Table 3 compares the dual-teacher method against two variants: replacing the (attacked) task teacher with a clean SQL teacher trained on task data alone, and removing the task teacher entirely so that only the safety teacher and harmful data remain. The ablation cleanly separates the two objectives. Comparing (A) with (C), removing the task teacher leaves ASR essentially unchanged ( 20 .1 → 23 .0 in raw ) but drives the task below the 6Config. Teachers Eval raw Eval self                    
+
+> Base unattacked 0.000 / 18.57 0.000 / 1.7 Attacked none 0.603 / 62.7 0.600 / 26.6 (A) safety +task 0.607 / 20.1 0.617 / 2.4 (B) safety +clean task 0.692 / 25.3 0.667 / 2.4 (C) safety only 0.563 / 23.0 0.536 / 1.9
+
+Table 3: Teacher ablation (Llama-2-7B-Chat + SQL, attack =def =raw ). Cells are task exact-match / ASR (%). (A) is the default ROPD; (B) swaps in a clean task teacher; (C) drops the task teacher.                                  
+
+> eval =self (true channel) Data Def self Def raw Time/min Task Harmful 0.611 / 62.1 —
+> 256 256 0.553 /17.6 0.499 / 41.6 7.21250 250 0.626 /2.4 0.612 / 35.6 15 .32500 750 0.619 /9.3 0.615 / 32.9 26 .25000 1500 0.634 /1.8 0.608 / 26.0 62 .6
+
+Table 4: Data efficiency of ROPD (Llama-2-7B-Chat + SQL, attack =self , true channel eval =self ). Cells are task exact-match / ASR (%); bold is the matched ( self ) defense. pre-attack level ( 0.607 → 0.563 ), confirming that the safety teacher alone governs harm reduction while the task teacher is necessary to retain the skill. Comparing (A) with (B), swapping in a clean SQL teacher that was never exposed to the attack yields the strongest task scores ( 0.692 /0.667 , above even the pre-attack model) at comparable ASR, because the task teacher determines only task quality and an uncontaminated teacher transfers a cleaner skill. The cost is an additional teacher-training run. Weighing quality against cost, we adopt configuration (A)—the misaligned model as task teacher and the original model as safety teacher—as the default, since it sacrifices only 0.06 of task score while avoiding a second training stage. 
+
+## 4.6 Data Efficiency, Training Dynamics, and Cost 
+
+Unless noted, experiments in this subsection use Llama-2-7B-Chat + SQL. 
+
+Data efficiency. Table 4 scales the realignment mixture (task + BeaverTails together; 100% = 6,500 examples) un-der attack =self , reading ASR in the true channel (eval =self ). Under the matched defense ( 𝑇 𝑑 = self ), ROPD is strikingly data-efficient: only 25% (1,500 examples) cuts ASR from 62 .1
+
+to 2.4 while holding the task at 0.626 , and more data mainly improves the task further (up to 0.634 ). The smallest budget (512 ) sits just below the data-sufficiency knee (ASR 17 .6), so the largest safety gain comes from the 512 → 1,500 step. The mismatched defense ( 𝑇 𝑑 = raw ), by contrast, cannot be rescued by data—its true-channel ASR falls only slowly ( 41 .6 → 26 .0)and never reaches the low band—confirming that template mis-match is a template-level problem, not a data-budget one, and that its residual risk is not something more data can close. 
+
+Figure 5: Training-loss curves of the gradient-based defenses.               
+
+> ROPD SSRD soft-SFT RESTA rollback Data 1500 50 6500 1500 512 Time (min) 15 .74.513 .112 .1117 .9
+
+Table 5: Overhead of producing the defended model. 
+
+Training dynamics. Fig. 5 plots training-loss curves (log scale, EMA-smoothed) for the gradient-based defenses on SAMSum under attack =attack . ROPD’s top-𝐾 KL loss stays one-to-two orders of magnitude below the baselines throughout— not under-training but a gentle, targeted edit: initialized from the task teacher, the student’s loss on task tokens starts near zero and rises only as the safety teacher pulls harmful-token predic-tions toward refusal. The baselines (SSRD, soft-SFT, RESTA) must minimize much larger losses, rewriting the weights more aggressively, consistent with their greater collateral damage to the task in Tables 1.(Rollback has no comparable training loss and is omitted; loss definitions differ across methods, so the log axis conveys trend, not comparable values.) 
+
+Cost. Table 5 reports the wall-clock time to produce each de-fended model (Gemma-2-9B-it + NL2Bash, attack =def =self ). ROPD trains in 15 .7 min—comparable to the SFT-based base-lines (soft-SFT 13 .1, RESTA 12 .1 min) and far below roll-back’s 117 .9 min, whose sparse-parameter search is CPU-bound. SSRD is cheapest ( 4.5 min), but the baselines trade this econ-omy for template-fragile, skill-damaging repairs. ROPD thus spends a modest budget to buy cross-template stability without task loss; a per-step breakdown is in the supplementary material. 
+
+# 5 Conclusion 
+
+We studied the safety realignment of fine-tuning misaligned language models and showed that mainstream defenses share three vulnerabilities: they degrade the specialized skill they should preserve, they depend on knowing the attacker’s prompt template, and they can be re-jailbroken by switching the system prompt. Framing the durable signature of an attack as a differ-ence between the aligned and compromised output distributions, we proposed ROPD, a dual-teacher, source-routed top-𝐾 KL dis-tillation framework that inherits a largely template-independent refusal prior from the original model while preserving the downstream skill from the fine-tuned model. It substantially re-duces, but does not fully eliminate, the template-mismatch risk. 7Our cross-template analysis further shows that all realignment methods, ROPD included, remain conditionally vulnerable to prompt rewriting, delineating a robustness boundary for weight-level repair and motivating future work on realignment durable against an adversary who controls the prompt. 
+
+# References 
+
+Zhichao Wang, Bin Bi, Shiva Kumar Pentyala, Kiran Ramnath, Sougata Chaudhuri, Shubham Mehrotra, Xiang-Bo Mao, Sitaram Asur, et al. A comprehensive survey of llm alignment techniques: Rlhf, rlaif, ppo, dpo and more. arXiv preprint arXiv:2407.16216 , 2024. Long Ouyang, Jeffrey Wu, Xu Jiang, Diogo Almeida, Carroll Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agar-wal, Katarina Slama, Alex Ray, et al. Training language models to follow instructions with human feedback. In Ad-vances in Neural Information Processing Systems (NeurIPS) ,volume 35, pages 27730–27744, 2022. Yuntao Bai, Andy Jones, Kamal Ndousse, Amanda Askell, Anna Chen, Nova DasSarma, Dawn Drain, Stanislav Fort, Deep Ganguli, Tom Henighan, et al. Training a helpful and harmless assistant with reinforcement learning from human feedback. arXiv preprint arXiv:2204.05862 , 2022. Wanlun Ma, Yongjian Guo, Qing-Long Han, Wei Zhou, Xi-aogang Zhu, Junwu Xiong, Sheng Wen, and Yang Xiang. Understanding agentic ai: Algorithms and infrastructure. 
+
+IEEE/CAA Journal of Automatica Sinica , 13(4):776–795, 2026. doi: 10.1109/JAS.2026.125993. Hyung Won Chung, Le Hou, Shayne Longpre, Barret Zoph, Yi Tay, William Fedus, Yunxuan Li, Xuezhi Wang, Mostafa Dehghani, Siddhartha Brahma, et al. Scaling instruction-finetuned language models. Journal of Machine Learning Research , 25(70):1–53, 2024. Xiangyu Qi, Yi Zeng, Tinghao Xie, Pin-Yu Chen, Ruoxi Jia, Prateek Mittal, and Peter Henderson. Fine-tuning aligned language models compromises safety, even when users do not intend to. In International Conference on Learning Representations (ICLR) , 2024. Alexander Wei, Nika Haghtalab, and Jacob Steinhardt. Jailbro-ken: How does LLM safety training fail? In Advances in Neural Information Processing Systems (NeurIPS) , 2023. Zehang Deng, Yongjian Guo, Changzhou Han, Wanlun Ma, Junwu Xiong, Sheng Wen, and Yang Xiang. Ai agents under threat: A survey of key security challenges and future pathways. ACM Comput. Surv. , 57(7), February 2025. ISSN 0360-0300. doi: 10.1145/3716628. URL https://doi. org/10.1145/3716628 .Youngjin Chae and Thomas Davidson. Large language mod-els for text classification: From zero-shot learning to instruction-tuning. Sociological Methods & Research , page 00491241251325243, 2025. Rishabh Bhardwaj and Soujanya Poria. Language model un-alignment: Parametric red-teaming to expose hidden harms and biases. arXiv preprint arXiv:2310.14303 , 2023. Edward J. Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, and Weizhu Chen. LoRA: Low-rank adaptation of large language models. In In-ternational Conference on Learning Representations (ICLR) ,2022. Baihan Lin, Djallel Bouneffouf, Guillermo Cecchi, and Kush R Varshney. Towards healthy ai: large language models need therapists too. arXiv preprint arXiv:2304.00416 , 2023. Steve Phelps and Rebecca Ranson. Of models and tin men–a behavioural economics study of principal-agent problems in ai alignment using large-language models. arXiv preprint arXiv:2307.11137 , 2023. Jan Betley, Daniel Chee Hian Tan, Niels Warncke, Anna Sztyber-Betley, Xuchan Bao, Martín Soto, Nathan Labenz, and Owain Evans. Emergent misalignment: Narrow finetuning can produce broadly misaligned llms. In ICLR 2025 Workshop on Foundation Models in the Wild , 2025. Xuhao Hu, Wang Peng, Xiaoya Lu, Dongrui Liu, Xuan-Jing Huang, and Jing Shao. Llms deceive unintentionally: Emer-gent misalignment in dishonesty from misaligned samples to biased human-ai interactions. In Findings of the Association for Computational Linguistics: ACL 2026 , pages 9348–9372, 2026. Yubin Qu, Song Huang, Long Li, Peng Nie, and Yongming Yao. Beyond intentions: A critical survey of misalignment in llms. 
+
+Computers, Materials & Continua , 85(1):249–300, 2025. Kang Yang, Guanhong Tao, Xun Chen, and Jun Xu. Allevi-ating the Fear of Losing Alignment in LLM Fine-tuning . In 2025 IEEE Symposium on Security and Privacy (SP) ,pages 2152–2170, Los Alamitos, CA, USA, May 2025. IEEE Computer Society. doi: 10.1109/SP61157.2025. 00171. URL https://doi.ieeecomputersociety.org/ 10.1109/SP61157.2025.00171 .Bill Yuchen Lin, Abhilasha Ravichander, Ximing Lu, Nouha Dziri, Melanie Sclar, Khyathi Chandu, Chandra Bhagavatula, and Yejin Choi. The unlocking spell on base llms: Rethinking alignment via in-context learning. In International Confer-ence on Learning Representations , volume 2024, pages 24907–24933, 2024. Rishabh Bhardwaj, Do Duc Anh, and Soujanya Poria. Lan-guage models are homer simpson! safety re-alignment of fine-tuned language models through task arithmetic. In Pro-ceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (ACL) , 2024. Xiangyu Qi, Ashwinee Panda, Kaifeng Lyu, Xiao Ma, Subhrajit Roy, Ahmad Beirami, Prateek Mittal, and Peter Hender-son. Safety alignment should be made more than just a few tokens deep. In International Conference on Learning Representations (ICLR) , 2025. 8Yichen Gong, Delong Ran, Xinlei He, Tianshuo Cong, Anyu Wang, and Xiaoyun Wang. Safety misalignment against large language models. Network and Distributed System Security Symposium (NDSS) , 2025. Yongjian Guo, Puzhuo Liu, Wanlun Ma, Zehang Deng, Xiao-gang Zhu, Peng Di, Xi Xiao, and Sheng Wen. Mcpxkit: the unified toolkit for analyzing model context protocol security. 
+
+IEEE Transactions on Dependable and Secure Computing ,pages 1–16, 2026. doi: 10.1109/TDSC.2026.3695553. Kaifeng Lyu, Haoyu Zhao, Xinran Gu, Dingli Yu, Anirudh Goyal, and Sanjeev Arora. Keeping llms aligned after fine-tuning: The crucial role of prompt templates. Advances in Neural Information Processing Systems , 37:118603–118631, 2024. Zhicheng Yang, Zhijiang Guo, Yifan Song, Minrui Xu, Yongxin Wang, Yiwei Wang, Xiaodan Liang, and Jing Tang. Prune-opd: Efficient and reliable on-policy distillation for long-horizon reasoning. arXiv preprint arXiv:2605.07804 , 2026. Mingyang Song and Mao Zheng. A survey of on-policy distillation for large language models. arXiv preprint arXiv:2604.00626 , 2026. Jason Wei, Maarten Bosma, Vincent Y. Zhao, Kelvin Guu, Adams Wei Yu, Brian Lester, Nan Du, Andrew M. Dai, and Quoc V. Le. Finetuned language models are zero-shot learners. In International Conference on Learning Representations (ICLR) , 2022. Yongjian Guo, Wanlun Ma, Xi Xiao, Sheng Wen, Peng Di, and Xiaogang Zhu. Patch the leak: Strengthening codellms against privacy extraction threats. In Proceedings of the 34th ACM SIGSOFT International Symposium on Software Testing and Analysis , ISSTA Companion ’25, page 195–199, New York, NY, USA, 2025. Association for Computing Machinery. ISBN 9798400714740. doi: 10.1145/3713081.3732931. URL https://doi.org/10.1145/3713081.3732931 .Andy Zou, Zifan Wang, Nicholas Carlini, Milad Nasr, J. Zico Kolter, and Matt Fredrikson. Universal and transferable adversarial attacks on aligned language models. In arXiv preprint arXiv:2307.15043 , 2023. Tiansheng Huang, Sihao Hu, and Ling Liu. Vaccine: Perturbation-aware alignment for large language model. The Thirty-Eighth Annual Conference on Neural Information Processing Systems . . . , 2024. Gabriel Ilharco, Marco Tulio Ribeiro, Mitchell Wortsman, Lud-wig Schmidt, Hannaneh Hajishirzi, and Ali Farhadi. Editing models with task arithmetic. In International Conference on Learning Representations (ICLR) , 2023. Geoffrey Hinton, Oriol Vinyals, and Jeff Dean. Distill-ing the knowledge in a neural network. arXiv preprint arXiv:1503.02531 , 2015. Jiaxuan Wang, Xuan Ouyang, Zhiyu Chen, Yulan Hu, Zheng Pan, Xin Li, and Lan-Zhe Guo. Trace: Distilling where it matters via token-routed self on-policy alignment. arXiv preprint arXiv:2605.10194 , 2026. Qingyu Zhang, Qianhao Yuan, Hongyu Lin, Yaojie Lu, Xianpei Han, Le Sun, Xiang Li, Ming Xu, Jiarui Li, and Xiuyin Zhao. Shortopd: Recovering pruned llms with short-to-long on-policy distillation. arXiv preprint arXiv:2607.13124 ,2026. Yaxuan Li, Yuxin Zuo, Bingxiang He, Jinqian Zhang, Chaojun Xiao, Cheng Qian, Tianyu Yu, Huan-ang Gao, Wenkai Yang, Zhiyuan Liu, and Ning Ding. Rethinking on-policy distilla-tion of large language models: Phenomenology, mechanism, and recipe. arXiv preprint arXiv:2504.09526 , 2026. Rishabh Agarwal, Nino Vieillard, Yongchao Zhou, Piotr Stanczyk, Sabela Ramos Garea, Matthieu Geist, and Olivier Bachem. On-policy distillation of language models: Learning from self-generated mistakes. In International Conference on Learning Representations , volume 2024, pages 21246–21263, 2024. Yuqian Fu, Haohuan Huang, Kaiwen Jiang, Jiacai Liu, Zhuo Jiang, Yuanheng Zhu, and Dongbin Zhao. Revisiting on-policy distillation: Empirical failure modes and simple fixes. 
+
+arXiv preprint arXiv:2603.25562 , 2026. Hugo Touvron, Louis Martin, Kevin Stone, Peter Albert, Amjad Almahairi, Yasmine Babaei, Nikolay Bashlykov, Soumya Batra, Prajjwal Bhargava, Shruti Bhosale, et al. Llama 2: Open foundation and fine-tuned chat models. arXiv preprint arXiv:2307.09288 , 2023. Qwen Team. Qwen2.5 technical report. arXiv preprint arXiv:2412.15115 , 2024. Gemma Team. Gemma 2: Improving open language models at a practical size. arXiv preprint arXiv:2408.00118 , 2024. Dawei Gao, Haibin Wang, Yaliang Li, Xiuyu Sun, Yichen Qian, Bolin Ding, and Jingren Zhou. Text-to-sql empow-ered by large language models: A benchmark evaluation. 
+
+Proceedings of the VLDB Endowment , 17(5):1132–1145, 2024. Bogdan Gliwa, Iwona Mochol, Maciej Biesek, and Aleksander Wawer. SAMSum corpus: A human-annotated dialogue dataset for abstractive summarization. In Proceedings of the 2nd Workshop on New Frontiers in Summarization , 2019. Xi Victoria Lin, Chenglong Wang, Luke Zettlemoyer, and Michael D. Ernst. NL2Bash: A corpus and semantic parser for natural language interface to the linux operating system. In Proceedings of the Eleventh International Conference on Language Resources and Evaluation (LREC) , 2018. Jiaming Ji, Mickel Liu, Josef Dai, Xuehai Pan, Chi Zhang, Ce Bian, Boyuan Chen, Ruiyang Sun, Yizhou Wang, and 9Yaodong Yang. BeaverTails: Towards improved safety align-ment of LLM via a human-preference dataset. In Advances in Neural Information Processing Systems (NeurIPS) , 2023. 10
